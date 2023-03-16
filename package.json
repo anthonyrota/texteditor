@@ -1,33 +1,28 @@
 {
-  "name": "matita",
-  "version": "1.0.0",
-  "description": "",
-  "main": "./src/index.ts",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/anthonyrota/matita.git"
-  },
-  "author": "Anthony Rota",
-  "license": "",
-  "bugs": {
-    "url": "https://github.com/anthonyrota/matita/issues"
-  },
-  "homepage": "https://github.com/anthonyrota/matita#readme",
-  "devDependencies": {
-    "@types/uuid": "^9.0.1",
-    "@typescript-eslint/eslint-plugin": "^5.53.0",
-    "@typescript-eslint/parser": "^5.53.0",
-    "eslint": "^8.35.0",
-    "eslint-config-prettier": "^8.6.0",
-    "eslint-plugin-import": "^2.27.5",
-    "prettier": "^2.8.4",
-    "typescript": "^5.0.0-beta"
-  },
-  "dependencies": {
-    "intl-segmenter-polyfill": "^0.4.4",
-    "uuid": "^9.0.0"
-  }
+    "name": "matita",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "intl-segmenter-polyfill": "^0.4.4",
+        "preact": "^10.11.3",
+        "uuid": "^9.0.0"
+    },
+    "devDependencies": {
+        "@preact/preset-vite": "^2.5.0",
+        "@types/uuid": "^9.0.1",
+        "@typescript-eslint/eslint-plugin": "^5.53.0",
+        "@typescript-eslint/parser": "^5.53.0",
+        "eslint": "^8.35.0",
+        "eslint-config-prettier": "^8.6.0",
+        "eslint-plugin-import": "^2.27.5",
+        "prettier": "^2.8.4",
+        "typescript": "^4.9.3",
+        "vite": "^4.1.0"
+    }
 }
