@@ -74,6 +74,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         containerHtmlElement.style.contain = 'content';
         containerHtmlElement.style.whiteSpace = 'break-spaces';
         containerHtmlElement.style.overflowWrap = 'anywhere';
+        containerHtmlElement.style.fontFamily = "'Fira Code', monospace";
+        containerHtmlElement.style.fontSize = '14px';
+        containerHtmlElement.style.lineHeight = '16px';
         return containerHtmlElement;
     }
     get containerHtmlElement(): HTMLElement {
@@ -564,13 +567,14 @@ function BlinkingCursor(props: BlinkingCursorProps): preact.JSX.Element | null {
             [isPreview, cursorBlinkSpeed, synchronizedCursorVisibility$, hasFocus, isPreview],
         ),
     );
+    const cursorWidth = 2;
     return (
         <span
             style={{
                 position: 'absolute',
                 top: viewCursorInfo.position.top,
-                left: viewCursorInfo.position.left,
-                width: 2,
+                left: viewCursorInfo.position.left - cursorWidth / 2,
+                width: cursorWidth,
                 height: viewCursorInfo.height,
                 backgroundColor: hasFocus || isPreview ? '#222' : '#888',
                 visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
@@ -3891,6 +3895,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
 }
 const rootHtmlElement = document.querySelector('#myEditor');
 assertIsNotNullish(rootHtmlElement);
+// eslint-disable-next-line import/order, import/no-unresolved
+import initialText from './matita/index.ts?raw';
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
 makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
     const stateControlConfig: matita.StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = {
@@ -3910,7 +3916,15 @@ makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
         matita.makeRegisterTopLevelContentMutation(
             topLevelContentId,
             {},
-            matita.makeContentFragment([matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], matita.generateId()))]),
+            matita.makeContentFragment(
+                initialText
+                    .split('\n')
+                    .map((text) =>
+                        matita.makeContentFragmentParagraph(
+                            matita.makeParagraph({}, text.length === 0 ? [] : [matita.makeText({}, text)], matita.generateId()),
+                        ),
+                    ),
+            ),
         ),
         null,
         null,
