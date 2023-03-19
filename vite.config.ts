@@ -5,5 +5,6 @@ export default defineConfig({
     plugins: [preact()],
     server: {
         hmr: false,
+        port: 3000,
     },
 });

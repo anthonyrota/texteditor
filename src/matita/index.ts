@@ -3689,10 +3689,11 @@ interface MutationResultMessage<
     TextConfig extends NodeConfig,
     VoidConfig extends NodeConfig,
 > {
-    mutation: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+    mutationPart: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
     updateDataStack: UpdateData[];
     result: MutationResult<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
-    afterUpdate$: Source<never>;
+    afterMutation$: Source<never>;
+    isFirstMutationPart: boolean;
     isLastMutationPart: boolean;
 }
 interface StateControl<
@@ -3708,7 +3709,7 @@ interface StateControl<
     readonly delta: Delta<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
     readonly isInUpdate: boolean;
     queueUpdate: (runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, data?: UpdateData) => Disposable;
-    mutationResult$: Source<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
+    mutationPartResult$: Source<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
     viewDelta$: Source<ViewDelta>;
     finishedUpdating$: Source<FinishedUpdatingMessage>;
     selectionChange$: Source<SelectionChangeMessage>;
@@ -3812,8 +3813,8 @@ function makeStateControl<
                 const { reverseMutation } = committedMutationInfoForReversing;
                 assertIsNotNullish(reverseMutation);
                 forEachMutationInBatchMutation(reverseMutation, (reverseMutationPart) => {
-                    const mutationResult = applyMutation(state.document, reverseMutationPart, null, null);
-                    assert(mutationResult.didChange);
+                    const mutationPartResult = applyMutation(state.document, reverseMutationPart, null, null);
+                    assert(mutationPartResult.didChange);
                 });
                 if (currentTimeTravelInfo) {
                     currentTimeTravelInfo.timeTraveledToAfterMutationId = mutationId;
@@ -3984,7 +3985,7 @@ function makeStateControl<
         return makeStateViewOfStateAfterDynamicMutationReferenceId(() => latestMutationReference_.mutationId, false);
     }
     let delta: Delta<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | null = null;
-    const mutationResult$ = Subject<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
+    const mutationPartResult$ = Subject<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
     const viewDelta$ = Subject<ViewDelta>();
     disposable.add(viewDelta$);
     const finishedUpdating$ = Subject<FinishedUpdatingMessage>();
@@ -4011,16 +4012,16 @@ function makeStateControl<
                 isLastMutationPart: boolean,
             ): void => {
                 const { viewDelta, viewDeltaControl } = makeViewDeltaAndViewDeltaControl();
-                const mutationResult = applyMutation(
+                const mutationPartResult: MutationResult<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = applyMutation(
                     stateView.document,
                     mutationPart,
                     viewDeltaControl,
                     makeStateViewOfStateAfterDynamicMutationReferenceId(() => mutationId, false),
                 );
-                if (!mutationResult.didChange) {
+                if (!mutationPartResult.didChange) {
                     return;
                 }
-                const { reverseMutation, transformSelectionRange } = mutationResult;
+                const { reverseMutation, transformSelectionRange } = mutationPartResult;
                 const mutationId = generateId();
                 latestMutationReference = {
                     mutationId,
@@ -4083,17 +4084,18 @@ function makeStateControl<
                 }
                 viewDelta$(Push(viewDelta));
                 assertIsNotNullish(updateDataStack);
-                mutationResult$(
+                mutationPartResult$(
                     Push({
-                        mutation: mutationPart,
+                        mutationPart,
                         updateDataStack,
-                        result: mutationResult,
-                        afterUpdate$,
+                        result: mutationPartResult,
+                        afterMutation$,
+                        isFirstMutationPart: mutationIndex === 0,
                         isLastMutationPart,
                     }),
                 );
             };
-            const afterUpdate$ = Subject<never>();
+            const afterMutation$ = Subject<never>();
             if (isBatchMutation(mutation)) {
                 forEachMutationInBatchMutation(mutation, onMutation);
             } else {
@@ -4120,7 +4122,7 @@ function makeStateControl<
                     keepCollapsedSelectionTextConfigWhenSelectionChanges,
                 );
             }
-            afterUpdate$(End);
+            afterMutation$(End);
         }
         function deltaApplyUpdate(
             runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
@@ -4206,7 +4208,7 @@ function makeStateControl<
                 return delta !== null;
             },
             queueUpdate,
-            mutationResult$,
+            mutationPartResult$,
             viewDelta$: Source(viewDelta$),
             finishedUpdating$: Source(finishedUpdating$),
             selectionChange$: Source(selectionChange$),
@@ -5136,12 +5138,12 @@ function registerContentListFragmentContents<
     contentListFragment: ContentListFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
 ): void {
     contentListFragment.contentListFragmentContents.forEach(({ content, nestedBlocks, nestedContents }) => {
-        registerContentInDocument(document, content, embedReference);
+        registerContentInDocument(document, cloneContent(content), embedReference);
         nestedContents.forEach(({ content, embedReference }) => {
-            registerContentInDocument(document, content, embedReference);
+            registerContentInDocument(document, cloneContent(content), embedReference);
         });
         nestedBlocks.forEach(({ block, contentReference }) => {
-            registerBlockInDocument(document, block, contentReference);
+            registerBlockInDocument(document, cloneBlock(block), contentReference);
         });
     });
 }
@@ -5160,14 +5162,14 @@ function registerContentFragmentBlocks<
     contentFragment.contentFragmentBlocks.forEach((contentFragmentBlock) => {
         if (isContentFragmentParagraph(contentFragmentBlock)) {
             const { paragraph } = contentFragmentBlock;
-            registerBlockInDocument(document, paragraph, contentReference);
+            registerBlockInDocument(document, cloneParagraph(paragraph), contentReference);
         } else {
             const { nestedBlocks, nestedContents } = contentFragmentBlock;
             nestedContents.forEach(({ content, embedReference }) => {
-                registerContentInDocument(document, content, embedReference);
+                registerContentInDocument(document, cloneContent(content), embedReference);
             });
             nestedBlocks.forEach(({ block, contentReference }) => {
-                registerBlockInDocument(document, block, contentReference);
+                registerBlockInDocument(document, cloneBlock(block), contentReference);
             });
         }
     });
@@ -6589,7 +6591,7 @@ function makeRemoveRangeContentsUpdateFn<
                         mutations.push(makeSpliceParagraphMutation(changeParagraphPointOffset(secondParagraphPoint, 0), secondParagraphPoint.offset, []));
                     }
                     if (firstParagraphLength === 0 && getParagraphLength(accessParagraphFromParagraphPoint(document, secondParagraphPoint)) > 0) {
-                        mutations.push(makeJoinParagraphsForwardsMutation(firstParagraphPoint));
+                        mutations.push(makeJoinParagraphsForwardsMutation(secondParagraphPoint));
                     } else {
                         mutations.push(makeJoinParagraphsBackwardsMutation(firstParagraphPoint));
                     }

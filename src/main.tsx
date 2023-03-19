@@ -1,7 +1,5 @@
 import { render, Fragment } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
-// eslint-disable-next-line import/no-unresolved
-import initialText from './initialText.txt?raw';
 import { makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './IntlSegmenter';
 import { LruCache } from './LruCache';
 import * as matita from './matita';
@@ -2302,7 +2300,7 @@ interface MutationResultWithMutation<
     TextConfig extends matita.NodeConfig,
     VoidConfig extends matita.NodeConfig,
 > {
-    mutation: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+    mutationPart: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
     result: matita.ChangedMutationResult<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
 }
 interface LocalUndoStateDifference<
@@ -2349,7 +2347,95 @@ class LocalUndoControl<
         this.#selectionBefore = null;
         this.#selectionAfter = null;
         pipe(this.#stateControl.selectionChange$, subscribe(this.#onSelectionChange.bind(this), this));
-        pipe(this.#stateControl.mutationResult$, subscribe(this.#onMutationResult.bind(this), this));
+        pipe(this.#stateControl.mutationPartResult$, subscribe(this.#onMutationResult.bind(this), this));
+    }
+    #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
+        if (event.type !== PushType) {
+            throwUnreachable();
+        }
+        if (this.#mutationResults.length === 0) {
+            return;
+        }
+        const { updateDataStack } = event.value;
+        if (updateDataStack.length > 0) {
+            const lastUpdateData = updateDataStack[updateDataStack.length - 1];
+            if (
+                !!lastUpdateData[RedoUndoUpdateKey.IgnoreRecursiveUpdate] ||
+                !!lastUpdateData[RedoUndoUpdateKey.InsertText] ||
+                !!lastUpdateData[RedoUndoUpdateKey.RemoveTextBackwards] ||
+                !!lastUpdateData[RedoUndoUpdateKey.RemoveTextForwards]
+            ) {
+                return;
+            }
+        }
+        this.#lastChangeType = LocalUndoControlLastChangeType.SelectionAfterChange;
+    }
+    #onMutationResult(event: Event<matita.MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>): void {
+        if (event.type !== PushType) {
+            throwUnreachable();
+        }
+        const { mutationPart, result, updateDataStack, afterMutation$, isFirstMutationPart, isLastMutationPart } = event.value;
+        const lastUpdateData = updateDataStack.length > 0 ? updateDataStack[updateDataStack.length - 1] : undefined;
+        if ((lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.IgnoreRecursiveUpdate]) || !result.didChange) {
+            return;
+        }
+        this.#redoStateDifferencesStack = [];
+        let changeType: LocalUndoControlLastChangeType;
+        if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.InsertText]) {
+            changeType = LocalUndoControlLastChangeType.InsertText;
+        } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.RemoveTextBackwards]) {
+            changeType = LocalUndoControlLastChangeType.RemoveTextBackwards;
+        } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.RemoveTextForwards]) {
+            changeType = LocalUndoControlLastChangeType.RemoveTextForwards;
+        } else {
+            changeType = LocalUndoControlLastChangeType.Other;
+        }
+        const pushToStack =
+            this.#mutationResults.length > 0 &&
+            (this.#lastChangeType === LocalUndoControlLastChangeType.Other || (this.#lastChangeType && changeType !== this.#lastChangeType));
+        if (isFirstMutationPart) {
+            if (pushToStack) {
+                this.#pushToStack();
+            }
+            if (this.#selectionBefore === null) {
+                this.#selectionBefore = this.#stateControl.stateView.selection;
+            }
+        }
+        if (isLastMutationPart) {
+            this.#lastChangeType = changeType;
+        }
+        this.#mutationResults.push({
+            mutationPart,
+            result,
+        });
+        if (isLastMutationPart) {
+            pipe(
+                afterMutation$,
+                subscribe((event) => {
+                    assert(event.type === EndType);
+                    this.#selectionAfter = this.#stateControl.stateView.selection;
+                }, this),
+            );
+        }
+    }
+    #pushToStack(): void {
+        if (this.#mutationResults.length === 0) {
+            return;
+        }
+        const mutationResults = this.#mutationResults;
+        const selectionBefore = this.#selectionBefore;
+        assertIsNotNullish(selectionBefore);
+        const selectionAfter = this.#selectionAfter;
+        assertIsNotNullish(selectionAfter);
+        this.#mutationResults = [];
+        this.#lastChangeType = null;
+        this.#selectionBefore = null;
+        this.#selectionAfter = null;
+        this.#undoStateDifferencesStack.push({
+            mutationResults,
+            selectionBefore,
+            selectionAfter,
+        });
     }
     tryUndo(): void {
         assert(!this.#stateControl.isInUpdate, 'Cannot undo while in a state update.');
@@ -2393,7 +2479,7 @@ class LocalUndoControl<
                 assertIsNotNullish(lastStateDifference);
                 this.#undoStateDifferencesStack.push(lastStateDifference);
                 const { mutationResults, selectionAfter } = lastStateDifference;
-                this.#stateControl.delta.applyMutation(matita.makeBatchMutation(mutationResults.map((mutationResult) => mutationResult.mutation)));
+                this.#stateControl.delta.applyMutation(matita.makeBatchMutation(mutationResults.map((mutationResult) => mutationResult.mutationPart)));
                 if (selectionAfter.selectionRanges.length > 0) {
                     this.#stateControl.delta.setSelection(selectionAfter);
                 }
@@ -2425,97 +2511,6 @@ class LocalUndoControl<
         });
         commandRegister.set(BuiltInCommandName.Redo, {
             execute: this.tryRedo.bind(this),
-        });
-    }
-    #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
-        if (event.type !== PushType) {
-            throwUnreachable();
-        }
-        if (this.#mutationResults.length === 0) {
-            return;
-        }
-        const { updateDataStack } = event.value;
-        if (updateDataStack.length > 0) {
-            const lastUpdateData = updateDataStack[updateDataStack.length - 1];
-            if (
-                !!lastUpdateData[RedoUndoUpdateKey.IgnoreRecursiveUpdate] ||
-                !!lastUpdateData[RedoUndoUpdateKey.InsertText] ||
-                !!lastUpdateData[RedoUndoUpdateKey.RemoveTextBackwards] ||
-                !!lastUpdateData[RedoUndoUpdateKey.RemoveTextForwards]
-            ) {
-                return;
-            }
-        }
-        this.#lastChangeType = LocalUndoControlLastChangeType.SelectionAfterChange;
-    }
-    #onMutationResult(event: Event<matita.MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>): void {
-        if (event.type !== PushType) {
-            throwUnreachable();
-        }
-        const { mutation, result, updateDataStack, afterUpdate$, isLastMutationPart } = event.value;
-        const lastUpdateData = updateDataStack.length > 0 ? updateDataStack[updateDataStack.length - 1] : undefined;
-        if ((lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.IgnoreRecursiveUpdate]) || !result.didChange) {
-            return;
-        }
-        this.#redoStateDifferencesStack = [];
-        let changeType: LocalUndoControlLastChangeType;
-        if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.InsertText]) {
-            changeType = LocalUndoControlLastChangeType.InsertText;
-        } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.RemoveTextBackwards]) {
-            changeType = LocalUndoControlLastChangeType.RemoveTextBackwards;
-        } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.RemoveTextForwards]) {
-            changeType = LocalUndoControlLastChangeType.RemoveTextForwards;
-        } else {
-            changeType = LocalUndoControlLastChangeType.Other;
-        }
-        let pushToStack = false;
-        if (isLastMutationPart) {
-            if (
-                this.#mutationResults.length > 0 &&
-                (this.#lastChangeType === LocalUndoControlLastChangeType.Other || (this.#lastChangeType && changeType !== this.#lastChangeType))
-            ) {
-                pushToStack = true;
-            } else {
-                this.#lastChangeType = changeType;
-            }
-        }
-        if (this.#selectionBefore === null) {
-            this.#selectionBefore = this.#stateControl.stateView.selection;
-        }
-        this.#mutationResults.push({
-            mutation,
-            result,
-        });
-        if (isLastMutationPart) {
-            pipe(
-                afterUpdate$,
-                subscribe((event) => {
-                    assert(event.type === EndType);
-                    this.#selectionAfter = this.#stateControl.stateView.selection;
-                    if (pushToStack) {
-                        this.#pushToStack();
-                    }
-                }, this),
-            );
-        }
-    }
-    #pushToStack(): void {
-        if (this.#mutationResults.length === 0) {
-            return;
-        }
-        const mutationResults = this.#mutationResults;
-        const selectionBefore = this.#selectionBefore;
-        assertIsNotNullish(selectionBefore);
-        const selectionAfter = this.#selectionAfter;
-        assertIsNotNullish(selectionAfter);
-        this.#mutationResults = [];
-        this.#lastChangeType = null;
-        this.#selectionBefore = null;
-        this.#selectionAfter = null;
-        this.#undoStateDifferencesStack.push({
-            mutationResults,
-            selectionBefore,
-            selectionAfter,
         });
     }
 }
@@ -3075,7 +3070,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         } else {
             this.#keyDownSet.add(event.key);
         }
-        if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) {
+        const modifiers = ['Meta', 'Control', 'Alt', 'Shift'];
+        if (modifiers.includes(event.key)) {
             return;
         }
         const hasMeta = event.metaKey;
@@ -3121,12 +3117,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 const requiredControl = parsedKeySet.has('Control');
                 const requiredAlt = parsedKeySet.has('Alt');
                 const requiredShift = parsedKeySet.has('Shift');
-                const requiredNonModifierKeys = Array.from(parsedKeySet).filter((requiredKey) => !['Meta', 'Control', 'Alt', 'Shift'].includes(requiredKey));
+                const requiredNonModifierKeys = Array.from(parsedKeySet).filter((requiredKey) => !modifiers.includes(requiredKey));
                 if (
                     !(
                         requiredNonModifierKeys.every(
                             (requiredNonModifierKey) => this.#keyDownSet.has(requiredNonModifierKey) || event.key === requiredNonModifierKey,
                         ) &&
+                        Array.from(this.#keyDownSet).every((keyDown) => modifiers.includes(keyDown) || requiredNonModifierKeys.includes(keyDown)) &&
                         (requiredMeta ? hasMeta : !hasMeta) &&
                         (requiredControl ? hasControl : !hasControl) &&
                         (requiredAlt ? hasAlt : !hasAlt) &&
@@ -3913,15 +3910,7 @@ makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
         matita.makeRegisterTopLevelContentMutation(
             topLevelContentId,
             {},
-            matita.makeContentFragment(
-                initialText
-                    .split('\n')
-                    .map((text) =>
-                        matita.makeContentFragmentParagraph(
-                            matita.makeParagraph({}, text.length === 0 ? [] : [matita.makeText({}, text)], matita.generateId()),
-                        ),
-                    ),
-            ),
+            matita.makeContentFragment([matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], matita.generateId()))]),
         ),
         null,
         null,
