@@ -2074,7 +2074,9 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             const documentRenderControl = viewControl.accessDocumentRenderControl();
             stateControl.queueUpdate(
                 matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
-                    (_document, _stateControlConfig, _selectionRange) => true,
+                    (document, _stateControlConfig, selectionRange) =>
+                        !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) ||
+                        matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
                     matita.noopPointTransformFn,
                     documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Previous),
                 ),
@@ -2086,7 +2088,9 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             const documentRenderControl = viewControl.accessDocumentRenderControl();
             stateControl.queueUpdate(
                 matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
-                    (_document, _stateControlConfig, _selectionRange) => true,
+                    (document, _stateControlConfig, selectionRange) =>
+                        !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) ||
+                        !matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
                     matita.noopPointTransformFn,
                     documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
                 ),
