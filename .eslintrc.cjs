@@ -18,7 +18,7 @@ module.exports = {
         },
     ],
     rules: {
-        'max-len': ['error', { code: 160 }],
+        'max-len': ['warn', { code: 160 }],
         'no-constant-condition': ['error', { checkLoops: false }],
         'no-unused-vars': 'off',
         'no-else-return': ['error', { allowElseIf: false }],

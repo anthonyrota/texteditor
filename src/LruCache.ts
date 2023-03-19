@@ -7,7 +7,6 @@ class LruCache<K, V> {
         this.#maxEntries = maxEntries;
     }
     public get(key: K): V | undefined {
-        // peek the entry, re-insert for LRU strategy
         const entry = this.#values.get(key);
         if (entry) {
             this.#values.delete(key);

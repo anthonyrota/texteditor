@@ -85,6 +85,30 @@ function queueMicrotaskDisposable<T extends any[]>(callback: (...args: T) => voi
         callback(...args);
     });
 }
+function requestIdleCallbackDisposable(callback: IdleRequestCallback, options?: IdleRequestOptions) {
+    if (typeof requestIdleCallback === 'undefined') {
+        const disposable = Disposable(() => {
+            clearTimeout(timeoutId);
+        });
+        const timeoutId = setTimeout(() => {
+            disposable.dispose();
+            const start = Date.now();
+            callback({
+                didTimeout: false,
+                timeRemaining: () => Math.max(0, 10 - start),
+            });
+        }, 500);
+        return disposable;
+    }
+    const disposable = Disposable(() => {
+        cancelIdleCallback(requestId);
+    });
+    const requestId = requestIdleCallback((deadline) => {
+        disposable.dispose();
+        callback(deadline);
+    }, options);
+    return disposable;
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyMapFunction = (a: any) => any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,5 +208,6 @@ export {
     setTimeoutDisposable,
     setIntervalDisposable,
     queueMicrotaskDisposable,
+    requestIdleCallbackDisposable,
     pipe,
 };

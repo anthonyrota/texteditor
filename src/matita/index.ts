@@ -4,7 +4,7 @@
 // TODO: make config immutable and out its update operations.
 import { v4 as makeUuidV4 } from 'uuid';
 import { Disposable, implDisposableMethods } from '../ruscel/disposable';
-import { Push, Source } from '../ruscel/source';
+import { End, Push, Source } from '../ruscel/source';
 import { Subject } from '../ruscel/subject';
 import { requestAnimationFrameDisposable } from '../ruscel/util';
 import { assertUnreachable, throwUnreachable, throwNotImplemented, assert, assertIsNotNullish } from '../util';
@@ -2120,11 +2120,13 @@ enum SelectionRangeIntention {
     Block = 'Block',
     Text = 'Text',
 }
+type SelectionRangeData = JsonMap;
 interface SelectionRange {
     readonly ranges: readonly Range[]; // TODO: remove text collapsed non focus/anchor ranges.
     readonly anchorRangeId: string;
     readonly focusRangeId: string;
     readonly intention: SelectionRangeIntention;
+    readonly data: SelectionRangeData;
     readonly id: string;
 }
 function makeSelectionRange(
@@ -2132,6 +2134,7 @@ function makeSelectionRange(
     anchorRangeId: string,
     focusRangeId: string,
     intention: SelectionRangeIntention,
+    data: SelectionRangeData,
     id: string,
 ): SelectionRange {
     assert(ranges.length > 0, 'SelectionRange must have at least one range.', {
@@ -2142,6 +2145,7 @@ function makeSelectionRange(
         anchorRangeId,
         focusRangeId,
         intention,
+        data,
         id,
     };
 }
@@ -2203,14 +2207,17 @@ function areSelectionRangesEqual(selectionRange1: SelectionRange, selectionRange
         selectionRange1.ranges.length === selectionRange2.ranges.length &&
         selectionRange1.ranges.every((range, i) => areRangesEqual(range, selectionRange2.ranges[i])) &&
         selectionRange1.anchorRangeId === selectionRange2.anchorRangeId &&
-        selectionRange1.focusRangeId === selectionRange2.focusRangeId
+        selectionRange1.focusRangeId === selectionRange2.focusRangeId &&
+        areJsonEqual(selectionRange1.data, selectionRange2.data) &&
+        selectionRange1.id === selectionRange2.id
     );
 }
 function areRangesEqual(range1: Range, range2: Range): boolean {
     return (
         areContentReferencesAtSameContent(range1.contentReference, range2.contentReference) &&
         arePointsEqual(range1.startPoint, range2.startPoint) &&
-        arePointsEqual(range1.endPoint, range2.endPoint)
+        arePointsEqual(range1.endPoint, range2.endPoint) &&
+        range1.id === range2.id
     );
 }
 interface EmbedRenderControl {
@@ -3211,6 +3218,7 @@ function sortAndMergeAndFixSelectionRanges<
                         anchorRange.range.id,
                         focusRange.range.id,
                         selectionRange.intention,
+                        selectionRange.data,
                         selectionId,
                     ),
                 );
@@ -3246,7 +3254,7 @@ function sortAndMergeAndFixSelectionRanges<
     }
     return fixSelectionIntentions(document, sortAndMergeAndFix(selectionRanges, true));
 }
-type TransformSelectionRangeFn = (selection: SelectionRange) => SelectionRange | null;
+type TransformSelectionRangeFn = (selectionRange: SelectionRange) => SelectionRange | null;
 function fixAndTransformSelectionByTransformingSelectionRanges<
     DocumentConfig extends NodeConfig,
     ContentConfig extends NodeConfig,
@@ -3320,6 +3328,7 @@ function fixSelectionIntentions(document: Document<NodeConfig, NodeConfig, NodeC
                     selectionRange.anchorRangeId,
                     selectionRange.focusRangeId,
                     SelectionRangeIntention.Text,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             }
@@ -3606,6 +3615,7 @@ interface MutationSelectionToTransform {
     shouldTransformAsSelection?: boolean;
 }
 type CustomTransformStateSelectionRangeFn = (selectionRange: SelectionRange) => SelectionRange | null | undefined; // Undefined means defer back to default.
+type SelectionChangeData = JsonMap;
 interface Delta<
     DocumentConfig extends NodeConfig,
     ContentConfig extends NodeConfig,
@@ -3621,8 +3631,8 @@ interface Delta<
         keepCollapsedSelectionTextConfigWhenSelectionChanges?: boolean,
         customTransformStateSelectionRangeFn?: CustomTransformStateSelectionRangeFn,
     ) => void;
-    applyUpdate: (runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>) => void;
-    setSelection: (selection: Selection, keepCollapsedSelectionTextConfigWhenSelectionChanges?: boolean) => void;
+    applyUpdate: (runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, data?: UpdateData) => void;
+    setSelection: (selection: Selection, keepCollapsedSelectionTextConfigWhenSelectionChanges?: boolean, data?: SelectionChangeData) => void;
     setCustomCollapsedSelectionTextConfig: (newTextConfig: TextConfig) => void;
 }
 type RunUpdateFn<
@@ -3642,6 +3652,7 @@ interface QueuedUpdate<
     VoidConfig extends NodeConfig,
 > {
     runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+    data?: UpdateData;
 }
 interface StateControlConfig<
     DocumentConfig extends NodeConfig,
@@ -3664,6 +3675,26 @@ interface StateControlConfig<
 interface FinishedUpdatingMessage {
     didApplyMutation: boolean;
 }
+interface SelectionChangeMessage {
+    previousSelection: Selection;
+    data?: SelectionChangeData;
+    updateDataStack: UpdateData[];
+}
+type UpdateData = JsonMap;
+interface MutationResultMessage<
+    DocumentConfig extends NodeConfig,
+    ContentConfig extends NodeConfig,
+    ParagraphConfig extends NodeConfig,
+    EmbedConfig extends NodeConfig,
+    TextConfig extends NodeConfig,
+    VoidConfig extends NodeConfig,
+> {
+    mutation: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+    updateDataStack: UpdateData[];
+    result: MutationResult<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+    afterUpdate$: Source<never>;
+    isLastMutationPart: boolean;
+}
 interface StateControl<
     DocumentConfig extends NodeConfig,
     ContentConfig extends NodeConfig,
@@ -3676,9 +3707,11 @@ interface StateControl<
     readonly stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
     readonly delta: Delta<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
     readonly isInUpdate: boolean;
-    queueUpdate: (runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>) => Disposable;
+    queueUpdate: (runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, data?: UpdateData) => Disposable;
+    mutationResult$: Source<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
     viewDelta$: Source<ViewDelta>;
     finishedUpdating$: Source<FinishedUpdatingMessage>;
+    selectionChange$: Source<SelectionChangeMessage>;
     snapshotStateThroughStateView: () => StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
     transformSelectionForwardsFromFirstStateViewToSecondStateView: (
         selectionToTransform: MutationSelectionToTransform,
@@ -3910,7 +3943,10 @@ function makeStateControl<
         return selection;
     }
     const stateView = makeStateViewOfStateAfterDynamicMutationReferenceId(() => latestMutationReference.mutationId, true);
-    function queueUpdate(runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): Disposable {
+    function queueUpdate(
+        runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+        data?: UpdateData,
+    ): Disposable {
         if (updateDisposable === null) {
             updateDisposable = Disposable();
             disposable.add(updateDisposable);
@@ -3922,6 +3958,7 @@ function makeStateControl<
                 isRemoved = true;
                 runUpdate(stateControl);
             },
+            data,
         };
         updateQueue.push(queuedUpdate);
         let isUpdateStarting = false;
@@ -3947,10 +3984,13 @@ function makeStateControl<
         return makeStateViewOfStateAfterDynamicMutationReferenceId(() => latestMutationReference_.mutationId, false);
     }
     let delta: Delta<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | null = null;
-    const finishedUpdating$ = Subject<FinishedUpdatingMessage>();
-    disposable.add(finishedUpdating$);
+    const mutationResult$ = Subject<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
     const viewDelta$ = Subject<ViewDelta>();
     disposable.add(viewDelta$);
+    const finishedUpdating$ = Subject<FinishedUpdatingMessage>();
+    disposable.add(finishedUpdating$);
+    const selectionChange$ = Subject<SelectionChangeMessage>();
+    let updateDataStack: UpdateData[] | null = null;
     function runUpdates(): void {
         let didApplyMutation = false;
         function deltaApplyMutation(
@@ -3968,6 +4008,7 @@ function makeStateControl<
             const onMutation = (
                 mutationPart: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
                 mutationIndex: number,
+                isLastMutationPart: boolean,
             ): void => {
                 const { viewDelta, viewDeltaControl } = makeViewDeltaAndViewDeltaControl();
                 const mutationResult = applyMutation(
@@ -4041,11 +4082,22 @@ function makeStateControl<
                     }
                 }
                 viewDelta$(Push(viewDelta));
+                assertIsNotNullish(updateDataStack);
+                mutationResult$(
+                    Push({
+                        mutation: mutationPart,
+                        updateDataStack,
+                        result: mutationResult,
+                        afterUpdate$,
+                        isLastMutationPart,
+                    }),
+                );
             };
+            const afterUpdate$ = Subject<never>();
             if (isBatchMutation(mutation)) {
                 forEachMutationInBatchMutation(mutation, onMutation);
             } else {
-                onMutation(mutation, 0);
+                onMutation(mutation, 0, true);
             }
             assertIsNotNullish(delta);
             if (customTransformStateSelectionRangeDidTransformSelectionRanges && customTransformStateSelectionRangeDidTransformSelectionRanges.length > 0) {
@@ -4068,25 +4120,46 @@ function makeStateControl<
                     keepCollapsedSelectionTextConfigWhenSelectionChanges,
                 );
             }
+            afterUpdate$(End);
         }
-        function deltaApplyUpdate(runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): void {
+        function deltaApplyUpdate(
+            runUpdate: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+            data?: UpdateData,
+        ): void {
+            assertIsNotNullish(updateDataStack);
+            if (data) {
+                updateDataStack.push(data);
+            }
             runUpdate(stateControl);
+            if (data) {
+                updateDataStack.pop();
+            }
         }
         delta = {
             applyMutation: deltaApplyMutation,
             applyUpdate: deltaApplyUpdate,
-            setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges) => {
+            setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges, data?: SelectionChangeData) => {
                 if (!areSelectionsEqual(stateView.selection, selection)) {
-                    state.selection = sortAndMergeAndFixSelectionRanges(
+                    const currentSelection = sortAndMergeAndFixSelectionRanges(
                         stateView.document,
                         stateControlConfig,
                         selection.selectionRanges,
                         selection.focusSelectionRangeId,
                     );
+                    const previousSelection = stateView.selection;
+                    state.selection = currentSelection;
                     const isCollapsedInText = isSelectionCollapsedInText(stateView.document, selection);
                     if (!isCollapsedInText || !keepCollapsedSelectionTextConfigWhenSelectionChanges) {
                         state.customCollapsedSelectionTextConfig = null;
                     }
+                    assertIsNotNullish(updateDataStack);
+                    selectionChange$(
+                        Push({
+                            previousSelection,
+                            data,
+                            updateDataStack,
+                        }),
+                    );
                 }
             },
             setCustomCollapsedSelectionTextConfig: (newTextConfig) => {
@@ -4096,9 +4169,18 @@ function makeStateControl<
         const updateQueue_ = updateQueue;
         updateQueue = [];
         updateDisposable = null;
+        updateDataStack = [];
         updateQueue_.forEach((update) => {
+            assertIsNotNullish(updateDataStack);
+            if (update.data) {
+                updateDataStack.push(update.data);
+            }
             update.runUpdate(stateControl);
+            if (update.data) {
+                updateDataStack.push(update.data);
+            }
         });
+        updateDataStack = null;
         delta = null;
         finishedUpdating$(
             Push({
@@ -4124,8 +4206,10 @@ function makeStateControl<
                 return delta !== null;
             },
             queueUpdate,
-            finishedUpdating$: Source(finishedUpdating$),
+            mutationResult$,
             viewDelta$: Source(viewDelta$),
+            finishedUpdating$: Source(finishedUpdating$),
+            selectionChange$: Source(selectionChange$),
             snapshotStateThroughStateView,
             transformSelectionForwardsFromFirstStateViewToSecondStateView,
         },
@@ -4762,7 +4846,7 @@ interface BatchMutation<
     VoidConfig extends NodeConfig,
 > {
     [BatchMutationBrandSymbol]: undefined;
-    mutations: (
+    readonly mutations: readonly (
         | Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
         | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
     )[];
@@ -5150,6 +5234,7 @@ function makeRemoveContentsSelectionTransformFn<
                 rangeId,
                 rangeId,
                 selectionRange.intention,
+                selectionRange.data,
                 selectionRange.id,
             );
         }
@@ -5167,6 +5252,7 @@ function makeRemoveContentsSelectionTransformFn<
             newSelectionRanges.find((range) => range.id === selectionRange.focusRangeId)?.id ??
                 (getIsSelectionRangeAnchorAfterFocusCached() ? newSelectionRanges[0] : newSelectionRanges[newSelectionRanges.length - 1]).id,
             selectionRange.intention,
+            selectionRange.data,
             selectionRange.id,
         );
     };
@@ -5284,6 +5370,7 @@ function makeRemoveBlocksSelectionTransformFn<
                 rangeId,
                 rangeId,
                 selectionRange.intention,
+                selectionRange.data,
                 selectionRange.id,
             );
         }
@@ -5301,6 +5388,7 @@ function makeRemoveBlocksSelectionTransformFn<
             newSelectionRanges.find((range) => range.id === selectionRange.focusRangeId)?.id ??
                 (getIsSelectionRangeAnchorAfterFocusCached() ? newSelectionRanges[0] : newSelectionRanges[newSelectionRanges.length - 1]).id,
             selectionRange.intention,
+            selectionRange.data,
             selectionRange.id,
         );
     };
@@ -5654,6 +5742,7 @@ function applyMutation<
             const newParagraph = makeParagraph(newParagraphConfig, paragraphChildrenBeforePoint, newParagraphId);
             const contentReference = makeContentReferenceFromContent(content);
             registerBlockInDocument(document, newParagraph, contentReference);
+            content.blockReferences.splice(paragraphIndex, 0, makeBlockReferenceFromBlock(newParagraph));
             if (viewDeltaControl) {
                 const paragraphReference = makeBlockReferenceFromBlock(paragraph);
                 if (splitAtParagraphPoint.offset > 0) {
@@ -5672,7 +5761,6 @@ function applyMutation<
                     contentReference,
                 );
             }
-            content.blockReferences.splice(paragraphIndex, 0, makeBlockReferenceFromBlock(newParagraph));
             const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
                 return makeSelectionRange(
                     selectionRange.ranges.map((range) => {
@@ -5726,6 +5814,7 @@ function applyMutation<
                     selectionRange.anchorRangeId,
                     selectionRange.focusRangeId,
                     selectionRange.intention,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             };
@@ -5808,6 +5897,7 @@ function applyMutation<
                     selectionRange.anchorRangeId,
                     selectionRange.focusRangeId,
                     selectionRange.intention,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             };
@@ -5864,6 +5954,7 @@ function applyMutation<
                     selectionRange.anchorRangeId,
                     selectionRange.focusRangeId,
                     selectionRange.intention,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             };
@@ -5898,7 +5989,7 @@ function applyMutation<
             }
             viewDeltaControl?.markBlockAtBlockReferenceRemovedInContentAtContentReference(makeBlockReferenceFromBlock(firstParagraph), contentReference);
             const secondParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, secondParagraphReference);
-            content.blockReferences.splice(secondParagraphIndex + 1, 1);
+            content.blockReferences.splice(secondParagraphIndex - 1, 1);
             const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
                 return makeSelectionRange(
                     selectionRange.ranges.map((range) => {
@@ -5933,6 +6024,7 @@ function applyMutation<
                     selectionRange.anchorRangeId,
                     selectionRange.focusRangeId,
                     selectionRange.intention,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             };
@@ -6059,6 +6151,7 @@ function applyMutation<
                     selectionRange.anchorRangeId,
                     selectionRange.focusRangeId,
                     selectionRange.intention,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             };
@@ -6898,7 +6991,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
                     return undefined;
                 }
                 assertIsNotNullish(endRange);
-                return makeSelectionRange([endRange], endRange.id, endRange.id, selectionRange.intention, selectionRange.id);
+                return makeSelectionRange([endRange], endRange.id, endRange.id, selectionRange.intention, selectionRange.data, selectionRange.id);
             };
         }
         delta.applyMutation(makeBatchMutation(mutations), undefined, customTransformStateSelectionRangeFn);
@@ -7316,6 +7409,7 @@ type PointTransformFn<
     selectionRangeIntention: SelectionRangeIntention,
     range: Range,
     point: Point,
+    selectionRange: SelectionRange,
 ) => PointWithContentReference;
 type ShouldSelectionRangeCollapseFn<
     DocumentConfig extends NodeConfig,
@@ -7353,11 +7447,18 @@ function moveSelectionByPointTransformFnThroughAnchorPoint<
             if (range.id !== selectionRange.anchorRangeId) {
                 return [];
             }
-            const focusPoint = getAnchorPointFromRange(range);
-            const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint);
+            const anchorPoint = getAnchorPointFromRange(range);
+            const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, anchorPoint, selectionRange);
             return [makeRange(contentReference, point, point, range.id)];
         });
-        return makeSelectionRange(newRanges, selectionRange.anchorRangeId, selectionRange.anchorRangeId, selectionRange.intention, selectionRange.id);
+        return makeSelectionRange(
+            newRanges,
+            selectionRange.anchorRangeId,
+            selectionRange.anchorRangeId,
+            selectionRange.intention,
+            selectionRange.data,
+            selectionRange.id,
+        );
     });
 }
 function moveSelectionByPointTransformFnThroughFocusPoint<
@@ -7385,10 +7486,17 @@ function moveSelectionByPointTransformFnThroughFocusPoint<
                 return [];
             }
             const focusPoint = getFocusPointFromRange(range);
-            const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint);
+            const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint, selectionRange);
             return [makeRange(contentReference, point, point, range.id)];
         });
-        return makeSelectionRange(newRanges, selectionRange.focusRangeId, selectionRange.focusRangeId, selectionRange.intention, selectionRange.id);
+        return makeSelectionRange(
+            newRanges,
+            selectionRange.focusRangeId,
+            selectionRange.focusRangeId,
+            selectionRange.intention,
+            selectionRange.data,
+            selectionRange.id,
+        );
     });
 }
 type ShouldExtendSelectionRangeFn<
@@ -7438,7 +7546,7 @@ function extendSelectionByPointTransformFns<
             let movedAnchorPointContentReference: ContentReference;
             let movedAnchorPoint: Point;
             if (shouldTransformRangeAnchor) {
-                const movedPointInfo = anchorPointTransformFn(document, stateControlConfig, selectionRange.intention, range, anchorPoint);
+                const movedPointInfo = anchorPointTransformFn(document, stateControlConfig, selectionRange.intention, range, anchorPoint, selectionRange);
                 movedAnchorPointContentReference = movedPointInfo.contentReference;
                 movedAnchorPoint = movedPointInfo.point;
             } else {
@@ -7448,7 +7556,7 @@ function extendSelectionByPointTransformFns<
             let movedFocusPointContentReference: ContentReference;
             let movedFocusPoint: Point;
             if (shouldTransformRangeFocus) {
-                const movedPointInfo = focusPointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint);
+                const movedPointInfo = focusPointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint, selectionRange);
                 movedFocusPointContentReference = movedPointInfo.contentReference;
                 movedFocusPoint = movedPointInfo.point;
             } else {
@@ -7470,7 +7578,7 @@ function extendSelectionByPointTransformFns<
             }
             return replacedRanges;
         });
-        return makeSelectionRange(newRanges, newAnchorRangeId, selectionRange.focusRangeId, selectionRange.intention, selectionRange.id);
+        return makeSelectionRange(newRanges, newAnchorRangeId, selectionRange.focusRangeId, selectionRange.intention, selectionRange.data, selectionRange.id);
     });
 }
 function makeMoveSelectionByPointTransformFnThroughAnchorPointUpdateFn<
@@ -7592,6 +7700,7 @@ function makeRemoveSelectionContentsUpdateFn<
                                       rangesWithSelectionRange[0].range.id,
                                       rangesWithSelectionRange[0].range.id,
                                       selectionRange.intention,
+                                      selectionRange.data,
                                       selectionRange.id,
                                   ),
                           ),
@@ -7691,6 +7800,7 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
                                       rangesWithSelectionRange[0].range.id,
                                       rangesWithSelectionRange[0].range.id,
                                       selectionRange.intention,
+                                      selectionRange.data,
                                       selectionRange.id,
                                   ),
                           ),
@@ -7731,28 +7841,6 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
                 break;
             }
         }
-    };
-}
-function makeInsertTextWithConfigAtSelectionUpdateFn<
-    DocumentConfig extends NodeConfig,
-    ContentConfig extends NodeConfig,
-    ParagraphConfig extends NodeConfig,
-    EmbedConfig extends NodeConfig,
-    TextConfig extends NodeConfig,
-    VoidConfig extends NodeConfig,
->(
-    paragraphConfig: ParagraphConfig,
-    textConfig: TextConfig,
-    text: string,
-    selection?: Selection,
-): RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
-    return (stateControl) => {
-        stateControl.delta.applyUpdate(
-            makeInsertContentFragmentAtSelectionUpdateFn(
-                makeContentFragment([makeContentFragmentParagraph(makeParagraph(paragraphConfig, [makeText(textConfig, text)], generateId()))]),
-                selection,
-            ),
-        );
     };
 }
 function makeTransposeAtSelectionUpdateFn<
@@ -7864,6 +7952,7 @@ function makeTransposeAtSelectionUpdateFn<
                     selectionRangeUpdate[1].id,
                     selectionRangeUpdate[1].id,
                     SelectionRangeIntention.Text,
+                    selectionRange.data,
                     selectionRange.id,
                 );
             });
@@ -8157,7 +8246,6 @@ export {
     makeInsertContentsAfterMutation,
     makeInsertContentsAtEndMutation,
     makeInsertContentsBeforeMutation,
-    makeInsertTextWithConfigAtSelectionUpdateFn,
     makeJoinParagraphsBackwardsMutation,
     makeJoinParagraphsForwardsMutation,
     makeListOfAllParentContentReferencesOfContentAtContentReference,
@@ -8253,4 +8341,6 @@ export {
     MovementGranularity,
     PointMovement,
     noopPointTransformFn,
+    type SelectionChangeMessage,
+    type MutationResultMessage,
 };
