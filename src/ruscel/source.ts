@@ -1,7 +1,7 @@
 import { Disposable, implDisposableMethods } from './disposable';
+import { Distributor } from './distributor';
 import { Maybe, Some, None, isNone } from './maybe';
 import { ScheduleFunction, ScheduleInterval, ScheduleTimeout } from './schedule';
-import { Subject } from './subject';
 import { asyncReportError, pipe } from './util';
 type PushType = 0;
 const PushType: PushType = 0;
@@ -124,6 +124,51 @@ function fromArray<T>(array: ArrayLike<T>): Source<T> {
     return Source((sink) => {
         pushArrayItemsToSink(array, sink);
         sink(End);
+    });
+}
+function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T>;
+function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T> {
+    if (schedule) {
+        return Source((sink) => {
+            schedule(() => {
+                sink(event);
+                sink(End);
+            }, sink);
+        });
+    }
+    return Source((sink) => {
+        sink(event);
+        sink(End);
+    });
+}
+function combine<T extends unknown[]>(sources: { [K in keyof T]: Source<T[K]> }): Source<T>;
+function combine<T>(sources: Source<T>[]): Source<T[]> {
+    if (sources.length === 0) {
+        return ofEvent(End);
+    }
+    return Source((sink) => {
+        const valueMaybes: Maybe<T>[] = [];
+        for (let i = 0; i < sources.length; i++) {
+            valueMaybes[i] = None;
+        }
+        let responded = 0;
+        for (let i = 0; i < sources.length && sink.active; i++) {
+            const sourceSink = Sink<T>((event) => {
+                if (event.type !== PushType) {
+                    sink(event);
+                    return;
+                }
+                if (isNone(valueMaybes[i])) {
+                    responded++;
+                }
+                valueMaybes[i] = Some(event.value);
+                if (responded === sources.length) {
+                    sink(Push(valueMaybes.map((valueMaybe) => (valueMaybe as Some<T>).value)));
+                }
+            });
+            sink.add(sourceSink);
+            sources[i](sourceSink);
+        }
     });
 }
 interface Operator<T, U> {
@@ -418,37 +463,37 @@ function startWith<T>(...values: T[]): <U>(source: Source<U>) => Source<T | U> {
 interface ControllableSource<T> extends Source<T> {
     produce(): void;
 }
-function shareControlled<T>(Subject_: () => Subject<T>): (source: Source<T>) => ControllableSource<T>;
-function shareControlled(Subject_?: typeof Subject): <T>(source: Source<T>) => ControllableSource<T>;
-function shareControlled(Subject_ = Subject): <T>(source: Source<T>) => ControllableSource<T> {
+function shareControlled<T>(Distributor_: () => Distributor<T>): (source: Source<T>) => ControllableSource<T>;
+function shareControlled(Distributor_?: typeof Distributor): <T>(source: Source<T>) => ControllableSource<T>;
+function shareControlled(Distributor_ = Distributor): <T>(source: Source<T>) => ControllableSource<T> {
     return <T>(source: Source<T>) => {
-        let subject: Subject<T> | undefined;
+        let distributor: Distributor<T> | undefined;
         const controllable = Source<T>((sink) => {
-            if (!subject || !subject.active) {
-                subject = Subject_();
+            if (!distributor || !distributor.active) {
+                distributor = Distributor_();
             }
-            subject(sink);
+            distributor(sink);
         }) as ControllableSource<T>;
         function produce(): void {
-            if (!subject || !subject.active) {
-                subject = Subject_();
+            if (!distributor || !distributor.active) {
+                distributor = Distributor_();
             }
-            source(subject);
+            source(distributor);
         }
         controllable.produce = produce;
         return controllable;
     };
 }
-function share<T>(Subject_: () => Subject<T>): Operator<T, T>;
-function share(Subject_?: typeof Subject): IdentityOperator;
-function share(Subject_ = Subject): IdentityOperator {
+function share<T>(Distributor_: () => Distributor<T>): Operator<T, T>;
+function share(Distributor_?: typeof Distributor): IdentityOperator;
+function share(Distributor_ = Distributor): IdentityOperator {
     return <T>(source: Source<T>): Source<T> => {
-        let subject: Subject<T>;
+        let distributor: Distributor<T>;
         const shared = pipe(
             source,
             shareControlled(() => {
-                subject = Subject_();
-                return subject;
+                distributor = Distributor_();
+                return distributor;
             }),
         );
         let subscriberCount = 0;
@@ -457,7 +502,7 @@ function share(Subject_ = Subject): IdentityOperator {
                 Disposable(() => {
                     subscriberCount--;
                     if (subscriberCount === 0) {
-                        subject.dispose();
+                        distributor.dispose();
                     }
                 }),
             );
@@ -470,68 +515,53 @@ function share(Subject_ = Subject): IdentityOperator {
         });
     };
 }
-function shareOnce<T>(Subject_: () => Subject<T>): Operator<T, T>;
-function shareOnce(Subject_?: typeof Subject): IdentityOperator;
-function shareOnce(Subject_ = Subject): IdentityOperator {
+function shareOnce<T>(Distributor_: () => Distributor<T>): Operator<T, T>;
+function shareOnce(Distributor_?: typeof Distributor): IdentityOperator;
+function shareOnce(Distributor_ = Distributor): IdentityOperator {
     return <T>(source: Source<T>): Source<T> => {
-        const subject = Subject_<T>();
+        const distributor = Distributor_<T>();
         return pipe(
             source,
-            share(() => subject),
+            share(() => distributor),
         );
     };
 }
-function sharePersist<T>(Subject_: () => Subject<T>): Operator<T, T>;
-function sharePersist(Subject_?: typeof Subject): IdentityOperator;
-function sharePersist(Subject_ = Subject): IdentityOperator {
+function sharePersist<T>(Distributor_: () => Distributor<T>): Operator<T, T>;
+function sharePersist(Distributor_?: typeof Distributor): IdentityOperator;
+function sharePersist(Distributor_ = Distributor): IdentityOperator {
     return <T>(source: Source<T>): Source<T> => {
-        let subject: Subject<T> | undefined;
+        let distributor: Distributor<T> | undefined;
         const shared = pipe(
             source,
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            shareControlled(() => subject!),
+            shareControlled(() => distributor!),
         );
         return Source((sink) => {
-            if (!subject) {
-                subject = Subject_();
+            if (!distributor) {
+                distributor = Distributor_();
             }
             shared(sink);
             shared.produce();
         });
     };
 }
-function shareTransform<T, U>(Subject_: () => Subject<T>, transform: (shared: Source<T>) => Source<U>): Operator<T, U>;
-function shareTransform<U>(Subject_: typeof Subject, transform: <T>(source: Source<T>) => Source<U>): <T>(shared: Source<T>) => Source<U>;
-function shareTransform<T, U>(Subject_: () => Subject<T>, transform: (shared: Source<T>) => Source<U>): Operator<T, U> {
+function shareTransform<T, U>(Distributor_: () => Distributor<T>, transform: (shared: Source<T>) => Source<U>): Operator<T, U>;
+function shareTransform<U>(Distributor_: typeof Distributor, transform: <T>(source: Source<T>) => Source<U>): <T>(shared: Source<T>) => Source<U>;
+function shareTransform<T, U>(Distributor_: () => Distributor<T>, transform: (shared: Source<T>) => Source<U>): Operator<T, U> {
     return (source) =>
         Source((sink) => {
-            const subject = Subject_();
+            const distributor = Distributor_();
             let transformed: Source<U>;
             try {
-                transformed = transform(subject);
+                transformed = transform(distributor);
             } catch (error) {
                 sink(Throw(error));
                 return;
             }
             transformed(sink);
-            sink.add(subject);
-            source(subject);
+            sink.add(distributor);
+            source(distributor);
         });
-}
-function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T>;
-function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T> {
-    if (schedule) {
-        return Source((sink) => {
-            schedule(() => {
-                sink(event);
-                sink(End);
-            }, sink);
-        });
-    }
-    return Source((sink) => {
-        sink(event);
-        sink(End);
-    });
 }
 function timer(durationMs: number): Source<never> {
     return ofEvent(End, ScheduleTimeout(durationMs));
@@ -560,6 +590,189 @@ function take(amount: number): IdentityOperator {
             source(sourceSink);
         });
 }
+type DebounceTrailingRestart = 'restart';
+const DebounceTrailingRestart: DebounceTrailingRestart = 'restart';
+interface DebounceConfig {
+    leading?: boolean | null;
+    trailing?: boolean | DebounceTrailingRestart | null;
+    emitPendingOnEnd?: boolean | null;
+}
+const defaultDebounceConfig: DebounceConfig = {
+    leading: false,
+    trailing: true,
+    emitPendingOnEnd: true,
+};
+type InitialDurationInfo =
+    | [/* durationSource */ Source<unknown>, /* maxDurationSource */ (Source<unknown> | undefined | null)?]
+    | [/* durationSource */ undefined | null, /* maxDurationSource */ Source<unknown>];
+function debounce<T>(
+    getDurationSource: (value: T, index: number) => Source<unknown>,
+    getInitialDurationRange?: ((firstDebouncedValue: T, index: number) => InitialDurationInfo) | null,
+    config?: DebounceConfig | null,
+): Operator<T, T>;
+function debounce<T>(
+    getDurationSource: undefined | null,
+    getInitialDurationRange: (firstDebouncedValue: T, index: number) => InitialDurationInfo,
+    config?: DebounceConfig | null,
+): Operator<T, T>;
+function debounce<T>(
+    getDurationSource?: ((value: T, index: number) => Source<unknown>) | null,
+    getInitialDurationRange?: ((firstDebouncedValue: T, index: number) => InitialDurationInfo) | null,
+    config?: DebounceConfig | null,
+): Operator<T, T> {
+    let leading: DebounceConfig['leading'];
+    let trailing: DebounceConfig['trailing'];
+    let emitPendingOnEnd: DebounceConfig['emitPendingOnEnd'];
+    if (config) {
+        leading = config.leading == null ? defaultDebounceConfig.leading : config.leading;
+        trailing = config.trailing == null ? defaultDebounceConfig.trailing : config.trailing;
+        emitPendingOnEnd = config.emitPendingOnEnd == null ? defaultDebounceConfig.emitPendingOnEnd : config.emitPendingOnEnd;
+    }
+    return (source) =>
+        Source<T>((sink) => {
+            let latestPush: Push<T>;
+            let durationSink: Sink<unknown>;
+            let maxDurationSink: Sink<unknown> | true | undefined;
+            let distributing = false;
+            let lastPushedIdx = 0;
+            let idx = 0;
+            function onDurationEvent(event: Event<unknown>): void {
+                if (event.type === ThrowType) {
+                    sink(event);
+                    return;
+                }
+                if (durationSink) durationSink.dispose();
+                if (maxDurationSink && maxDurationSink !== true) {
+                    maxDurationSink.dispose();
+                }
+                maxDurationSink = undefined;
+                if (trailing && idx > lastPushedIdx) {
+                    if (trailing === DebounceTrailingRestart) {
+                        const _latestPush = latestPush;
+                        const _idx = idx;
+                        distributing = true;
+                        lastPushedIdx = _idx;
+                        sink(_latestPush);
+                        distributing = false;
+                        startDebounce(_latestPush, _idx);
+                    } else {
+                        // No logic after this so we can straight up push.
+                        sink(latestPush);
+                    }
+                }
+            }
+            function restartDebounce(durationSource?: Source<unknown>): void {
+                if (!getDurationSource) {
+                    return;
+                }
+                if (durationSink) durationSink.dispose();
+                durationSink = Sink(onDurationEvent);
+                sourceSink.add(durationSink);
+                let durationSource_ = durationSource;
+                if (!durationSource_) {
+                    try {
+                        durationSource_ = getDurationSource(latestPush.value, idx);
+                    } catch (error) {
+                        sink(Throw(error));
+                        return;
+                    }
+                }
+                durationSource_(durationSink);
+            }
+            function startDebounce(_latestPush: Push<T>, _idx: number): void {
+                if (getInitialDurationRange) {
+                    maxDurationSink = Sink(onDurationEvent);
+                    sourceSink.add(maxDurationSink);
+                } else {
+                    maxDurationSink = true;
+                    restartDebounce();
+                    return;
+                }
+                let initialDurationInfo: InitialDurationInfo;
+                try {
+                    initialDurationInfo = getInitialDurationRange(_latestPush.value, _idx);
+                } catch (error) {
+                    sink(Throw(error));
+                    return;
+                }
+                const [durationSource, maxDurationSource] = initialDurationInfo;
+                const _maxDurationSink = maxDurationSink;
+                if (maxDurationSource) {
+                    maxDurationSource(_maxDurationSink);
+                }
+                if (durationSource && _maxDurationSink.active) {
+                    restartDebounce(durationSource);
+                }
+            }
+            const sourceSink = Sink<T>((event) => {
+                if (event.type === PushType) {
+                    latestPush = event;
+                    idx++;
+                    if (distributing) {
+                        return;
+                    }
+                    if (maxDurationSink) {
+                        restartDebounce();
+                    } else {
+                        const _latestPush = latestPush;
+                        const _idx = idx;
+                        if (leading) {
+                            distributing = true;
+                            lastPushedIdx = idx;
+                            sink(_latestPush);
+                            distributing = false;
+                        }
+                        startDebounce(_latestPush, _idx);
+                    }
+                    return;
+                }
+                if (event.type === EndType && emitPendingOnEnd && maxDurationSink && idx > lastPushedIdx) {
+                    sink(latestPush);
+                }
+                sink(event);
+            });
+            sink.add(sourceSink);
+            source(sourceSink);
+        });
+}
+function debounceMs(durationMs: number, maxDurationMs?: number | null, config?: DebounceConfig | null): IdentityOperator;
+function debounceMs(durationMs: null | undefined, maxDurationMs: number, config?: DebounceConfig | null): IdentityOperator;
+function debounceMs(durationMs?: number | null, maxDurationMs?: number | null, config?: DebounceConfig | null): IdentityOperator {
+    const durationSource = durationMs == null ? durationMs : timer(durationMs);
+    const maxDuration = maxDurationMs == null ? maxDurationMs : timer(maxDurationMs);
+    if (durationSource != null) {
+        return debounce(() => durationSource, maxDuration == null ? maxDuration : () => [durationSource, maxDuration], config);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return debounce(null, () => [null, maxDuration!], config);
+}
+interface ThrottleConfig {
+    leading?: boolean | null;
+    trailing?: boolean | null;
+    emitPendingOnEnd?: boolean | null;
+}
+const defaultThrottleConfig: ThrottleConfig = {
+    leading: true,
+    trailing: true,
+    emitPendingOnEnd: true,
+};
+function throttle(getDurationSource: () => Source<unknown>, config?: ThrottleConfig | null): IdentityOperator;
+function throttle<T>(getDurationSource: (value: T, index: number) => Source<unknown>, config?: ThrottleConfig | null): Operator<T, T>;
+function throttle<T>(getDurationSource: (value: T, index: number) => Source<unknown>, config?: ThrottleConfig | null): Operator<T, T> {
+    let leading: ThrottleConfig['leading'];
+    let trailing: ThrottleConfig['trailing'];
+    let emitPendingOnEnd: ThrottleConfig['emitPendingOnEnd'];
+    if (config) {
+        leading = config.leading == null ? defaultThrottleConfig.leading : config.leading;
+        trailing = config.trailing == null ? defaultThrottleConfig.trailing : config.trailing;
+        emitPendingOnEnd = config.emitPendingOnEnd == null ? defaultThrottleConfig.emitPendingOnEnd : config.emitPendingOnEnd;
+    }
+    return debounce<T>(null, (value, index) => [null, getDurationSource(value, index)], { leading, trailing, emitPendingOnEnd });
+}
+function throttleMs(durationMs: number, config?: ThrottleConfig | null): IdentityOperator {
+    const durationSource = timer(durationMs);
+    return throttle(() => durationSource, config);
+}
 export {
     PushType,
     ThrowType,
@@ -577,6 +790,8 @@ export {
     isSource,
     subscribe,
     fromArray,
+    ofEvent,
+    combine,
     type Operator,
     type IdentityOperator,
     flatMap,
@@ -598,7 +813,16 @@ export {
     shareOnce,
     sharePersist,
     shareTransform,
-    ofEvent,
     timer,
     take,
+    type DebounceTrailingRestart,
+    type DebounceConfig,
+    defaultDebounceConfig,
+    type InitialDurationInfo,
+    debounce,
+    debounceMs,
+    type ThrottleConfig,
+    defaultThrottleConfig,
+    throttle,
+    throttleMs,
 };

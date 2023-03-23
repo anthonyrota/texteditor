@@ -2,15 +2,15 @@ import { Disposable, implDisposableMethods, DisposalError } from './disposable';
 import { isSome, Maybe, None, Some } from './maybe';
 import { PushType, Event, Push, Throw, End, Source, isSource, Sink, isSink, ThrowType, $$Sink, $$Source } from './source';
 import { asyncReportError, joinErrors } from './util';
-interface Subject<T> extends Source<T>, Sink<T> {
+interface Distributor<T> extends Source<T>, Sink<T> {
     (eventOrSink: Event<T> | Sink<T>): void;
 }
-function markAsSubject<T>(subjectFunction: ((eventOrSink: Event<T> | Sink<T>) => void) & Disposable): Subject<T> {
-    (subjectFunction as Subject<T>)[$$Sink] = undefined;
-    (subjectFunction as Subject<T>)[$$Source] = undefined;
-    return subjectFunction as Subject<T>;
+function markAsDistributor<T>(distributorFunction: ((eventOrSink: Event<T> | Sink<T>) => void) & Disposable): Distributor<T> {
+    (distributorFunction as Distributor<T>)[$$Sink] = undefined;
+    (distributorFunction as Distributor<T>)[$$Source] = undefined;
+    return distributorFunction as Distributor<T>;
 }
-function isSubject(value: unknown): value is Subject<unknown> {
+function isDistributor(value: unknown): value is Distributor<unknown> {
     return isSource(value) && isSink(value);
 }
 interface SinkInfo<T> {
@@ -18,15 +18,15 @@ interface SinkInfo<T> {
     __didRemove: boolean;
     __notAdded: boolean;
 }
-interface SubjectBasePrivateActiveState<T> {
+interface DistributorBasePrivateActiveState<T> {
     __sinkInfos: SinkInfo<T>[];
     __sinksToAdd: SinkInfo<T>[];
     __eventsQueue: Event<T>[];
 }
-function SubjectBase<T>(): Subject<T> {
+function DistributorBase<T>(): Distributor<T> {
     let distributingEvent = false;
     let sinkIndex = 0;
-    let state: SubjectBasePrivateActiveState<T> | null = {
+    let state: DistributorBasePrivateActiveState<T> | null = {
         __sinkInfos: [],
         __sinksToAdd: [],
         __eventsQueue: [],
@@ -45,13 +45,13 @@ function SubjectBase<T>(): Subject<T> {
             nullifyState();
         }
     });
-    return markAsSubject(
+    return markAsDistributor(
         implDisposableMethods((eventOrSink: Event<T> | Sink<T>): void => {
             if (!disposable.active) {
                 if (typeof eventOrSink !== 'function' && eventOrSink.type === ThrowType) {
                     const { error } = eventOrSink;
                     asyncReportError(
-                        `A Throw event was intercepted by a disposed Subject: ${
+                        `A Throw event was intercepted by a disposed Distributor: ${
                             // eslint-disable-next-line max-len
                             // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
                             (error instanceof Error && error.stack) || error
@@ -106,7 +106,7 @@ function SubjectBase<T>(): Subject<T> {
                             sinkInfos.splice(index, 1);
                             return;
                         }
-                        // Nothing is happening in relation to this subject.
+                        // Nothing is happening in relation to this distributor.
                         const index = sinkInfos.indexOf(sinkInfo);
                         if (index !== -1) {
                             sinkInfos.splice(index, 1);
@@ -183,7 +183,7 @@ function SubjectBase<T>(): Subject<T> {
                     nullifyState();
                 }
                 if (errors.length > 0) {
-                    throw new SubjectDistributionSinkDisposalError(errors);
+                    throw new DistributorDistributionSinkDisposalError(errors);
                 }
             } else if (eventOrSink.type !== PushType) {
                 if (eventOrSink.type === ThrowType) {
@@ -194,18 +194,21 @@ function SubjectBase<T>(): Subject<T> {
         }, disposable),
     );
 }
-class SubjectDistributionSinkDisposalError extends Error {
-    name = 'SubjectDistributionSinkDisposalError';
+class DistributorDistributionSinkDisposalError extends Error {
+    name = 'DistributorDistributionSinkDisposalError';
     constructor(public errors: DisposalError[], options?: ErrorOptions) {
-        super(`${errors.length} error${errors.length === 1 ? ' was' : 's were'} caught while distributing an event through a subject.${joinErrors(errors)}`, {
-            cause: options?.cause !== undefined ? { errors, originalCause: options.cause } : { errors },
-        });
+        super(
+            `${errors.length} error${errors.length === 1 ? ' was' : 's were'} caught while distributing an event through a distributor.${joinErrors(errors)}`,
+            {
+                cause: options?.cause !== undefined ? { errors, originalCause: options.cause } : { errors },
+            },
+        );
     }
 }
-function Subject<T>(): Subject<T> {
-    const base = SubjectBase<T>();
+function Distributor<T>(): Distributor<T> {
+    const base = DistributorBase<T>();
     let finalEvent: Throw | End | undefined;
-    return markAsSubject(
+    return markAsDistributor(
         implDisposableMethods((eventOrSink: Event<T> | Sink<T>): void => {
             if (typeof eventOrSink === 'function') {
                 if (finalEvent) {
@@ -225,60 +228,68 @@ function Subject<T>(): Subject<T> {
         }, base),
     );
 }
-interface CurrentValueSubject<T> extends Subject<T> {
+interface CurrentValueDistributor<T> extends Distributor<T> {
     currentValue: T;
 }
-function CurrentValueSubject<T>(initialValue: T, pushCurrentValue = true): CurrentValueSubject<T> {
-    const base = Subject<T>();
-    const subject = markAsSubject(
+function CurrentValueDistributor<T>(initialValue: T, pushCurrentValue = true): CurrentValueDistributor<T> {
+    const base = Distributor<T>();
+    const distributor = markAsDistributor(
         implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
             if (typeof eventOrSink === 'function') {
                 base(eventOrSink);
                 if (pushCurrentValue && eventOrSink.active) {
-                    eventOrSink(Push(subject.currentValue));
+                    eventOrSink(Push(distributor.currentValue));
                 }
             } else {
                 if (eventOrSink.type === PushType) {
-                    subject.currentValue = eventOrSink.value;
+                    distributor.currentValue = eventOrSink.value;
                 }
                 base(eventOrSink);
             }
         }, base),
-    ) as CurrentValueSubject<T>;
-    subject.currentValue = initialValue;
-    subject.add(base);
-    return subject;
+    ) as CurrentValueDistributor<T>;
+    distributor.currentValue = initialValue;
+    distributor.add(base);
+    return distributor;
 }
-interface CurrentAndPreviousValueSubject<T> extends Subject<T> {
+interface CurrentAndPreviousValueDistributor<T> extends Distributor<T> {
     previousValue: Maybe<T>;
     currentValue: T;
 }
-function CurrentAndPreviousValueSubject<T>(initialValue: T, pushCurrentValue = true, pushPreviousValue = false): CurrentAndPreviousValueSubject<T> {
-    const base = Subject<T>();
-    const subject = markAsSubject(
+function CurrentAndPreviousValueDistributor<T>(initialValue: T, pushCurrentValue = true, pushPreviousValue = false): CurrentAndPreviousValueDistributor<T> {
+    const base = Distributor<T>();
+    const distributor = markAsDistributor(
         implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
             if (typeof eventOrSink === 'function') {
                 if (eventOrSink.active) {
                     base(eventOrSink);
-                    if (pushPreviousValue && isSome(subject.previousValue)) {
-                        eventOrSink(Push(subject.previousValue.value));
+                    if (pushPreviousValue && isSome(distributor.previousValue)) {
+                        eventOrSink(Push(distributor.previousValue.value));
                     }
                     if (pushCurrentValue) {
-                        eventOrSink(Push(subject.currentValue));
+                        eventOrSink(Push(distributor.currentValue));
                     }
                 }
             } else {
                 if (eventOrSink.type === PushType) {
-                    subject.previousValue = Some(subject.currentValue);
-                    subject.currentValue = eventOrSink.value;
+                    distributor.previousValue = Some(distributor.currentValue);
+                    distributor.currentValue = eventOrSink.value;
                 }
                 base(eventOrSink);
             }
         }, base),
-    ) as CurrentAndPreviousValueSubject<T>;
-    subject.previousValue = None;
-    subject.currentValue = initialValue;
-    subject.add(base);
-    return subject;
+    ) as CurrentAndPreviousValueDistributor<T>;
+    distributor.previousValue = None;
+    distributor.currentValue = initialValue;
+    distributor.add(base);
+    return distributor;
 }
-export { markAsSubject, isSubject, SubjectBase, SubjectDistributionSinkDisposalError, Subject, CurrentValueSubject, CurrentAndPreviousValueSubject };
+export {
+    markAsDistributor,
+    isDistributor,
+    DistributorBase,
+    DistributorDistributionSinkDisposalError,
+    Distributor,
+    CurrentValueDistributor,
+    CurrentAndPreviousValueDistributor,
+};

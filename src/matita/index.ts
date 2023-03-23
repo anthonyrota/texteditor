@@ -4,8 +4,8 @@
 // TODO: make config immutable and out its update operations.
 import { v4 as makeUuidV4 } from 'uuid';
 import { Disposable, implDisposableMethods } from '../ruscel/disposable';
+import { Distributor } from '../ruscel/distributor';
 import { End, Push, Source } from '../ruscel/source';
-import { Subject } from '../ruscel/subject';
 import { requestAnimationFrameDisposable } from '../ruscel/util';
 import { assertUnreachable, throwUnreachable, throwNotImplemented, assert, assertIsNotNullish } from '../util';
 type JsonPrimitive = undefined | null | string | number | boolean;
@@ -395,7 +395,7 @@ function cloneNestedBlockAndChangeIds<
 >(nestedBlock: NestedBlock<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): NestedBlock<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
     return makeNestedBlock(cloneBlockAndChangeIds(nestedBlock.block), nestedBlock.contentReference);
 }
-interface NodeConfig extends JsonMap {}
+type NodeConfig = JsonMap;
 interface NodeBase<Type extends NodeType, Config extends NodeConfig> {
     readonly type: Type;
     readonly id: string;
@@ -2120,7 +2120,7 @@ enum SelectionRangeIntention {
     Block = 'Block',
     Text = 'Text',
 }
-type SelectionRangeData = JsonMap;
+type SelectionRangeData = Record<string, unknown>;
 interface SelectionRange {
     readonly ranges: readonly Range[]; // TODO: remove text collapsed non focus/anchor ranges.
     readonly anchorRangeId: string;
@@ -2208,7 +2208,8 @@ function areSelectionRangesEqual(selectionRange1: SelectionRange, selectionRange
         selectionRange1.ranges.every((range, i) => areRangesEqual(range, selectionRange2.ranges[i])) &&
         selectionRange1.anchorRangeId === selectionRange2.anchorRangeId &&
         selectionRange1.focusRangeId === selectionRange2.focusRangeId &&
-        areJsonEqual(selectionRange1.data, selectionRange2.data) &&
+        Object.keys(selectionRange1.data).length === Object.keys(selectionRange2).length &&
+        Object.keys(selectionRange1.data).every((key) => selectionRange1.data[key] === selectionRange2.data[key]) &&
         selectionRange1.id === selectionRange2.id
     );
 }
@@ -2600,9 +2601,9 @@ function makeViewControl<
             applyViewDeltaChange(group.items[0]);
         });
     }
-    const contentRenderControlRegisterUnregister$ = Subject<ContentRenderControlRegisterUnregisterEvent<MyContentRenderControl>>();
-    const paragraphRenderControlRegisterUnregister$ = Subject<ParagraphRenderControlRegisterUnregisterEvent<MyParagraphRenderControl>>();
-    const embedRenderControlRegisterUnregister$ = Subject<EmbedRenderControlRegisterUnregisterEvent<MyEmbedRenderControl>>();
+    const contentRenderControlRegisterUnregister$ = Distributor<ContentRenderControlRegisterUnregisterEvent<MyContentRenderControl>>();
+    const paragraphRenderControlRegisterUnregister$ = Distributor<ParagraphRenderControlRegisterUnregisterEvent<MyParagraphRenderControl>>();
+    const embedRenderControlRegisterUnregister$ = Distributor<EmbedRenderControlRegisterUnregisterEvent<MyEmbedRenderControl>>();
     disposable.add(contentRenderControlRegisterUnregister$);
     disposable.add(paragraphRenderControlRegisterUnregister$);
     disposable.add(embedRenderControlRegisterUnregister$);
@@ -3615,7 +3616,7 @@ interface MutationSelectionToTransform {
     shouldTransformAsSelection?: boolean;
 }
 type CustomTransformStateSelectionRangeFn = (selectionRange: SelectionRange) => SelectionRange | null | undefined; // Undefined means defer back to default.
-type SelectionChangeData = JsonMap;
+type SelectionChangeData = Record<string, unknown>;
 interface Delta<
     DocumentConfig extends NodeConfig,
     ContentConfig extends NodeConfig,
@@ -3680,7 +3681,7 @@ interface SelectionChangeMessage {
     data?: SelectionChangeData;
     updateDataStack: UpdateData[];
 }
-type UpdateData = JsonMap;
+type UpdateData = Record<string, unknown>;
 interface MutationResultMessage<
     DocumentConfig extends NodeConfig,
     ContentConfig extends NodeConfig,
@@ -3985,12 +3986,12 @@ function makeStateControl<
         return makeStateViewOfStateAfterDynamicMutationReferenceId(() => latestMutationReference_.mutationId, false);
     }
     let delta: Delta<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | null = null;
-    const mutationPartResult$ = Subject<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
-    const viewDelta$ = Subject<ViewDelta>();
+    const mutationPartResult$ = Distributor<MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
+    const viewDelta$ = Distributor<ViewDelta>();
     disposable.add(viewDelta$);
-    const finishedUpdating$ = Subject<FinishedUpdatingMessage>();
+    const finishedUpdating$ = Distributor<FinishedUpdatingMessage>();
     disposable.add(finishedUpdating$);
-    const selectionChange$ = Subject<SelectionChangeMessage>();
+    const selectionChange$ = Distributor<SelectionChangeMessage>();
     let updateDataStack: UpdateData[] | null = null;
     function runUpdates(): void {
         let didApplyMutation = false;
@@ -4095,7 +4096,7 @@ function makeStateControl<
                     }),
                 );
             };
-            const afterMutation$ = Subject<never>();
+            const afterMutation$ = Distributor<never>();
             if (isBatchMutation(mutation)) {
                 forEachMutationInBatchMutation(mutation, onMutation);
             } else {

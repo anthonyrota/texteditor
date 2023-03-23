@@ -12,10 +12,13 @@ interface Disposable {
     [$$Disposable]: DisposableImplementationIdentifier;
 }
 interface DisposableImplementationBase extends Disposable {
+    __id: number;
     __children_: () => DisposableImplementationBase[] | null;
     __prepareForDisposal: () => void;
 }
+let lastId = 0;
 class RealDisposableImplementation implements DisposableImplementationBase {
+    public __id = ++lastId;
     private __children: DisposableImplementationBase[] | null = [];
     private __parents: DisposableImplementationBase[] | null = [];
     private __markedForDisposal = false;
@@ -51,7 +54,7 @@ class RealDisposableImplementation implements DisposableImplementationBase {
             this.dispose();
             return;
         }
-        if (child === this) {
+        if ((child as DisposableImplementationBase).__id === this.__id) {
             return;
         }
         this.__children.push(child as DisposableImplementationBase);
@@ -171,6 +174,7 @@ function implDisposableMethods<T extends object>(value: T, disposable = Disposab
         fakeDisposable.__children_ = disposableImplementation.__children_;
         fakeDisposable.__prepareForDisposal = disposableImplementation.__prepareForDisposal;
     }
+    fakeDisposable.__id = disposableImplementation.__id;
     return fakeDisposable as unknown as T & Disposable;
 }
 class DisposalError extends Error {

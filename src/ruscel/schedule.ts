@@ -169,6 +169,10 @@ function ScheduleInterval(delayMs: number): ScheduleFunction {
         setIntervalDisposable(callNext, delayMs, subscription);
     });
 }
+const scheduleMicrotask: ScheduleFunction = queueMicrotask;
+function ScheduleMicrotaskQueued(): ScheduleFunction {
+    return ScheduleQueued(scheduleMicrotask);
+}
 export {
     type ScheduleFunction,
     ScheduleQueued,
@@ -180,4 +184,6 @@ export {
     ScheduleTimeout,
     ScheduleTimeoutQueued,
     ScheduleInterval,
+    scheduleMicrotask,
+    ScheduleMicrotaskQueued,
 };
