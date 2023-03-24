@@ -132,7 +132,7 @@ type Allowed<T extends AnyMapFunction[], Cache extends AnyMapFunction[] = []> = 
       : never
     : never
   : never;
-type Return<T extends AnyMapFunction[]> = Last<T> extends AnyMapFunction ? ReturnType<Last<T>> : never; /** @public */
+type Return<T extends AnyMapFunction[]> = Last<T> extends AnyMapFunction ? ReturnType<Last<T>> : never;
 function pipe<T>(value: T): T;
 function pipe<T, R>(value: T, f1: (value: T) => R): R;
 function pipe<T, A, R>(value: T, f1: (value: T) => A, f2: (value: A) => R): R;
@@ -199,6 +199,60 @@ function pipe<
 >(value: FirstParameter, ...fns: PipeFunctions): Allowed<PipeFunctions> extends never ? never : Return<PipeFunctions>;
 function pipe<T>(value: T, ...fns: ((value: T) => T)[]): T {
   return fns.reduce((acc, elem) => elem(acc), value);
+}
+export function flow(): <T>(x: T) => T;
+export function flow<T, R>(f1: (x: T) => R): (x: T) => R;
+export function flow<T, A, R>(f1: (x: T) => A, f2: (x: A) => R): (x: T) => R;
+export function flow<T, A, B, R>(f1: (x: T) => A, f2: (x: A) => B, f3: (x: B) => R): (x: T) => R;
+export function flow<T, A, B, C, R>(f1: (x: T) => A, f2: (x: A) => B, f3: (x: B) => C, f4: (x: C) => R): (x: T) => R;
+export function flow<T, A, B, C, D, R>(f1: (x: T) => A, f2: (x: A) => B, f3: (x: B) => C, f4: (x: C) => D, f5: (x: D) => R): (x: T) => R;
+export function flow<T, A, B, C, D, E, R>(f1: (x: T) => A, f2: (x: A) => B, f3: (x: B) => C, f4: (x: C) => D, f5: (x: D) => E, f6: (x: E) => R): (x: T) => R;
+export function flow<T, A, B, C, D, E, F, R>(
+  f1: (x: T) => A,
+  f2: (x: A) => B,
+  f3: (x: B) => C,
+  f4: (x: C) => D,
+  f5: (x: D) => E,
+  f6: (x: E) => F,
+  f7: (x: F) => R,
+): (x: T) => R;
+export function flow<T, A, B, C, D, E, F, G, R>(
+  f1: (x: T) => A,
+  f2: (x: A) => B,
+  f3: (x: B) => C,
+  f4: (x: C) => D,
+  f5: (x: D) => E,
+  f6: (x: E) => F,
+  f7: (x: F) => G,
+  f8: (x: G) => R,
+): (x: T) => R;
+export function flow<T, A, B, C, D, E, F, G, H, R>(
+  f1: (x: T) => A,
+  f2: (x: A) => B,
+  f3: (x: B) => C,
+  f4: (x: C) => D,
+  f5: (x: D) => E,
+  f6: (x: E) => F,
+  f7: (x: F) => G,
+  f8: (x: G) => H,
+  f9: (x: H) => R,
+): (x: T) => R;
+export function flow<T, A, B, C, D, E, F, G, H, R>(
+  f1: (x: T) => A,
+  f2: (x: A) => B,
+  f3: (x: B) => C,
+  f4: (x: C) => D,
+  f5: (x: D) => E,
+  f6: (x: E) => F,
+  f7: (x: F) => G,
+  f8: (x: G) => H,
+  f9: (x: H) => R,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ...funcs: Array<(x: any) => any> // TODO.
+): (x: T) => R;
+export function flow<T>(...fns: Array<(x: T) => T>): (x: T) => T;
+export function flow<T>(...fns: Array<(x: T) => T>): (x: T) => T {
+  return (x: T): T => fns.reduce((x, f) => f(x), x);
 }
 export {
   joinErrors,

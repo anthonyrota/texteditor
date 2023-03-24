@@ -2153,24 +2153,18 @@ function getFocusPointFromRange(focusRange: Range): BlockPoint | ParagraphPoint 
 }
 interface Selection {
   readonly selectionRanges: readonly SelectionRange[];
-  readonly focusSelectionRangeId: string | null;
 }
-function makeSelection(selectionRanges: readonly SelectionRange[], focusSelectionRangeId: string | null): Selection {
+function makeSelection(selectionRanges: readonly SelectionRange[]): Selection {
   return {
     selectionRanges,
-    focusSelectionRangeId,
   };
 }
+// TODO.
 function getFocusSelectionRangeFromSelection(selection: Selection): SelectionRange | null {
   if (selection.selectionRanges.length === 0) {
     return null;
   }
-  if (selection.focusSelectionRangeId === null) {
-    return selection.selectionRanges[selection.selectionRanges.length - 1];
-  }
-  const focusSelectionRange = selection.selectionRanges.find((selectionRange) => selectionRange.id === selection.focusSelectionRangeId);
-  assertIsNotNullish(focusSelectionRange);
-  return focusSelectionRange;
+  return selection.selectionRanges[selection.selectionRanges.length - 1];
 }
 function areSelectionsCoveringSameContent(selection1: Selection, selection2: Selection): boolean {
   return (
@@ -2194,8 +2188,7 @@ function areRangesCoveringSameContent(range1: Range, range2: Range): boolean {
 function areSelectionsEqual(selection1: Selection, selection2: Selection): boolean {
   return (
     selection1.selectionRanges.length === selection2.selectionRanges.length &&
-    selection1.selectionRanges.every((selectionRange, i) => areSelectionRangesEqual(selectionRange, selection2.selectionRanges[i])) &&
-    selection1.focusSelectionRangeId === selection2.focusSelectionRangeId
+    selection1.selectionRanges.every((selectionRange, i) => areSelectionRangesEqual(selectionRange, selection2.selectionRanges[i]))
   );
 }
 function areSelectionRangesEqual(selectionRange1: SelectionRange, selectionRange2: SelectionRange): boolean {
@@ -2684,6 +2677,9 @@ interface PointWithContentReference {
   contentReference: ContentReference;
   point: Point;
 }
+function arePointWithContentReferencesEqual(a: PointWithContentReference, b: PointWithContentReference): boolean {
+  return areContentReferencesAtSameContent(a.contentReference, b.contentReference) && arePointsEqual(a.point, b.point);
+}
 interface PointKey extends PointWithContentReference {
   point: Point;
   contentReference: ContentReference;
@@ -3053,11 +3049,10 @@ function sortAndMergeAndFixSelectionRanges<
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selectionRanges: readonly SelectionRange[],
-  focusSelectionRangeId: string | null,
+  overrideSelectionRangeId?: string,
 ): Selection {
   if (selectionRanges.length === 0) {
-    assert(focusSelectionRangeId === null);
-    return makeSelection(selectionRanges, focusSelectionRangeId);
+    return makeSelection(selectionRanges);
   }
   const eqAny = [
     CompareKeysResult.OverlapPreferKey1Before,
@@ -3108,7 +3103,7 @@ function sortAndMergeAndFixSelectionRanges<
       const compare_range1SortedStart_to_range2SortedStart = compareKeys(document, range1WithKeys.sortedStartKey, range2WithKeys.sortedStartKey);
       const compare_range1SortedStart_to_range2SortedEnd = compareKeys(document, range1WithKeys.sortedStartKey, range2WithKeys.sortedEndKey);
       const compare_range1SortedEnd_to_range2SortedStart = compareKeys(document, range1WithKeys.sortedEndKey, range2WithKeys.sortedStartKey);
-      const compare_range1SortedEnd_to_range2SortedEnd = compareKeys(document, range1WithKeys.sortedStartKey, range2WithKeys.sortedStartKey);
+      const compare_range1SortedEnd_to_range2SortedEnd = compareKeys(document, range1WithKeys.sortedEndKey, range2WithKeys.sortedEndKey);
       // Overlaps: R1S=R2S or R1E=R2E or R1S <=(non text) R2S <=(non text) R1E or R1S <=(non text) R2E <=(non text) R1E or R1E(non text)=R2S.
       if (
         eqAny.includes(compare_range1SortedStart_to_range2SortedStart) || // TODO: if same selection range, then if touching text, merge.
@@ -3117,6 +3112,19 @@ function sortAndMergeAndFixSelectionRanges<
         (leNonText.includes(compare_range1SortedStart_to_range2SortedEnd) && geNonText.includes(compare_range1SortedEnd_to_range2SortedEnd)) ||
         eqNonText.includes(compare_range1SortedEnd_to_range2SortedStart)
       ) {
+        if (overrideSelectionRangeId !== undefined) {
+          if (range1WithKeys.selectionId === overrideSelectionRangeId && range2WithKeys.selectionId !== overrideSelectionRangeId) {
+            didChange = true;
+            rangesWithKeys.splice(i + 1, 1);
+            i--;
+            continue;
+          }
+          if (range1WithKeys.selectionId !== overrideSelectionRangeId && range2WithKeys.selectionId === overrideSelectionRangeId) {
+            didChange = true;
+            rangesWithKeys.splice(i--, 1);
+            continue;
+          }
+        }
         // R1S(strict)<=R2S by sort.
         const newRangeContentReference: ContentReference = range1WithKeys.range.contentReference;
         const newRangeId: string = range1WithKeys.range.id;
@@ -3217,23 +3225,15 @@ function sortAndMergeAndFixSelectionRanges<
           ),
         );
       });
-      selection = makeSelection(
-        mergedSelectionRanges,
-        focusSelectionRangeId !== null && mergedSelectionRanges.some((selectionRange) => selectionRange.id === focusSelectionRangeId)
-          ? focusSelectionRangeId
-          : null, // TODO.
-      );
+      selection = makeSelection(mergedSelectionRanges);
     } else {
-      selection = makeSelection(selectionRanges, focusSelectionRangeId);
+      selection = makeSelection(selectionRanges);
     }
     if (didChange || isFirstTime) {
       let didFix = false;
       const newSelectionRanges = selection.selectionRanges.flatMap((selectionRange) => {
         const fixedSelectionRange = stateControlConfig.fixSelectionRange(document, selectionRange);
         if (fixedSelectionRange === null) {
-          if (selectionRange.id === focusSelectionRangeId) {
-            focusSelectionRangeId = null;
-          }
           return [];
         }
         didFix = true;
@@ -3262,19 +3262,15 @@ function fixAndTransformSelectionByTransformingSelectionRanges<
   selection: Selection,
   transformSelectionRange: TransformSelectionRangeFn,
 ): Selection {
-  let focusSelectionRangeId = selection.focusSelectionRangeId;
   const newSelectionRanges: readonly SelectionRange[] = selection.selectionRanges.flatMap((selectionRange) => {
     const transformedSelectionRange = transformSelectionRange(selectionRange);
     if (transformedSelectionRange === null) {
-      if (selectionRange.id === focusSelectionRangeId) {
-        focusSelectionRangeId = null;
-      }
       return [];
     }
     assert(transformedSelectionRange.id === selectionRange.id, 'TransformSelectionRangeFn must preserve SelectionRange#id.');
     return [transformedSelectionRange];
   });
-  return sortAndMergeAndFixSelectionRanges(document, stateControlConfig, newSelectionRanges, focusSelectionRangeId);
+  return sortAndMergeAndFixSelectionRanges(document, stateControlConfig, newSelectionRanges);
 }
 function transformSelectionByTransformingSelectionRanges<
   DocumentConfig extends NodeConfig,
@@ -3290,7 +3286,6 @@ function transformSelectionByTransformingSelectionRanges<
   transformSelectionRange: TransformSelectionRangeFn,
 ): Selection {
   // TODO: fix this stuff.
-  let focusSelectionRangeId = selection.focusSelectionRangeId;
   let didTransform = false;
   const newSelectionRanges: readonly SelectionRange[] = selection.selectionRanges.flatMap((selectionRange) => {
     const transformedSelectionRange = transformSelectionRange(selectionRange);
@@ -3298,17 +3293,12 @@ function transformSelectionByTransformingSelectionRanges<
       didTransform = true;
     }
     if (transformedSelectionRange === null) {
-      if (selectionRange.id === focusSelectionRangeId) {
-        focusSelectionRangeId = null;
-      }
       return [];
     }
     assert(transformedSelectionRange.id === selectionRange.id, 'TransformSelectionRangeFn must preserve SelectionRange#id.');
     return [transformedSelectionRange];
   });
-  return didTransform
-    ? sortAndMergeAndFixSelectionRanges(document, stateControlConfig, newSelectionRanges, focusSelectionRangeId)
-    : makeSelection(selection.selectionRanges, focusSelectionRangeId);
+  return didTransform ? sortAndMergeAndFixSelectionRanges(document, stateControlConfig, newSelectionRanges) : makeSelection(selection.selectionRanges);
 }
 function fixSelectionIntentions(document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>, selection: Selection): Selection {
   return makeSelection(
@@ -3328,7 +3318,6 @@ function fixSelectionIntentions(document: Document<NodeConfig, NodeConfig, NodeC
       }
       return selectionRange;
     }),
-    selection.focusSelectionRangeId,
   );
 }
 function makeRangesConnectingPointsAtContentReferences(
@@ -3558,7 +3547,7 @@ function makeInitialStateFromDocument<
 ): State<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   return {
     document,
-    selection: makeSelection([], null),
+    selection: makeSelection([]),
     customCollapsedSelectionTextConfig: null,
   };
 }
@@ -3912,7 +3901,6 @@ function makeStateControl<
           makeStateViewOfStateAfterDynamicMutationReferenceId(() => mutationId, false).document,
           stateControlConfig,
           selection.selectionRanges,
-          selection.focusSelectionRangeId,
         );
       }
     }
@@ -3980,7 +3968,6 @@ function makeStateControl<
       const customTransformStateSelectionRangeDidTransformSelectionRanges: SelectionRange[] = [];
       let customTransformStateSelectionRangeDidTransformSelectionRangesFocusSelectionRangeId: string | null | undefined;
       let selectionRangesToTransform = stateView.selection.selectionRanges;
-      let selectionRangesToTransformFocusSelectionRangeId: string | null = stateView.selection.focusSelectionRangeId;
       const onMutation = (
         mutationPart: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
         mutationIndex: number,
@@ -4020,12 +4007,6 @@ function makeStateControl<
             if (transformedSelectionRange === undefined) {
               return [selectionRange];
             }
-            if (selectionRange.id === selectionRangesToTransformFocusSelectionRangeId) {
-              if (transformedSelectionRange !== null) {
-                customTransformStateSelectionRangeDidTransformSelectionRangesFocusSelectionRangeId = selectionRangesToTransformFocusSelectionRangeId;
-              }
-              selectionRangesToTransformFocusSelectionRangeId = null;
-            }
             if (transformedSelectionRange !== null) {
               assert(transformedSelectionRange.id === selectionRange.id, 'TransformSelectionRangeFn must preserve SelectionRange#id.');
               customTransformStateSelectionRangeDidTransformSelectionRanges.push(transformedSelectionRange);
@@ -4037,23 +4018,14 @@ function makeStateControl<
           selectionRangesToTransform = selectionRangesToTransform.flatMap((selectionRange) => {
             const transformedSelectionRange = transformSelectionRange(selectionRange);
             if (transformedSelectionRange === null) {
-              if (selectionRange.id === selectionRangesToTransformFocusSelectionRangeId) {
-                selectionRangesToTransformFocusSelectionRangeId = null;
-              }
               return [];
             }
             assert(transformedSelectionRange.id === selectionRange.id, 'TransformSelectionRangeFn must preserve SelectionRange#id.');
             return [transformedSelectionRange];
           });
           if (selectionRangesToTransform.length > 0) {
-            const fixedSelection = sortAndMergeAndFixSelectionRanges(
-              stateView.document,
-              stateControlConfig,
-              selectionRangesToTransform,
-              selectionRangesToTransformFocusSelectionRangeId,
-            );
+            const fixedSelection = sortAndMergeAndFixSelectionRanges(stateView.document, stateControlConfig, selectionRangesToTransform);
             selectionRangesToTransform = fixedSelection.selectionRanges;
-            selectionRangesToTransformFocusSelectionRangeId = fixedSelection.focusSelectionRangeId; // TODO.
           }
         }
         viewDelta$(Push(viewDelta));
@@ -4084,17 +4056,11 @@ function makeStateControl<
             customTransformStateSelectionRangeDidTransformSelectionRanges
               ? customTransformStateSelectionRangeDidTransformSelectionRanges.concat(selectionRangesToTransform)
               : selectionRangesToTransform,
-            customTransformStateSelectionRangeDidTransformSelectionRangesFocusSelectionRangeId !== undefined
-              ? customTransformStateSelectionRangeDidTransformSelectionRangesFocusSelectionRangeId
-              : selectionRangesToTransformFocusSelectionRangeId,
           ),
           keepCollapsedSelectionTextConfigWhenSelectionChanges,
         );
       } else {
-        delta.setSelection(
-          makeSelection(selectionRangesToTransform, selectionRangesToTransformFocusSelectionRangeId),
-          keepCollapsedSelectionTextConfigWhenSelectionChanges,
-        );
+        delta.setSelection(makeSelection(selectionRangesToTransform), keepCollapsedSelectionTextConfigWhenSelectionChanges);
       }
       afterMutation$(End);
     }
@@ -4116,12 +4082,7 @@ function makeStateControl<
       applyUpdate: deltaApplyUpdate,
       setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges, data?: SelectionChangeData) => {
         if (!areSelectionsEqual(stateView.selection, selection)) {
-          const currentSelection = sortAndMergeAndFixSelectionRanges(
-            stateView.document,
-            stateControlConfig,
-            selection.selectionRanges,
-            selection.focusSelectionRangeId,
-          );
+          const currentSelection = sortAndMergeAndFixSelectionRanges(stateView.document, stateControlConfig, selection.selectionRanges);
           const previousSelection = stateView.selection;
           state.selection = currentSelection;
           const isCollapsedInText = isSelectionCollapsedInText(stateView.document, selection);
@@ -6081,6 +6042,7 @@ function applyMutation<
       const removedInlineNodes = sliceParagraphChildren(paragraph, paragraphPoint.offset, paragraphPoint.offset + removeCount);
       spliceParagraphChildren(paragraph, paragraphPoint.offset, removeCount, insertChildren);
       viewDeltaControl?.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(makeBlockReferenceFromBlock(paragraph));
+      const insertChildrenLength = getLengthOfParagraphInlineNodes(insertChildren);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -6089,7 +6051,10 @@ function applyMutation<
               if (point.offset <= paragraphPoint.offset) {
                 return point;
               }
-              return changeParagraphPointOffset(point, paragraphPoint.offset + Math.max(point.offset - paragraphPoint.offset - removeCount, 0));
+              return changeParagraphPointOffset(
+                point,
+                paragraphPoint.offset + Math.max(point.offset - paragraphPoint.offset - removeCount, 0) + insertChildrenLength,
+              );
             };
             return makeRange(
               contentReference,
@@ -7411,7 +7376,7 @@ function extendSelectionByPointTransformFns<
   );
   return transformSelectionByTransformingSelectionRanges(document, stateControlConfig, selection, (selectionRange) => {
     if (!shouldExtendSelectionRange(document, stateControlConfig, selectionRange)) {
-      return null;
+      return selectionRange;
     }
     let newAnchorRangeId = selectionRange.anchorRangeId;
     const newRanges = selectionRange.ranges.flatMap((range) => {
@@ -7583,7 +7548,6 @@ function makeRemoveSelectionContentsUpdateFn<
                     selectionRange.id,
                   ),
               ),
-              null,
             );
       const removeRangeUpdate = makeRemoveRangeContentsUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
         firstRangeWithSelectionRange.range,
@@ -7683,7 +7647,6 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
                     selectionRange.id,
                   ),
               ),
-              null,
             );
       let updateFn: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
       if (
@@ -8217,4 +8180,5 @@ export {
   noopPointTransformFn,
   type SelectionChangeMessage,
   type MutationResultMessage,
+  arePointWithContentReferencesEqual,
 };

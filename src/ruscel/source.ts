@@ -2,7 +2,7 @@ import { Disposable, implDisposableMethods } from './disposable';
 import { Distributor } from './distributor';
 import { Maybe, Some, None, isNone } from './maybe';
 import { ScheduleFunction, ScheduleInterval, ScheduleTimeout } from './schedule';
-import { asyncReportError, pipe } from './util';
+import { asyncReportError, flow, pipe } from './util';
 type PushType = 0;
 const PushType: PushType = 0;
 type ThrowType = 1;
@@ -590,144 +590,118 @@ function take(amount: number): IdentityOperator {
       source(sourceSink);
     });
 }
-type DebounceTrailingRestart = 'restart';
-const DebounceTrailingRestart: DebounceTrailingRestart = 'restart';
-interface DebounceConfig {
-  leading?: boolean | null;
-  trailing?: boolean | DebounceTrailingRestart | null;
-  emitPendingOnEnd?: boolean | null;
-}
-const defaultDebounceConfig: DebounceConfig = {
-  leading: false,
-  trailing: true,
-  emitPendingOnEnd: true,
-};
-type InitialDurationInfo =
-  | [/* durationSource */ Source<unknown>, /* maxDurationSource */ (Source<unknown> | undefined | null)?]
-  | [/* durationSource */ undefined | null, /* maxDurationSource */ Source<unknown>];
-function debounce<T>(
-  getDurationSource: (value: T, index: number) => Source<unknown>,
-  getInitialDurationRange?: ((firstDebouncedValue: T, index: number) => InitialDurationInfo) | null,
-  config?: DebounceConfig | null,
-): Operator<T, T>;
-function debounce<T>(
-  getDurationSource: undefined | null,
-  getInitialDurationRange: (firstDebouncedValue: T, index: number) => InitialDurationInfo,
-  config?: DebounceConfig | null,
-): Operator<T, T>;
-function debounce<T>(
-  getDurationSource?: ((value: T, index: number) => Source<unknown>) | null,
-  getInitialDurationRange?: ((firstDebouncedValue: T, index: number) => InitialDurationInfo) | null,
-  config?: DebounceConfig | null,
-): Operator<T, T> {
-  let leading: DebounceConfig['leading'];
-  let trailing: DebounceConfig['trailing'];
-  let emitPendingOnEnd: DebounceConfig['emitPendingOnEnd'];
-  if (config) {
-    leading = config.leading == null ? defaultDebounceConfig.leading : config.leading;
-    trailing = config.trailing == null ? defaultDebounceConfig.trailing : config.trailing;
-    emitPendingOnEnd = config.emitPendingOnEnd == null ? defaultDebounceConfig.emitPendingOnEnd : config.emitPendingOnEnd;
-  }
+function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading?: boolean, trailing?: boolean, emitPendingOnEnd?: boolean): Operator<T, T> {
+  leading ??= false;
+  trailing ??= true;
+  emitPendingOnEnd ??= false;
   return (source) =>
-    Source<T>((sink) => {
-      let latestPush: Push<T>;
-      let durationSink: Sink<unknown>;
-      let maxDurationSink: Sink<unknown> | true | undefined;
-      let distributing = false;
-      let lastPushedIdx = 0;
-      let idx = 0;
-      function onDurationEvent(event: Event<unknown>): void {
-        if (event.type === ThrowType) {
+    Source((sink) => {
+      let debounceSink: Sink<unknown> | null;
+      let trailingPush: Push<T> | null;
+      let endPush: Push<T> | null;
+      const sourceSink = Sink<T>((event) => {
+        if (event.type === EndType && endPush) {
+          Push(endPush);
+        }
+        if (event.type !== PushType) {
           sink(event);
           return;
         }
-        if (durationSink) durationSink.dispose();
-        if (maxDurationSink && maxDurationSink !== true) {
-          maxDurationSink.dispose();
+        const hasDebounceSink = !!debounceSink;
+        if (debounceSink) {
+          debounceSink.dispose();
         }
-        maxDurationSink = undefined;
-        if (trailing && idx > lastPushedIdx) {
-          if (trailing === DebounceTrailingRestart) {
-            const _latestPush = latestPush;
-            const _idx = idx;
-            distributing = true;
-            lastPushedIdx = _idx;
-            sink(_latestPush);
-            distributing = false;
-            startDebounce(_latestPush, _idx);
-          } else {
-            // No logic after this so we can straight up push.
-            sink(latestPush);
-          }
-        }
-      }
-      function restartDebounce(durationSource?: Source<unknown>): void {
-        if (!getDurationSource) {
-          return;
-        }
-        if (durationSink) durationSink.dispose();
-        durationSink = Sink(onDurationEvent);
-        sourceSink.add(durationSink);
-        let durationSource_ = durationSource;
-        if (!durationSource_) {
-          try {
-            durationSource_ = getDurationSource(latestPush.value, idx);
-          } catch (error) {
-            sink(Throw(error));
+        debounceSink = Sink((event) => {
+          if (event.type === ThrowType) {
+            sink(event);
             return;
           }
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          const debounceSink_ = debounceSink!;
+          debounceSink = null;
+          debounceSink_.dispose();
+          if (trailingPush) {
+            sink(trailingPush);
+            endPush = null;
+          }
+        });
+        if (leading && !hasDebounceSink) {
+          sink(event);
+        } else if (emitPendingOnEnd) {
+          endPush = event;
         }
-        durationSource_(durationSink);
-      }
-      function startDebounce(_latestPush: Push<T>, _idx: number): void {
-        if (getInitialDurationRange) {
-          maxDurationSink = Sink(onDurationEvent);
-          sourceSink.add(maxDurationSink);
-        } else {
-          maxDurationSink = true;
-          restartDebounce();
+        if (trailing) {
+          if (hasDebounceSink) {
+            trailingPush = event;
+            endPush = null;
+          } else {
+            trailingPush = null;
+          }
+        }
+        getDurationSource(event.value)(debounceSink);
+      });
+      sink.add(sourceSink);
+      source(sourceSink);
+    });
+}
+function windowEvery(boundariesSource: Source<unknown>): <T>(source: Source<T>) => Source<Source<T> & Disposable> {
+  return <T>(source: Source<T>) =>
+    Source<Source<T> & Disposable>((sink) => {
+      let currentWindow = Distributor<T>();
+      sink(Push(currentWindow));
+      const sourceSink = Sink<T>((event) => {
+        if (event.type !== PushType) {
+          boundariesSink.dispose();
+        }
+        currentWindow(event);
+        if (event.type !== PushType) {
+          sink(event);
+        }
+      });
+      const boundariesSink = Sink<unknown>((event) => {
+        if (event.type === PushType) {
+          currentWindow(End);
+          currentWindow = Distributor();
+          sink(Push(currentWindow));
           return;
         }
-        let initialDurationInfo: InitialDurationInfo;
+        sink(event);
+      });
+      sink.add(boundariesSink);
+      sink.add(sourceSink);
+      boundariesSource(boundariesSink);
+      source(sourceSink);
+    });
+}
+function mapEvents<T, U>(transform: (event: Event<T>, index: number) => Event<U> | undefined | null): Operator<T, U> {
+  return (source) =>
+    Source((sink) => {
+      let idx = 0;
+      const sourceSink = Sink<T>((event) => {
+        let newEvent: Event<U> | undefined | null;
         try {
-          initialDurationInfo = getInitialDurationRange(_latestPush.value, _idx);
+          newEvent = transform(event, idx++);
         } catch (error) {
           sink(Throw(error));
           return;
         }
-        const [durationSource, maxDurationSource] = initialDurationInfo;
-        const _maxDurationSink = maxDurationSink;
-        if (maxDurationSource) {
-          maxDurationSource(_maxDurationSink);
+        if (newEvent) {
+          sink(newEvent);
         }
-        if (durationSource && _maxDurationSink.active) {
-          restartDebounce(durationSource);
+        if (event.type !== PushType) {
+          sink(End);
         }
-      }
-      const sourceSink = Sink<T>((event) => {
-        if (event.type === PushType) {
-          latestPush = event;
-          idx++;
-          if (distributing) {
-            return;
-          }
-          if (maxDurationSink) {
-            restartDebounce();
-          } else {
-            const _latestPush = latestPush;
-            const _idx = idx;
-            if (leading) {
-              distributing = true;
-              lastPushedIdx = idx;
-              sink(_latestPush);
-              distributing = false;
-            }
-            startDebounce(_latestPush, _idx);
-          }
-          return;
-        }
-        if (event.type === EndType && emitPendingOnEnd && maxDurationSink && idx > lastPushedIdx) {
-          sink(latestPush);
+      });
+      sink.add(sourceSink);
+      source(sourceSink);
+    });
+}
+function endWith<T>(...values: T[]): <U>(source: Source<U>) => Source<T | U> {
+  return <U>(source: Source<U>) =>
+    Source<T | U>((sink) => {
+      const sourceSink = Sink<U>((event) => {
+        if (event.type === EndType) {
+          pushArrayItemsToSink(values, sink);
         }
         sink(event);
       });
@@ -735,43 +709,133 @@ function debounce<T>(
       source(sourceSink);
     });
 }
-function debounceMs(durationMs: number, maxDurationMs?: number | null, config?: DebounceConfig | null): IdentityOperator;
-function debounceMs(durationMs: null | undefined, maxDurationMs: number, config?: DebounceConfig | null): IdentityOperator;
-function debounceMs(durationMs?: number | null, maxDurationMs?: number | null, config?: DebounceConfig | null): IdentityOperator {
-  const durationSource = durationMs == null ? durationMs : timer(durationMs);
-  const maxDuration = maxDurationMs == null ? maxDurationMs : timer(maxDurationMs);
-  if (durationSource != null) {
-    return debounce(() => durationSource, maxDuration == null ? maxDuration : () => [durationSource, maxDuration], config);
+function _createSwitchOperator(overrideCurrent: boolean): <T>(source: Source<Source<T>>) => Source<T> {
+  return <T>(source: Source<Source<T>>) =>
+    Source<T>((sink) => {
+      let completed = false;
+      let innerSink: Sink<T> | undefined;
+      function onInnerEvent(event: Event<T>): void {
+        if (event.type === EndType && !completed) {
+          return;
+        }
+        sink(event);
+      }
+      const sourceSink = Sink<Source<T>>((event) => {
+        if (event.type === PushType) {
+          if (innerSink && innerSink.active) {
+            if (overrideCurrent) {
+              innerSink.dispose();
+            } else {
+              return;
+            }
+          }
+          innerSink = Sink(onInnerEvent);
+          sink.add(innerSink);
+          event.value(innerSink);
+          return;
+        }
+        if (event.type === EndType) {
+          completed = true;
+          if (innerSink && innerSink.active) {
+            return;
+          }
+        }
+        sink(event);
+      });
+      sink.add(sourceSink);
+      source(sourceSink);
+    });
+}
+const switchEach = _createSwitchOperator(true);
+const concatDrop = _createSwitchOperator(false);
+function timeout<T>(timeoutSource: Source<unknown>, replacementSource: Source<T>): <U>(source: Source<U>) => Source<T | U> {
+  return <U>(source: Source<U>) =>
+    pipe(
+      timeoutSource,
+      mapEvents<unknown, never>((event) => (event.type === PushType ? End : event)),
+      startWith(0 as const),
+      endWith(1 as const),
+      map<0 | 1, Source<T | U>>((t) => (t === 0 ? source : replacementSource)),
+      switchEach,
+    );
+}
+function timeoutMs<T>(ms: number, replacementSource: Source<T>): <U>(source: Source<U>) => Source<T | U> {
+  return timeout(timer(ms), replacementSource);
+}
+function collect<T>(source: Source<T>): Source<T[]> {
+  return Source((sink) => {
+    const items: T[] = [];
+    const sourceSink = Sink<T>((event) => {
+      if (event.type === PushType) {
+        items.push(event.value);
+        return;
+      }
+      if (event.type === EndType) {
+        sink(Push(items));
+      }
+      sink(event);
+    });
+    sink.add(sourceSink);
+    source(sourceSink);
+  });
+}
+function fromReactiveValue<T extends unknown[]>(addCallback: (callback: (...args: T) => void, disposable: Disposable) => void): Source<T> {
+  return Source<T>((sink) => {
+    function callback(...values: T): void {
+      sink(Push(values));
+    }
+    const disposable = Disposable();
+    sink.add(disposable);
+    try {
+      addCallback(callback, disposable);
+    } catch (error) {
+      sink(Throw(error));
+    }
+  });
+}
+function pluck<T, K extends keyof T>(key: K): Operator<T, T[K]> {
+  return map((value: T) => value[key]);
+}
+function takeLast(amount: number): IdentityOperator {
+  const amount_ = Math.floor(amount);
+  if (amount_ < 1) {
+    return () => ofEvent(End);
   }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return debounce(null, () => [null, maxDuration!], config);
+  return <T>(source: Source<T>) =>
+    Source<T>((sink) => {
+      let pushEvents: Push<T>[] | null = [];
+      const sourceSink = Sink<T>((event) => {
+        if (!pushEvents) {
+          return;
+        }
+        if (event.type === PushType) {
+          if (pushEvents.length >= amount_) {
+            pushEvents.shift();
+          }
+          pushEvents.push(event);
+          return;
+        }
+        if (event.type === EndType) {
+          const pushEvents_ = pushEvents;
+          pushEvents = null;
+          pushEvents_.forEach((event) => sink(event));
+        }
+        sink(event);
+      });
+      sink.add(sourceSink);
+      source(sourceSink);
+    });
 }
-interface ThrottleConfig {
-  leading?: boolean | null;
-  trailing?: boolean | null;
-  emitPendingOnEnd?: boolean | null;
-}
-const defaultThrottleConfig: ThrottleConfig = {
-  leading: true,
-  trailing: true,
-  emitPendingOnEnd: true,
-};
-function throttle(getDurationSource: () => Source<unknown>, config?: ThrottleConfig | null): IdentityOperator;
-function throttle<T>(getDurationSource: (value: T, index: number) => Source<unknown>, config?: ThrottleConfig | null): Operator<T, T>;
-function throttle<T>(getDurationSource: (value: T, index: number) => Source<unknown>, config?: ThrottleConfig | null): Operator<T, T> {
-  let leading: ThrottleConfig['leading'];
-  let trailing: ThrottleConfig['trailing'];
-  let emitPendingOnEnd: ThrottleConfig['emitPendingOnEnd'];
-  if (config) {
-    leading = config.leading == null ? defaultThrottleConfig.leading : config.leading;
-    trailing = config.trailing == null ? defaultThrottleConfig.trailing : config.trailing;
-    emitPendingOnEnd = config.emitPendingOnEnd == null ? defaultThrottleConfig.emitPendingOnEnd : config.emitPendingOnEnd;
-  }
-  return debounce<T>(null, (value, index) => [null, getDurationSource(value, index)], { leading, trailing, emitPendingOnEnd });
-}
-function throttleMs(durationMs: number, config?: ThrottleConfig | null): IdentityOperator {
-  const durationSource = timer(durationMs);
-  return throttle(() => durationSource, config);
+function takeUntil(stopSource: Source<unknown>): IdentityOperator {
+  return <T>(source: Source<T>) =>
+    Source<T>((sink) => {
+      const stopSink = Sink<unknown>((event) => {
+        sink(event.type === ThrowType ? event : End);
+      });
+      sink.add(stopSink);
+      stopSource(stopSink);
+      source(sink);
+    });
 }
 export {
   PushType,
@@ -815,14 +879,17 @@ export {
   shareTransform,
   timer,
   take,
-  type DebounceTrailingRestart,
-  type DebounceConfig,
-  defaultDebounceConfig,
-  type InitialDurationInfo,
   debounce,
-  debounceMs,
-  type ThrottleConfig,
-  defaultThrottleConfig,
-  throttle,
-  throttleMs,
+  mapEvents,
+  endWith,
+  switchEach,
+  concatDrop,
+  timeout,
+  timeoutMs,
+  fromReactiveValue,
+  collect,
+  pluck,
+  takeLast,
+  windowEvery,
+  takeUntil,
 };
