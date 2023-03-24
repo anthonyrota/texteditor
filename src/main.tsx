@@ -2772,10 +2772,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         if (isSafari) {
           // This fires before compositionstart in safari.
           requestAnimationFrameDisposable(() => {
-            this.#updateInputElement();
+            this.#syncInputElement();
           }, this);
         } else {
-          this.#updateInputElement();
+          this.#syncInputElement();
         }
       }, this),
     );
@@ -2790,10 +2790,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         if (isSafari) {
           // Same reason as above I think.
           requestAnimationFrameDisposable(() => {
-            this.#updateInputElement();
+            this.#syncInputElement();
           }, this);
         } else {
-          this.#updateInputElement();
+          this.#syncInputElement();
         }
       },
       this,
@@ -3964,6 +3964,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     return text;
   }
+  #getDomInputTextFromParagraph(paragraph: matita.Paragraph<ParagraphConfig, TextConfig, VoidConfig>): string {
+    return (
+      paragraph.children
+        .map((child) => {
+          matita.assertIsText(child);
+          return child.text;
+        })
+        .join('')
+        // Browser inserts NBSP instead of spaces.
+        .replace(/ /g, '\xa0')
+    );
+  }
   #onInputElementBeforeInput(event: InputEvent): void {
     // We only use the beforeinput event for insertions. We don't want to deal with native ranges so we try to avoid it.
     const { inputType } = event;
@@ -4061,12 +4073,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               return;
             }
             matita.assertIsParagraph(paragraph);
-            const currentTextContent = paragraph.children
-              .map((child) => {
-                matita.assertIsText(child);
-                return child.text;
-              })
-              .join('');
+            const currentTextContent = this.#getDomInputTextFromParagraph(paragraph);
             if (originalTextContent !== currentTextContent) {
               this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(replacementContentFragment));
               return;
@@ -4438,14 +4445,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
-    this.#updateInputElement();
+    this.#syncInputElement();
     this.#replaceViewSelectionRanges();
     if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
       this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
       this.#scrollSelectionIntoView();
     }
   }
-  #updateInputElement(): void {
+  #syncInputElement(): void {
     // Hidden input text for composition.
     const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
     if (!focusSelectionRange) {
@@ -4461,12 +4468,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     matita.assertIsParagraphPoint(focusPoint);
     const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, anchorPoint);
     this.#inputElementLastSynchronizedParagraphReference = matita.makeBlockReferenceFromParagraphPoint(anchorPoint);
-    const inputText = paragraph.children
-      .map((child) => {
-        matita.assertIsText(child);
-        return child.text;
-      })
-      .join('');
+    const inputText = this.#getDomInputTextFromParagraph(paragraph);
     const direction = matita.getRangeDirection(this.stateControl.stateView.document, focusRange);
     assert(direction === matita.RangeDirection.Backwards || direction === matita.RangeDirection.Forwards || direction === matita.RangeDirection.NeutralText);
     if (!this.#isInComposition) {
@@ -4493,9 +4495,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       if (
         !(this.#inputTextElement.childNodes.length === 0 && inputText === '') &&
-        (this.#inputTextElement.childNodes.length !== 1 ||
-          !(this.#inputTextElement.childNodes[0] instanceof Text) ||
-          this.#inputTextElement.childNodes[0].nodeValue !== inputText)
+        !(
+          this.#inputTextElement.childNodes.length === 1 &&
+          this.#inputTextElement.childNodes[0] instanceof Text &&
+          this.#inputTextElement.childNodes[0].nodeValue === inputText
+        )
       ) {
         if (inputText === '') {
           this.#inputTextElement.replaceChildren();
@@ -4733,14 +4737,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const fontSize = Math.min(maxBottom - minTop, 100);
         this.#inputTextElementMeasurementElement.style.fontSize = `${fontSize}px`;
         const anchorParagraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, anchorPoint);
-        const textNode = document.createTextNode(
-          anchorParagraph.children
-            .map((child) => {
-              matita.assertIsText(child);
-              return child.text;
-            })
-            .join(''),
-        );
+        const textNode = document.createTextNode(this.#getDomInputTextFromParagraph(anchorParagraph));
         this.#inputTextElementMeasurementElement.replaceChildren(textNode);
         const measureRange = document.createRange();
         measureRange.setStart(textNode, anchorPoint.offset);
