@@ -2,7 +2,7 @@ import { Disposable, implDisposableMethods } from './disposable';
 import { Distributor } from './distributor';
 import { Maybe, Some, None, isNone } from './maybe';
 import { ScheduleFunction, ScheduleInterval, ScheduleTimeout } from './schedule';
-import { asyncReportError, flow, pipe } from './util';
+import { asyncReportError, pipe } from './util';
 type PushType = 0;
 const PushType: PushType = 0;
 type ThrowType = 1;
@@ -35,8 +35,10 @@ interface Sink<T> extends Disposable {
   (event: Event<T>): void;
 }
 function Sink<T>(onEvent: (event: Event<T>) => void): Sink<T> {
-  // TODO: handle if onEvent is a Sink?
   const disposable = Disposable();
+  if (isSink(onEvent)) {
+    onEvent.add(disposable);
+  }
   const sink = implDisposableMethods((event: Event<T>): void => {
     if (!disposable.active) {
       if (event.type === ThrowType) {
@@ -644,7 +646,7 @@ function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading?:
       source(sourceSink);
     });
 }
-function windowEvery(boundariesSource: Source<unknown>): <T>(source: Source<T>) => Source<Source<T> & Disposable> {
+function windowScheduledBySource(boundariesSource: Source<unknown>): <T>(source: Source<T>) => Source<Source<T> & Disposable> {
   return <T>(source: Source<T>) =>
     Source<Source<T> & Disposable>((sink) => {
       let currentWindow = Distributor<T>();
@@ -890,6 +892,6 @@ export {
   collect,
   pluck,
   takeLast,
-  windowEvery,
+  windowScheduledBySource,
   takeUntil,
 };
