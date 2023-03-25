@@ -8,7 +8,9 @@ import * as matita from './matita';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
 import { CurrentAndPreviousValueDistributor, CurrentValueDistributor, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
+import { scheduleMicrotask } from './ruscel/schedule';
 import {
+  combine,
   debounce,
   End,
   EndType,
@@ -35,7 +37,7 @@ import {
   timer,
   windowScheduledBySource,
 } from './ruscel/source';
-import { flow, pipe, requestAnimationFrameDisposable, setTimeoutDisposable } from './ruscel/util';
+import { pipe, requestAnimationFrameDisposable, setTimeoutDisposable } from './ruscel/util';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './util';
 import './index.css';
 interface DocumentConfig extends matita.NodeConfig {}
@@ -420,11 +422,14 @@ interface ViewRangeInfo {
   startOffset: number;
   endOffset: number;
   paragraphReference: matita.BlockReference;
-  splitRectangleIndex: number;
 }
-interface ViewCursorAndRangeInfosForRange {
+interface ViewCursorAndRangeInfosForParagraphInRange {
+  paragraphReference: matita.BlockReference;
   viewCursorInfos: ViewCursorInfo[];
   viewRangeInfos: ViewRangeInfo[];
+}
+interface ViewCursorAndRangeInfosForRange {
+  viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[];
 }
 interface ViewCursorAndRangeInfosForSelectionRange {
   viewCursorAndRangeInfosForRanges: ViewCursorAndRangeInfosForRange[];
@@ -477,9 +482,20 @@ interface SelectionViewMessage {
 interface SelectionViewProps {
   selectionView$: Source<SelectionViewMessage>;
 }
+// TODO: Simplify information passed in.
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
   const { selectionView$ } = props;
-  const selectionMaybe = use$(selectionView$);
+  const selectionMaybe = use$(
+    useMemo(
+      () =>
+        pipe(
+          selectionView$,
+          debounce(() => ofEvent(End, scheduleMicrotask)),
+        ),
+      [],
+    ),
+    true,
+  );
   const cursorBlinkSpeed = 500;
   const synchronizedCursorVisibility$ = useMemo(
     () =>
@@ -514,55 +530,57 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
       {viewCursorAndRangeInfosForSelectionRanges.flatMap((viewCursorAndRangeInfoForSelectionRange) => {
         const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, isDraggingSelection, selectionRangeId } = viewCursorAndRangeInfoForSelectionRange;
         return viewCursorAndRangeInfosForRanges.flatMap((viewCursorAndRangeInfosForRange) => {
-          const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForRange;
-          const viewRangeElements = viewRangeInfos.flatMap((viewRangeInfo) => {
-            const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
-            const spans: JSX.Element[] = [];
-            const useCompositionStyle = isInComposition;
-            if (useCompositionStyle) {
+          return viewCursorAndRangeInfosForRange.viewParagraphInfos.flatMap((viewCursorAndRangeInfosForParagraphInRange) => {
+            const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForParagraphInRange;
+            const viewRangeElements = viewRangeInfos.flatMap((viewRangeInfo) => {
+              const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
+              const spans: JSX.Element[] = [];
+              const useCompositionStyle = isInComposition;
+              if (useCompositionStyle) {
+                spans.push(
+                  <span
+                    key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, isInComposition]))}
+                    style={{
+                      position: 'absolute',
+                      top: rectangle.bottom - 2,
+                      left: rectangle.left,
+                      width: rectangle.width,
+                      height: 2,
+                      backgroundColor: '#222',
+                    }}
+                  />,
+                );
+              }
               spans.push(
                 <span
                   key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, isInComposition]))}
                   style={{
                     position: 'absolute',
-                    top: rectangle.bottom - 2,
+                    top: rectangle.top,
                     left: rectangle.left,
                     width: rectangle.width,
-                    height: 2,
-                    backgroundColor: '#222',
+                    height: rectangle.height,
+                    backgroundColor: useCompositionStyle ? '#accef733' : hasFocus ? '#accef7bb' : '#d3d3d36c',
                   }}
                 />,
               );
-            }
-            spans.push(
-              <span
-                key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, isInComposition]))}
-                style={{
-                  position: 'absolute',
-                  top: rectangle.top,
-                  left: rectangle.left,
-                  width: rectangle.width,
-                  height: rectangle.height,
-                  backgroundColor: useCompositionStyle ? '#accef733' : hasFocus ? '#accef7bb' : '#d3d3d36c',
-                }}
-              />,
-            );
-            return spans;
+              return spans;
+            });
+            const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
+              const { isAnchor, isFocus, offset, paragraphReference, rangeDirection } = viewCursorInfo;
+              return (
+                <BlinkingCursor
+                  key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId]))}
+                  viewCursorInfo={viewCursorInfo}
+                  synchronizedCursorVisibility$={synchronizedCursorVisibility$}
+                  cursorBlinkSpeed={cursorBlinkSpeed}
+                  hasFocus={hasFocus}
+                  isDraggingSelection={isDraggingSelection}
+                />
+              );
+            });
+            return viewRangeElements.concat(viewCursorElements);
           });
-          const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
-            const { isAnchor, isFocus, offset, paragraphReference, rangeDirection } = viewCursorInfo;
-            return (
-              <BlinkingCursor
-                key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId]))}
-                viewCursorInfo={viewCursorInfo}
-                synchronizedCursorVisibility$={synchronizedCursorVisibility$}
-                cursorBlinkSpeed={cursorBlinkSpeed}
-                hasFocus={hasFocus}
-                isDraggingSelection={isDraggingSelection}
-              />
-            );
-          });
-          return viewRangeElements.concat(viewCursorElements);
         });
       })}
     </>
@@ -613,116 +631,6 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
       }}
     />
   );
-}
-class ReactiveMutationObserver extends DisposableClass {
-  records$: Source<MutationRecord[]>;
-  #records$: Distributor<MutationRecord[]>;
-  #observerTargets: {
-    target: Node;
-    options?: MutationObserverInit;
-  }[];
-  #mutationObserver: MutationObserver;
-  constructor() {
-    super(() => this.#dispose());
-    this.#observerTargets = [];
-    this.#records$ = Distributor();
-    this.records$ = Source(this.#records$);
-    this.add(this.#records$);
-    this.#mutationObserver = new MutationObserver((records) => {
-      this.#records$(Push(records));
-    });
-  }
-  observe(target: Node, options?: MutationObserverInit): Disposable {
-    if (!this.active) {
-      return disposed;
-    }
-    this.#observerTargets.push({ target, options });
-    this.#mutationObserver.observe(target, options);
-    return Disposable(() => {
-      this.unobserve(target);
-    });
-  }
-  unobserve(target: Node): void {
-    if (!this.active) {
-      return;
-    }
-    const newObserverTargets = this.#observerTargets.filter((ot) => ot.target !== target);
-    this.#observerTargets = [];
-    const records = this.#mutationObserver.takeRecords();
-    this.#records$(Push(records.filter((record) => record.target !== target)));
-    this.#mutationObserver.disconnect();
-    newObserverTargets.forEach((otherTarget) => {
-      this.observe(otherTarget.target, otherTarget.options);
-    });
-  }
-  #dispose(): void {
-    this.#mutationObserver.disconnect();
-    this.#observerTargets = [];
-  }
-}
-class ReactiveIntersectionObserver extends DisposableClass {
-  entries$: Source<IntersectionObserverEntry[]>;
-  #entries$: Distributor<IntersectionObserverEntry[]>;
-  #intersectionObserver: IntersectionObserver;
-  constructor(options?: IntersectionObserverInit) {
-    super(() => this.#dispose());
-    this.#entries$ = Distributor();
-    this.entries$ = Source(this.#entries$);
-    this.add(this.#entries$);
-    this.#intersectionObserver = new IntersectionObserver((entries) => {
-      this.#entries$(Push(entries));
-    }, options);
-  }
-  observe(target: Element): Disposable {
-    if (!this.active) {
-      return disposed;
-    }
-    this.#intersectionObserver.observe(target);
-    return Disposable(() => {
-      this.unobserve(target);
-    });
-  }
-  unobserve(target: Element): void {
-    if (!this.active) {
-      return;
-    }
-    this.#intersectionObserver.unobserve(target);
-  }
-  #dispose(): void {
-    this.#intersectionObserver.disconnect();
-  }
-}
-class ReactiveResizeObserver extends DisposableClass {
-  entries$: Source<ResizeObserverEntry[]>;
-  #entries$: Distributor<ResizeObserverEntry[]>;
-  #resizeObserver: ResizeObserver;
-  constructor() {
-    super(() => this.#dispose());
-    this.#entries$ = Distributor();
-    this.entries$ = Source(this.#entries$);
-    this.add(this.#entries$);
-    this.#resizeObserver = new ResizeObserver((entries) => {
-      this.#entries$(Push(entries));
-    });
-  }
-  observe(target: Element, options?: ResizeObserverOptions): Disposable {
-    if (!this.active) {
-      return disposed;
-    }
-    this.#resizeObserver.observe(target, options);
-    return Disposable(() => {
-      this.unobserve(target);
-    });
-  }
-  unobserve(target: Element): void {
-    if (!this.active) {
-      return;
-    }
-    this.#resizeObserver.unobserve(target);
-  }
-  #dispose(): void {
-    this.#resizeObserver.disconnect();
-  }
 }
 interface ViewRectangle extends ViewPosition {
   readonly right: number;
@@ -2666,6 +2574,116 @@ function getNodeBoundingRect(textNode: Node) {
   range.selectNodeContents(textNode);
   return range.getBoundingClientRect();
 }
+class ReactiveMutationObserver extends DisposableClass {
+  records$: Source<MutationRecord[]>;
+  #records$: Distributor<MutationRecord[]>;
+  #observerTargets: {
+    target: Node;
+    options?: MutationObserverInit;
+  }[];
+  #mutationObserver: MutationObserver;
+  constructor() {
+    super(() => this.#dispose());
+    this.#observerTargets = [];
+    this.#records$ = Distributor();
+    this.records$ = Source(this.#records$);
+    this.add(this.#records$);
+    this.#mutationObserver = new MutationObserver((records) => {
+      this.#records$(Push(records));
+    });
+  }
+  observe(target: Node, options?: MutationObserverInit): Disposable {
+    if (!this.active) {
+      return disposed;
+    }
+    this.#observerTargets.push({ target, options });
+    this.#mutationObserver.observe(target, options);
+    return Disposable(() => {
+      this.unobserve(target);
+    });
+  }
+  unobserve(target: Node): void {
+    if (!this.active) {
+      return;
+    }
+    const newObserverTargets = this.#observerTargets.filter((ot) => ot.target !== target);
+    this.#observerTargets = [];
+    const records = this.#mutationObserver.takeRecords();
+    this.#records$(Push(records.filter((record) => record.target !== target)));
+    this.#mutationObserver.disconnect();
+    newObserverTargets.forEach((otherTarget) => {
+      this.observe(otherTarget.target, otherTarget.options);
+    });
+  }
+  #dispose(): void {
+    this.#mutationObserver.disconnect();
+    this.#observerTargets = [];
+  }
+}
+class ReactiveIntersectionObserver extends DisposableClass {
+  entries$: Source<IntersectionObserverEntry[]>;
+  #entries$: Distributor<IntersectionObserverEntry[]>;
+  #intersectionObserver: IntersectionObserver;
+  constructor(options?: IntersectionObserverInit) {
+    super(() => this.#dispose());
+    this.#entries$ = Distributor();
+    this.entries$ = Source(this.#entries$);
+    this.add(this.#entries$);
+    this.#intersectionObserver = new IntersectionObserver((entries) => {
+      this.#entries$(Push(entries));
+    }, options);
+  }
+  observe(target: Element): Disposable {
+    if (!this.active) {
+      return disposed;
+    }
+    this.#intersectionObserver.observe(target);
+    return Disposable(() => {
+      this.unobserve(target);
+    });
+  }
+  unobserve(target: Element): void {
+    if (!this.active) {
+      return;
+    }
+    this.#intersectionObserver.unobserve(target);
+  }
+  #dispose(): void {
+    this.#intersectionObserver.disconnect();
+  }
+}
+class ReactiveResizeObserver extends DisposableClass {
+  entries$: Source<ResizeObserverEntry[]>;
+  #entries$: Distributor<ResizeObserverEntry[]>;
+  #resizeObserver: ResizeObserver;
+  constructor() {
+    super(() => this.#dispose());
+    this.#entries$ = Distributor();
+    this.entries$ = Source(this.#entries$);
+    this.add(this.#entries$);
+    this.#resizeObserver = new ResizeObserver((entries) => {
+      this.#entries$(Push(entries));
+    });
+  }
+  observe(target: Element, options?: ResizeObserverOptions): Disposable {
+    if (!this.active) {
+      return disposed;
+    }
+    this.#resizeObserver.observe(target, options);
+    return Disposable(() => {
+      this.unobserve(target);
+    });
+  }
+  unobserve(target: Element): void {
+    if (!this.active) {
+      return;
+    }
+    this.#resizeObserver.unobserve(target);
+  }
+  #dispose(): void {
+    this.#resizeObserver.disconnect();
+  }
+}
 class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
   rootHtmlElement: HTMLElement;
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -2715,6 +2733,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
     this.#topLevelContentViewContainerElement = document.createElement('div');
+    // TODO: Hack to fix virtual selection and input overflowing bottom.
+    this.#topLevelContentViewContainerElement.style.paddingBottom = '8px';
     this.#selectionViewContainerElement = document.createElement('div');
     pipe(this.stateControl.viewDelta$, subscribe(this.#onViewDelta.bind(this), this));
     pipe(this.stateControl.finishedUpdating$, subscribe(this.#onFinishedUpdating.bind(this), this));
@@ -2727,8 +2747,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#inputTextElement.contentEditable = 'true';
     this.#inputTextElement.spellcheck = false;
     this.#inputTextElement.style.position = 'absolute';
-    this.#inputTextElement.style.left = '0px';
-    this.#inputTextElement.style.top = '0px';
+    this.#inputTextElement.style.left = '0';
+    this.#inputTextElement.style.top = '0';
     this.#inputTextElement.style.minWidth = '1px';
     this.#inputTextElement.style.outline = 'none';
     this.#inputTextElement.style.caretColor = 'transparent';
@@ -2737,14 +2757,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#inputTextElement.style.letterSpacing = '0';
     this.#inputTextElement.style.opacity = '0';
     this.#inputTextElementMeasurementElement = document.createElement('span');
-    this.#inputTextElementMeasurementElement.setAttribute(
-      'style',
-      `position: absolute; top: 0; left: 0; font-family: initial; white-space: nowrap; letter-spacing: 0; opacity: 0;`,
-    );
+    this.#inputTextElementMeasurementElement.style.position = 'absolute';
+    this.#inputTextElementMeasurementElement.style.top = '0';
+    this.#inputTextElementMeasurementElement.style.left = '0';
+    this.#inputTextElementMeasurementElement.style.fontFamily = 'initial';
+    this.#inputTextElementMeasurementElement.style.whiteSpace = 'nowrap';
+    this.#inputTextElementMeasurementElement.style.letterSpacing = '0';
+    this.#inputTextElementMeasurementElement.style.opacity = '0';
     addEventListener(this.#inputTextElement, 'beforeinput', this.#onInputElementBeforeInput.bind(this), this);
     addEventListener(this.#inputTextElement, 'copy', this.#onCopy.bind(this), this);
     addEventListener(this.#inputTextElement, 'cut', this.#onCut.bind(this), this);
     addEventListener(this.#inputTextElement, 'focus', this.#onInputElementFocus.bind(this), this);
+    // TODO.
     addEventListener(this.#inputTextElement, 'blur', this.#replaceViewSelectionRanges.bind(this), this);
     addEventListener(this.#inputTextElement, 'compositionstart', this.#onCompositionStart.bind(this), this);
     addEventListener(this.#inputTextElement, 'compositionend', this.#onCompositionEnd.bind(this), this);
@@ -2755,7 +2779,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         requestAnimationFrameDisposable(() => {
           this.#keyDownSet.clear();
         }, this);
-        this.#replaceViewSelectionRanges.bind(this);
+        // TODO.
+        this.#replaceViewSelectionRanges();
       },
       this,
     );
@@ -2802,7 +2827,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#inputTextElementMeasurementElement,
       this.#topLevelContentViewContainerElement,
       this.#selectionViewContainerElement,
-      this.#inputTextElement, // TODO: overflows parent, changing dimensions.
+      this.#inputTextElement, // TODO: Overflows parent, changing dimensions.
     ];
     dragElements.forEach((element) => {
       element.style.cursor = 'text';
@@ -2810,12 +2835,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         fromReactiveValue<[PointerEvent]>((callback, disposable) => addEventListener(element, 'pointerdown', callback, disposable)),
         map((args) => args[0]),
         filterLeft,
-      )(pointerDownLeft$);
+        subscribe(pointerDownLeft$),
+      );
       pipe(
         fromReactiveValue<[PointerEvent]>((callback, disposable) => addEventListener(element, 'pointerup', callback, disposable)),
         map((args) => args[0]),
         filterLeft,
-      )(pointerUpLeft$);
+        subscribe(pointerUpLeft$),
+      );
     });
     let currentDebounceTimer$: Distributor<never>;
     pipe(
@@ -2826,7 +2853,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           debounce(
             () => {
               currentDebounceTimer$ = Distributor<never>();
-              timer(400)(currentDebounceTimer$);
+              pipe(timer(400), subscribe(currentDebounceTimer$));
               return currentDebounceTimer$;
             },
             true,
@@ -3361,6 +3388,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return None;
       }),
       memoConsecutive((lastWidth, currentWidth) => lastWidth === currentWidth),
+      debounce(() => timer(400), false, true),
       subscribe((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
@@ -3408,6 +3436,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addWindowEventListener('keyup', this.#onGlobalKeyUp.bind(this), this);
   }
   #onInputElementFocus(): void {
+    // TODO.
     this.#replaceViewSelectionRanges();
   }
   makePagePointTransformFn(
@@ -3419,7 +3448,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const paragraphReferences = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference).blockReferences;
       const { visibleTop, visibleBottom } = this.#getVisibleTopAndBottom();
       if (pointMovement === matita.PointMovement.Previous) {
-        const startIndex = Math.max(0, indexOfNearestLessThan(paragraphReferences, visibleTop, this.#compareParagraphTopToOffsetTop.bind(this)));
+        const startIndex = Math.max(0, indexOfNearestLessThan(paragraphReferences, visibleTop, this.#compareParagraphTopToOffsetTop.bind(this)) - 1);
         const startParagraphReference = paragraphReferences[startIndex];
         return {
           contentReference: matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(document, startParagraphReference)),
@@ -3428,7 +3457,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       const endIndex = Math.min(
         paragraphReferences.length - 1,
-        indexOfNearestLessThan(paragraphReferences, visibleBottom, this.#compareParagraphTopToOffsetTop.bind(this)),
+        indexOfNearestLessThan(paragraphReferences, visibleBottom, this.#compareParagraphTopToOffsetTop.bind(this)) + 1,
       );
       const endParagraphReference = paragraphReferences[endIndex];
       return {
@@ -3530,7 +3559,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#scrollSelectionIntoViewWhenFinishedUpdating = true;
   }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
-    // TODO: can't do this with multiple selectionChange$ listeners.
+    // TODO: Can't do this with multiple selectionChange$ listeners.
     if (event.type !== PushType) {
       throwUnreachable();
     }
@@ -3973,7 +4002,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const selectionAfter: { value?: matita.Selection } = {};
     this.stateControl.queueUpdate(
       () => {
-        // TODO: compose at all selection ranges.
+        // TODO: Compose at all selection ranges.
         let paragraph: matita.Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
         try {
           paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
@@ -4233,8 +4262,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
   }
   #measureParagraphAtParagraphReference(paragraphReference: matita.BlockReference): AbsoluteParagraphMeasurement {
-    // TODO: graphemes instead of characters.
-    // TODO: rtl.
+    // TODO: Graphemes instead of characters.
+    // TODO: Rtl.
     // Fix horizontal scroll hidden in safari.
     this.#containerHtmlElement.scrollLeft = 0;
     const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
@@ -4538,11 +4567,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       throwUnreachable();
     }
     this.#syncInputElement();
-    this.#replaceViewSelectionRanges();
     if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
       this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
       this.#scrollSelectionIntoView();
     }
+    this.#replaceViewSelectionRanges();
   }
   #syncInputElement(): void {
     // Hidden input text for composition.
@@ -4558,8 +4587,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const focusPoint = matita.getFocusPointFromRange(focusRange);
     matita.assertIsParagraphPoint(anchorPoint);
     matita.assertIsParagraphPoint(focusPoint);
-    const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, anchorPoint);
-    this.#inputElementLastSynchronizedParagraphReference = matita.makeBlockReferenceFromParagraphPoint(anchorPoint);
+    const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, focusPoint);
+    this.#inputElementLastSynchronizedParagraphReference = matita.makeBlockReferenceFromParagraphPoint(focusPoint);
     const inputText = this.#getDomInputTextFromParagraph(paragraph);
     const direction = matita.getRangeDirection(this.stateControl.stateView.document, focusRange);
     assert(direction === matita.RangeDirection.Backwards || direction === matita.RangeDirection.Forwards || direction === matita.RangeDirection.NeutralText);
@@ -4578,11 +4607,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       } else {
         this.#inputElementContainedInSingleParagraph = false;
         if (direction === matita.RangeDirection.Backwards) {
-          rangeStartOffset = 0;
-          rangeEndOffset = anchorPoint.offset;
-        } else {
-          rangeStartOffset = anchorPoint.offset;
+          rangeStartOffset = focusPoint.offset;
           rangeEndOffset = inputText.length;
+        } else {
+          rangeStartOffset = 0;
+          rangeEndOffset = focusPoint.offset;
         }
       }
       if (
@@ -4632,39 +4661,70 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
     }
   }
+  #selectionIntersectionObserver!: ReactiveIntersectionObserver;
+  // TODO: Deduplicate calling this method.
   #replaceViewSelectionRanges(): void {
+    this.#selectionIntersectionObserver?.dispose();
+    this.#selectionIntersectionObserver = new ReactiveIntersectionObserver();
     const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
-    const viewCursorAndRangeInfosForSelectionRanges = this.stateControl.stateView.selection.selectionRanges.map((selectionRange) => {
+    const { selectionRanges } = this.stateControl.stateView.selection;
+    if (selectionRanges.length === 0) {
+      this.#selectionView$(
+        Push({
+          viewCursorAndRangeInfos: {
+            viewCursorAndRangeInfosForSelectionRanges: [],
+          },
+        }),
+      );
+      return;
+    }
+    const viewCursorAndRangeInfosForSelectionRangeSources = selectionRanges.map((selectionRange) => {
       assertIsNotNullish(focusSelectionRange);
-      return this.#makeViewCursorAndRangeInfosForSelectionRange(selectionRange, selectionRange.id === focusSelectionRange.id);
+      const viewCursorAndRangeInfosForSelectionRange$ = this.#makeViewCursorAndRangeInfosForSelectionRange(
+        selectionRange,
+        selectionRange.id === focusSelectionRange.id,
+        this.#selectionIntersectionObserver,
+      );
+      return viewCursorAndRangeInfosForSelectionRange$;
     });
-    this.#selectionView$(
-      Push({
-        viewCursorAndRangeInfos: {
-          viewCursorAndRangeInfosForSelectionRanges,
-        },
-      }),
+    const selectionViewMessage$ = pipe(
+      combine(viewCursorAndRangeInfosForSelectionRangeSources),
+      map(
+        (viewCursorAndRangeInfosForSelectionRanges): SelectionViewMessage => ({
+          viewCursorAndRangeInfos: {
+            viewCursorAndRangeInfosForSelectionRanges,
+          },
+        }),
+      ),
     );
+    selectionViewMessage$(this.#selectionView$);
   }
   #makeViewCursorAndRangeInfosForSelectionRange(
     selectionRange: matita.SelectionRange,
     isFocusSelectionRange: boolean,
-  ): ViewCursorAndRangeInfosForSelectionRange {
-    return {
-      viewCursorAndRangeInfosForRanges: selectionRange.ranges.map((range) =>
-        this.#makeViewCursorAndRangeInfosForRange(
-          range,
-          range.id === selectionRange.anchorRangeId,
-          range.id === selectionRange.focusRangeId,
-          isFocusSelectionRange,
-          !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
-        ),
-      ),
-      selectionRangeId: selectionRange.id,
-      hasFocus: this.#hasFocus(),
-      isInComposition: this.#isInComposition > 0,
-      isDraggingSelection: this.#isDraggingSelection,
-    };
+    disposable: Disposable,
+  ): Source<ViewCursorAndRangeInfosForSelectionRange> {
+    const viewCursorAndRangeInfoForRangeSources = selectionRange.ranges.map((range) => {
+      const viewCursorAndRangeInfosForRange$ = this.#makeViewCursorAndRangeInfosForRange(
+        range,
+        range.id === selectionRange.anchorRangeId,
+        range.id === selectionRange.focusRangeId,
+        isFocusSelectionRange,
+        !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
+        disposable,
+      );
+      return viewCursorAndRangeInfosForRange$;
+    });
+    return pipe(
+      combine(viewCursorAndRangeInfoForRangeSources),
+      map((viewCursorAndRangeInfosForRanges) => ({
+        viewCursorAndRangeInfosForRanges,
+        selectionRangeId: selectionRange.id,
+        hasFocus: this.#hasFocus(),
+        isInComposition: this.#isInComposition > 0,
+        isDraggingSelection: this.#isDraggingSelection,
+      })),
+    );
   }
   #makeViewCursorAndRangeInfosForRange(
     range: matita.Range,
@@ -4672,7 +4732,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     isFocus: boolean,
     isFocusSelectionRange: boolean,
     isLineWrapFocusCursorWrapToNextLine: boolean,
-  ): ViewCursorAndRangeInfosForRange {
+    disposable: Disposable,
+  ): Source<ViewCursorAndRangeInfosForRange> {
     const { contentReference } = range;
     const direction = matita.getRangeDirection(this.stateControl.stateView.document, range);
     assert(direction === matita.RangeDirection.Backwards || direction === matita.RangeDirection.Forwards || direction === matita.RangeDirection.NeutralText);
@@ -4684,21 +4745,82 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const lastParagraphReference = matita.makeBlockReferenceFromParagraphPoint(lastPoint);
     const firstParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, firstParagraphReference);
     const lastParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, lastParagraphReference);
-    const viewCursorInfos: ViewCursorInfo[] = [];
-    const viewRangeInfos: ViewRangeInfo[] = [];
-    const scrollContainer = this.#getScrollContainer();
-    const { visibleTop } = this.#getVisibleTopAndBottom();
-    const { visibleLeft } = this.#getVisibleLeftAndRight();
-    const relativeOffsetTop = scrollContainer.scrollTop + visibleTop;
-    const relativeOffsetLeft = scrollContainer.scrollLeft + visibleLeft;
-    let previousLineRect: ViewRectangle | undefined;
+    const observedParagraphReferences: matita.BlockReference[] = [];
+    const observingTargets = new Set<HTMLElement>();
     for (let i = firstParagraphIndex; i <= lastParagraphIndex; i++) {
-      if (direction === matita.RangeDirection.NeutralText) {
-        break;
-      }
       const paragraph = matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, contentReference, i);
       matita.assertIsParagraph(paragraph);
       const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+      observedParagraphReferences.push(paragraphReference);
+      const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
+      const target = paragraphRenderControl.containerHtmlElement;
+      this.#selectionIntersectionObserver.observe(target);
+      observingTargets.add(target);
+    }
+    pipe(
+      this.#selectionIntersectionObserver.entries$,
+      skip(1),
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const entries = event.value;
+        const newRenderedViewParagraphInfos = viewCursorAndRangeInfosForRange$.currentValue.viewParagraphInfos.slice();
+        entries.forEach((entry) => {
+          const target = entry.target as HTMLElement;
+          if (!observingTargets.has(target)) {
+            return;
+          }
+          const paragraphRenderControl = this.htmlElementToNodeRenderControlMap.get(target);
+          if (!(paragraphRenderControl instanceof VirtualizedParagraphRenderControl)) {
+            return;
+          }
+          const { paragraphReference } = paragraphRenderControl;
+          const currentRenderedIndex = newRenderedViewParagraphInfos.findIndex((renderedViewParagraphInfo) => {
+            return matita.areBlockReferencesAtSameBlock(renderedViewParagraphInfo.paragraphReference, paragraphReference);
+          });
+          if (!entry.isIntersecting) {
+            if (currentRenderedIndex === -1) {
+              return;
+            }
+            newRenderedViewParagraphInfos.splice(currentRenderedIndex, 1);
+            return;
+          }
+          const { relativeOffsetLeft, relativeOffsetTop } = calculateRelativeOffsets();
+          const viewRangeInfos = calculateViewRangeInfosForParagraphAtIndex(
+            observedParagraphReferences.findIndex((observedParagraphReference) => {
+              return matita.areBlockReferencesAtSameBlock(observedParagraphReference, paragraphReference);
+            }),
+            relativeOffsetLeft,
+            relativeOffsetTop,
+          );
+          const viewCursorInfos: ViewCursorInfo[] = [];
+          if (isFocus && matita.areBlockReferencesAtSameBlock(paragraphReference, focusParagraphReference)) {
+            viewCursorInfos.push(calculateViewCursorInfoForFocusPoint(relativeOffsetLeft, relativeOffsetTop));
+          }
+          const newViewParagraphInfo: ViewCursorAndRangeInfosForParagraphInRange = {
+            paragraphReference,
+            viewRangeInfos,
+            viewCursorInfos,
+          };
+          if (currentRenderedIndex === -1) {
+            newRenderedViewParagraphInfos.push(newViewParagraphInfo);
+          } else {
+            newRenderedViewParagraphInfos[currentRenderedIndex] = newViewParagraphInfo;
+          }
+        });
+        viewCursorAndRangeInfosForRange$(Push({ viewParagraphInfos: newRenderedViewParagraphInfos }));
+      }, disposable),
+    );
+    const calculateViewRangeInfosForParagraphAtIndex = (
+      observedParagraphIndex: number,
+      relativeOffsetLeft: number,
+      relativeOffsetTop: number,
+    ): ViewRangeInfo[] => {
+      const paragraphReference = observedParagraphReferences[observedParagraphIndex];
+      const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+      const i = firstParagraphIndex + observedParagraphIndex;
+      matita.assertIsParagraph(paragraph);
       let includedParagraphStartOffset: number;
       let includedParagraphEndOffset: number;
       if (i === firstParagraphIndex) {
@@ -4713,6 +4835,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       const defaultVisibleLineBreakPadding = 8;
       const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
+      const viewRangeInfos: ViewRangeInfo[] = [];
       for (let j = 0; j < paragraphMeasurement.measuredParagraphLineRanges.length; j++) {
         const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[j];
         const includedLineStartOffset = Math.max(measuredParagraphLineRange.startOffset, includedParagraphStartOffset);
@@ -4744,18 +4867,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 lastCharacterBoundingRect.height,
               );
             }
-            const nonOverlappingLineRects = previousLineRect ? subtractViewRectangles(lineRect, previousLineRect) : [lineRect];
-            nonOverlappingLineRects.forEach((nonOverlappingLineRect, splitRectangleIndex) => {
-              viewRangeInfos.push({
-                rectangle: nonOverlappingLineRect,
-                paragraphLineIndex: j,
-                startOffset: 0,
-                endOffset: 0,
-                paragraphReference,
-                splitRectangleIndex,
-              });
+            viewRangeInfos.push({
+              rectangle: lineRect,
+              paragraphLineIndex: j,
+              startOffset: 0,
+              endOffset: 0,
+              paragraphReference,
             });
-            previousLineRect = lineRect;
           }
           continue;
         }
@@ -4777,28 +4895,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         } else if (includedLineStartOffset === includedLineEndOffset) {
           continue;
         }
-        const lineRect = makeViewRectangle(lineRectLeft, lineRectTop, lineRectWidth, lineRectHeight);
-        const nonOverlappingLineRects = previousLineRect ? subtractViewRectangles(lineRect, previousLineRect) : [lineRect];
-        nonOverlappingLineRects.forEach((nonOverlappingLineRect, splitRectangleIndex) => {
-          viewRangeInfos.push({
-            rectangle: nonOverlappingLineRect,
-            paragraphLineIndex: j,
-            startOffset: includedLineStartOffset,
-            endOffset: includedLineEndOffset,
-            paragraphReference,
-            splitRectangleIndex,
-          });
+        viewRangeInfos.push({
+          rectangle: makeViewRectangle(lineRectLeft, lineRectTop, lineRectWidth, lineRectHeight),
+          paragraphLineIndex: j,
+          startOffset: includedLineStartOffset,
+          endOffset: includedLineEndOffset,
+          paragraphReference,
         });
-        previousLineRect = lineRect;
       }
-    }
-    if (isFocus) {
-      const focusPoint = matita.getFocusPointFromRange(range);
-      matita.assertIsParagraphPoint(focusPoint);
-      const focusParagraphReference = matita.makeBlockReferenceFromParagraphPoint(focusPoint);
+      return viewRangeInfos;
+    };
+    const focusPoint = matita.getFocusPointFromRange(range);
+    matita.assertIsParagraphPoint(focusPoint);
+    const focusParagraphReference = matita.makeBlockReferenceFromParagraphPoint(focusPoint);
+    const calculateViewCursorInfoForFocusPoint = (relativeOffsetLeft: number, relativeOffsetTop: number): ViewCursorInfo => {
       const cursorOffset = focusPoint.offset;
       const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(focusPoint, isLineWrapFocusCursorWrapToNextLine);
-      viewCursorInfos.push({
+      const viewCursorInfo: ViewCursorInfo = {
         position: {
           left: cursorPositionAndHeight.position.left + relativeOffsetLeft,
           top: cursorPositionAndHeight.position.top + relativeOffsetTop,
@@ -4809,7 +4922,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         paragraphReference: focusParagraphReference,
         offset: cursorOffset,
         rangeDirection: direction,
-      });
+      };
+      // TODO: Refactor so this function is pure?
       setInputElementPosition: if (isFocusSelectionRange) {
         const nativeSelection = getSelection();
         if (!nativeSelection || nativeSelection.rangeCount === 0) {
@@ -4826,26 +4940,76 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           cursorPositionAndHeight.position.top + cursorPositionAndHeight.height,
           anchorPositionAndHeight.position.top + anchorPositionAndHeight.height,
         );
-        const fontSize = Math.min(maxBottom - minTop, 100);
+        const fontSize = Math.min(maxBottom - minTop, 40);
         this.#inputTextElementMeasurementElement.style.fontSize = `${fontSize}px`;
-        const anchorParagraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, anchorPoint);
-        const textNode = document.createTextNode(this.#getDomInputTextFromParagraph(anchorParagraph));
+        const focusParagraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, focusPoint);
+        const textNode = document.createTextNode(this.#getDomInputTextFromParagraph(focusParagraph));
         this.#inputTextElementMeasurementElement.replaceChildren(textNode);
         const measureRange = document.createRange();
-        measureRange.setStart(textNode, anchorPoint.offset);
-        measureRange.setEnd(textNode, anchorPoint.offset);
+        measureRange.setStart(textNode, focusPoint.offset);
+        measureRange.setEnd(textNode, focusPoint.offset);
         const measureRangeBoundingRect = measureRange.getBoundingClientRect();
-        this.#inputTextElement.style.top = `${minTop + relativeOffsetTop}px`;
+        this.#inputTextElement.style.top = `${maxBottom + relativeOffsetTop - fontSize}px`;
         // Before we shifted left by fontSize because on macOS the composition dropdown needs to have space to the right at the end of the line, otherwise it
         // will glitch elsewhere. This introduces more issues (e.g. long press word selection not matching up), so we don't do this anymore.
-        this.#inputTextElement.style.left = `${anchorPositionAndHeight.position.left - measureRangeBoundingRect.left /* - fontSize */}px`;
+        this.#inputTextElement.style.left = `${cursorPositionAndHeight.position.left - measureRangeBoundingRect.left /* - fontSize */}px`;
         this.#inputTextElement.style.fontSize = `${fontSize}px`;
       }
-    }
-    return {
-      viewCursorInfos,
-      viewRangeInfos,
+      return viewCursorInfo;
     };
+    const calculateRelativeOffsets = (): { relativeOffsetLeft: number; relativeOffsetTop: number } => {
+      const scrollContainer = this.#getScrollContainer();
+      const { visibleLeft } = this.#getVisibleLeftAndRight();
+      const { visibleTop } = this.#getVisibleTopAndBottom();
+      const relativeOffsetLeft = scrollContainer.scrollLeft + visibleLeft;
+      const relativeOffsetTop = scrollContainer.scrollTop + visibleTop;
+      return {
+        relativeOffsetLeft,
+        relativeOffsetTop,
+      };
+    };
+    const calculateViewCursorAndRangeInfosForVisibleParagraphs = (visibleStartIndex: number, visibleEndIndex: number): ViewCursorAndRangeInfosForRange => {
+      const { relativeOffsetLeft, relativeOffsetTop } = calculateRelativeOffsets();
+      const viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[] = [];
+      if (direction === matita.RangeDirection.NeutralText) {
+        const viewCursorInfo = calculateViewCursorInfoForFocusPoint(relativeOffsetLeft, relativeOffsetTop);
+        viewParagraphInfos.push({
+          paragraphReference: focusParagraphReference,
+          viewRangeInfos: [],
+          viewCursorInfos: [viewCursorInfo],
+        });
+      } else {
+        for (let i = visibleStartIndex; i <= visibleEndIndex; i++) {
+          const paragraphReference = observedParagraphReferences[i];
+          const viewRangeInfos = calculateViewRangeInfosForParagraphAtIndex(i, relativeOffsetLeft, relativeOffsetTop);
+          const viewCursorInfos: ViewCursorInfo[] = [];
+          if (isFocus && matita.areBlockReferencesAtSameBlock(paragraphReference, focusParagraphReference)) {
+            viewCursorInfos.push(calculateViewCursorInfoForFocusPoint(relativeOffsetLeft, relativeOffsetTop));
+          }
+          viewParagraphInfos.push({
+            paragraphReference,
+            viewRangeInfos,
+            viewCursorInfos,
+          });
+        }
+      }
+      return {
+        viewParagraphInfos,
+      };
+    };
+    const { visibleTop: initialVisibleTop, visibleBottom: initialVisibleBottom } = this.#getVisibleTopAndBottom();
+    const initialVisibleStartIndex = Math.max(
+      0,
+      indexOfNearestLessThan(observedParagraphReferences, initialVisibleTop, this.#compareParagraphTopToOffsetTop.bind(this)) - 1,
+    );
+    const initialVisibleEndIndex = Math.min(
+      observedParagraphReferences.length - 1,
+      indexOfNearestLessThan(observedParagraphReferences, initialVisibleBottom, this.#compareParagraphTopToOffsetTop.bind(this), initialVisibleStartIndex) + 1,
+    );
+    const viewCursorAndRangeInfosForRange$ = CurrentValueDistributor<ViewCursorAndRangeInfosForRange>(
+      calculateViewCursorAndRangeInfosForVisibleParagraphs(initialVisibleStartIndex, initialVisibleEndIndex),
+    );
+    return viewCursorAndRangeInfosForRange$;
   }
   #dispose(): void {
     this.rootHtmlElement.removeChild(this.#containerHtmlElement);

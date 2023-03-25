@@ -1,7 +1,7 @@
-// TODO: void behavior.
-// TODO: collaboration.
-// TODO: don't allow accessing nodes directly?
-// TODO: make config immutable and out its update operations.
+// TODO: Void behavior.
+// TODO: Collaboration.
+// TODO: Don't allow accessing nodes directly?
+// TODO: Make config immutable and out its update operations.
 import { v4 as makeUuidV4 } from 'uuid';
 import { Disposable, implDisposableMethods } from '../ruscel/disposable';
 import { Distributor } from '../ruscel/distributor';
@@ -2118,7 +2118,7 @@ enum SelectionRangeIntention {
 }
 type SelectionRangeData = Record<string, unknown>;
 interface SelectionRange {
-  readonly ranges: readonly Range[]; // TODO: remove text collapsed non focus/anchor ranges.
+  readonly ranges: readonly Range[]; // TODO: Remove text collapsed non focus/anchor ranges.
   readonly anchorRangeId: string;
   readonly focusRangeId: string;
   readonly intention: SelectionRangeIntention;
@@ -3012,6 +3012,7 @@ interface RangeWithKeys {
   sortedEndPoint: Point;
   sortedStartKey: PointKey;
   sortedEndKey: PointKey;
+  createdAt: number;
 }
 function makeSortedRangeWithKeysFromRange(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
@@ -3019,6 +3020,7 @@ function makeSortedRangeWithKeysFromRange(
   isAnchor: boolean,
   isFocus: boolean,
   selectionRangeId: string,
+  createdAt: number,
 ): RangeWithKeys {
   const startKey = makePointKeyFromPoint(document, range.contentReference, range.startPoint);
   const endKey = makePointKeyFromPoint(document, range.contentReference, range.endPoint);
@@ -3049,6 +3051,7 @@ function makeSortedRangeWithKeysFromRange(
     sortedEndPoint,
     sortedStartKey,
     sortedEndKey,
+    createdAt,
   };
 }
 function sortAndMergeAndFixSelectionRanges<
@@ -3103,6 +3106,7 @@ function sortAndMergeAndFixSelectionRanges<
           selectionRange.anchorRangeId === range.id,
           selectionRange.focusRangeId === range.id,
           selectionRange.id,
+          selectionRange.data[SelectionRangeDataCreatedAtKey] as number,
         ),
       ),
     );
@@ -3143,7 +3147,7 @@ function sortAndMergeAndFixSelectionRanges<
       const compare_range1SortedEnd_to_range2SortedEnd = compareKeys(document, range1WithKeys.sortedEndKey, range2WithKeys.sortedEndKey);
       // Overlaps: R1S=R2S or R1E=R2E or R1S <=(non text) R2S <=(non text) R1E or R1S <=(non text) R2E <=(non text) R1E or R1E(non text)=R2S.
       if (
-        eqAny.includes(compare_range1SortedStart_to_range2SortedStart) || // TODO: if same selection range, then if touching text, merge.
+        eqAny.includes(compare_range1SortedStart_to_range2SortedStart) || // TODO: If same selection range, then if touching text, merge.
         eqAny.includes(compare_range1SortedEnd_to_range2SortedEnd) ||
         (leNonText.includes(compare_range1SortedStart_to_range2SortedStart) && geNonText.includes(compare_range1SortedEnd_to_range2SortedStart)) ||
         (leNonText.includes(compare_range1SortedStart_to_range2SortedEnd) && geNonText.includes(compare_range1SortedEnd_to_range2SortedEnd)) ||
@@ -3171,8 +3175,16 @@ function sortAndMergeAndFixSelectionRanges<
         const newRangeId: string = range1WithKeys.range.id;
         const isAnchor = range1WithKeys.isAnchor;
         const isFocus = range1WithKeys.isFocus;
-        const newSelectionRangeId: string = range1WithKeys.selectionRangeId;
-        const removedSelectionRangeId: string = range2WithKeys.selectionRangeId;
+        let newSelectionRangeId: string;
+        let removedSelectionRangeId: string;
+        const newSelectionRangeCreatedAt = Math.max(range1WithKeys.createdAt, range2WithKeys.createdAt);
+        if (range1WithKeys.createdAt > range2WithKeys.createdAt) {
+          newSelectionRangeId = range1WithKeys.selectionRangeId;
+          removedSelectionRangeId = range2WithKeys.selectionRangeId;
+        } else {
+          newSelectionRangeId = range2WithKeys.selectionRangeId;
+          removedSelectionRangeId = range1WithKeys.selectionRangeId;
+        }
         let newStartPoint: Point;
         let newEndPoint: Point;
         let newStartKey: PointKey;
@@ -3189,8 +3201,11 @@ function sortAndMergeAndFixSelectionRanges<
             newSortedEndPoint = range1WithKeys.sortedEndPoint;
             newSortedEndKey = range2WithKeys.sortedEndKey;
           }
-          const firstRangeDirection = getRangeDirection(document, range1WithKeys.range);
-          if (firstRangeDirection === RangeDirection.Backwards) {
+          const newRangeDirection = getRangeDirection(
+            document,
+            range1WithKeys.createdAt > range2WithKeys.createdAt ? range1WithKeys.range : range2WithKeys.range,
+          );
+          if (newRangeDirection === RangeDirection.Backwards) {
             newStartPoint = newSortedEndPoint;
             newStartKey = newSortedEndKey;
             newEndPoint = newSortedStartPoint;
@@ -3224,6 +3239,7 @@ function sortAndMergeAndFixSelectionRanges<
           sortedEndPoint: newSortedEndPoint,
           sortedStartKey: newSortedStartKey,
           sortedEndKey: newSortedEndKey,
+          createdAt: newSelectionRangeCreatedAt,
         });
       }
     }
@@ -3234,9 +3250,9 @@ function sortAndMergeAndFixSelectionRanges<
     });
     const mergedSelectionRanges: SelectionRange[] = [];
     groupArray(rangesWithKeys, (rangeWithKeys) => rangeWithKeys.selectionRangeId).forEach((rangesWithKeys, selectionRangeId) => {
-      const anchorRange = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isAnchor);
+      const anchorRange: RangeWithKeys | undefined = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isAnchor);
       assertIsNotNullish(anchorRange);
-      const focusRange = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isFocus);
+      const focusRange: RangeWithKeys | undefined = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isFocus);
       assertIsNotNullish(focusRange);
       const selectionRange = selectionRanges.find((selectionRange) => selectionRange.id === selectionRangeId);
       assertIsNotNullish(selectionRange);
@@ -3308,7 +3324,7 @@ function transformSelectionByTransformingSelectionRanges<
   selection: Selection,
   transformSelectionRange: TransformSelectionRangeFn,
 ): Selection {
-  // TODO: fix this stuff.
+  // TODO: Fix this stuff.
   let didTransform = false;
   const newSelectionRanges: readonly SelectionRange[] = selection.selectionRanges.flatMap((selectionRange) => {
     const transformedSelectionRange = transformSelectionRange(selectionRange);
@@ -3762,7 +3778,7 @@ function makeStateControl<
       currentCustomCollapsedSelectionTextConfig: state.customCollapsedSelectionTextConfig,
       reverseMutation: null,
     },
-  ]; // TODO: garbage collect.
+  ]; // TODO: Garbage collect.
   let currentTimeTravelInfo: {
     timeTraveledToAfterMutationId: string | null;
   } | null = null;
@@ -5139,7 +5155,7 @@ function makeRemoveContentsSelectionTransformFn<
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   startContentReference: ContentReference,
   getContentListFragment: () => ContentListFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  stateViewAfterMutation: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, // TODO: do without time travel?.
+  stateViewAfterMutation: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, // TODO: Do without time travel?.
 ): TransformSelectionRangeFn {
   const lastPreviousPointText = accessLastPreviousPointToContentAtContentReference(document, startContentReference, SelectionRangeIntention.Text);
   const lastPreviousPointBlock = accessLastPreviousPointToContentAtContentReference(document, startContentReference, SelectionRangeIntention.Block);
@@ -5227,7 +5243,7 @@ function makeRemoveBlocksSelectionTransformFn<
   startBlockIndex: number,
   endBlockIndex: number,
   getContentFragment: () => ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  stateViewAfterMutation: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, // TODO: do without time travel?.
+  stateViewAfterMutation: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, // TODO: Do without time travel?.
 ): TransformSelectionRangeFn {
   const lastPreviousPointText = accessLastPreviousPointToBlockAtBlockReference(
     document,
@@ -7674,7 +7690,7 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
             );
       let updateFn: RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
       if (
-        rangesToRemoveWithSelectionRange.length === 0 || // TODO: insert at focus range.
+        rangesToRemoveWithSelectionRange.length === 0 || // TODO: Insert at focus range.
         rangesToRemoveWithSelectionRange.every(
           (rangeToRemoveWithSelectionRange) => rangeToRemoveWithSelectionRange.selectionRange.id !== firstRangeWithSelectionRange.selectionRange.id,
         )
@@ -7738,7 +7754,7 @@ function makeTransposeAtSelectionUpdateFn<
         let secondTextWithStartOffset: TextInlineWithStartOffset | null = null;
         let firstGraphemeTextConfigBeforeTranspose: TextConfig;
         let secondGraphemeTextConfigBeforeTranspose: TextConfig | null = null;
-        // TODO: doesn't work when grapheme is split into multiple texts with different styling.
+        // TODO: Doesn't work when grapheme is split into multiple texts with different styling.
         if (!nextInlineWithStartOffset || isVoid(nextInlineWithStartOffset.inline)) {
           if (!previousInlineWithStartOffset || isVoid(previousInlineWithStartOffset.inline)) {
             // Between two voids.

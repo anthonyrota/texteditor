@@ -110,9 +110,13 @@ function isSource(value: unknown): value is Source<unknown> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return value != null && $$Source in (value as any);
 }
-function subscribe<T>(onEvent: (event: Event<T>) => void, disposable: Disposable): (source: Source<T>) => void {
-  const sink = Sink(onEvent);
-  disposable.add(sink);
+function subscribe<T>(onEvent: (event: Event<T>) => void, disposable: Disposable): (source: Source<T>) => void;
+function subscribe<T>(sink: Sink<T>, disposable?: Disposable): (source: Source<T>) => void;
+function subscribe<T>(onEvent: (event: Event<T>) => void, disposable?: Disposable): (source: Source<T>) => void {
+  const sink = isSink(onEvent) ? onEvent : Sink(onEvent);
+  if (disposable) {
+    disposable.add(sink);
+  }
   return (source) => {
     source(sink);
   };
@@ -154,10 +158,13 @@ function combine<T>(sources: Source<T>[]): Source<T[]> {
       valueMaybes[i] = None;
     }
     let responded = 0;
+    let finished = 0;
     for (let i = 0; i < sources.length && sink.active; i++) {
       const sourceSink = Sink<T>((event) => {
         if (event.type !== PushType) {
-          sink(event);
+          if (!(event.type === EndType && ++finished !== sources.length)) {
+            sink(event);
+          }
           return;
         }
         if (isNone(valueMaybes[i])) {
@@ -598,9 +605,9 @@ function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading?:
   emitPendingOnEnd ??= false;
   return (source) =>
     Source((sink) => {
-      let debounceSink: Sink<unknown> | null;
-      let trailingPush: Push<T> | null;
-      let endPush: Push<T> | null;
+      let debounceSink: Sink<unknown> | null = null;
+      let trailingPush: Push<T> | null = null;
+      let endPush: Push<T> | null = null;
       const sourceSink = Sink<T>((event) => {
         if (event.type === EndType && endPush) {
           Push(endPush);
@@ -633,7 +640,7 @@ function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading?:
           endPush = event;
         }
         if (trailing) {
-          if (hasDebounceSink) {
+          if (!leading || hasDebounceSink) {
             trailingPush = event;
             endPush = null;
           } else {

@@ -20,7 +20,6 @@ function makePromiseResolvingToNativeIntlSegmenterOrPolyfill(): Promise<IntlSegm
   if (IntlSegmenterPromise) {
     return IntlSegmenterPromise;
   }
-  // TODO: the polyfill LAGS.
   IntlSegmenterPromise = createIntlSegmenterPolyfill() as unknown as Promise<IntlSegmenterConstructor>;
   return IntlSegmenterPromise;
 }

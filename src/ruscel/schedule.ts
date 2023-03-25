@@ -1,5 +1,5 @@
 import { Disposable } from './disposable';
-import { requestAnimationFrameDisposable, setTimeoutDisposable, setIntervalDisposable, removeOnce } from './util';
+import { requestAnimationFrameDisposable, setTimeoutDisposable, setIntervalDisposable, removeOnce, queueMicrotaskDisposable } from './util';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ScheduleFunction<T extends any[] = []> {
   (callback: (...args: T) => void, subscription?: Disposable): void;
@@ -169,7 +169,7 @@ function ScheduleInterval(delayMs: number): ScheduleFunction {
     setIntervalDisposable(callNext, delayMs, subscription);
   });
 }
-const scheduleMicrotask: ScheduleFunction = queueMicrotask;
+const scheduleMicrotask: ScheduleFunction = queueMicrotaskDisposable;
 function ScheduleMicrotaskQueued(): ScheduleFunction {
   return ScheduleQueued(scheduleMicrotask);
 }
