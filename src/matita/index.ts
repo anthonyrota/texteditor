@@ -2125,6 +2125,7 @@ interface SelectionRange {
   readonly data: SelectionRangeData;
   readonly id: string;
 }
+const SelectionRangeDataCreatedAtKey = 'createdAt';
 function makeSelectionRange(
   ranges: readonly Range[],
   anchorRangeId: string,
@@ -2136,6 +2137,9 @@ function makeSelectionRange(
   assert(ranges.length > 0, 'SelectionRange must have at least one range.', {
     cause: { ranges, anchorRangeId, focusRangeId, id },
   });
+  if (!(SelectionRangeDataCreatedAtKey in data)) {
+    data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() };
+  }
   return {
     ranges,
     anchorRangeId,
@@ -2159,12 +2163,21 @@ function makeSelection(selectionRanges: readonly SelectionRange[]): Selection {
     selectionRanges,
   };
 }
-// TODO.
 function getFocusSelectionRangeFromSelection(selection: Selection): SelectionRange | null {
   if (selection.selectionRanges.length === 0) {
     return null;
   }
-  return selection.selectionRanges[selection.selectionRanges.length - 1];
+  let maximumCreatedAt = selection.selectionRanges[0].data[SelectionRangeDataCreatedAtKey] as number;
+  let mostRecentlyCreatedSelectionRange = selection.selectionRanges[0];
+  for (let i = 1; i < selection.selectionRanges.length; i++) {
+    const selectionRange = selection.selectionRanges[i];
+    const createdAt = selectionRange.data[SelectionRangeDataCreatedAtKey] as number;
+    if (createdAt >= maximumCreatedAt) {
+      maximumCreatedAt = createdAt;
+      mostRecentlyCreatedSelectionRange = selectionRange;
+    }
+  }
+  return mostRecentlyCreatedSelectionRange;
 }
 function areSelectionsCoveringSameContent(selection1: Selection, selection2: Selection): boolean {
   return (
@@ -3214,36 +3227,31 @@ function sortAndMergeAndFixSelectionRanges<
         });
       }
     }
-    let selection: Selection;
-    if (didChange) {
-      rangesWithKeys.forEach((rangeWithKey) => {
-        if (rangeWithKey.selectionRangeId in changedSelectionRangeIds) {
-          rangeWithKey.selectionRangeId = changedSelectionRangeIds[rangeWithKey.selectionRangeId];
-        }
-      });
-      const mergedSelectionRanges: SelectionRange[] = [];
-      groupArray(rangesWithKeys, (rangeWithKeys) => rangeWithKeys.selectionRangeId).forEach((rangesWithKeys, selectionRangeId) => {
-        const anchorRange = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isAnchor);
-        assertIsNotNullish(anchorRange);
-        const focusRange = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isFocus);
-        assertIsNotNullish(focusRange);
-        const selectionRange = selectionRanges.find((selectionRange) => selectionRange.id === selectionRangeId);
-        assertIsNotNullish(selectionRange);
-        mergedSelectionRanges.push(
-          makeSelectionRange(
-            rangesWithKeys.map((rangeWithKey) => rangeWithKey.range),
-            anchorRange.range.id,
-            focusRange.range.id,
-            selectionRange.intention,
-            selectionRange.data,
-            selectionRangeId,
-          ),
-        );
-      });
-      selection = makeSelection(mergedSelectionRanges);
-    } else {
-      selection = makeSelection(selectionRanges);
-    }
+    rangesWithKeys.forEach((rangeWithKey) => {
+      if (rangeWithKey.selectionRangeId in changedSelectionRangeIds) {
+        rangeWithKey.selectionRangeId = changedSelectionRangeIds[rangeWithKey.selectionRangeId];
+      }
+    });
+    const mergedSelectionRanges: SelectionRange[] = [];
+    groupArray(rangesWithKeys, (rangeWithKeys) => rangeWithKeys.selectionRangeId).forEach((rangesWithKeys, selectionRangeId) => {
+      const anchorRange = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isAnchor);
+      assertIsNotNullish(anchorRange);
+      const focusRange = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isFocus);
+      assertIsNotNullish(focusRange);
+      const selectionRange = selectionRanges.find((selectionRange) => selectionRange.id === selectionRangeId);
+      assertIsNotNullish(selectionRange);
+      mergedSelectionRanges.push(
+        makeSelectionRange(
+          rangesWithKeys.map((rangeWithKey) => rangeWithKey.range),
+          anchorRange.range.id,
+          focusRange.range.id,
+          selectionRange.intention,
+          selectionRange.data,
+          selectionRangeId,
+        ),
+      );
+    });
+    const selection = makeSelection(mergedSelectionRanges);
     if (didChange || isFirstTime) {
       let didFix = false;
       const newSelectionRanges = selection.selectionRanges.flatMap((selectionRange) => {
@@ -8197,4 +8205,5 @@ export {
   type SelectionChangeMessage,
   type MutationResultMessage,
   arePointWithContentReferencesEqual,
+  SelectionRangeDataCreatedAtKey,
 };

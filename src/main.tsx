@@ -180,8 +180,8 @@ class VirtualizedContentRenderControl extends DisposableClass implements matita.
     this.add(paragraphRenderControl);
     pipe(
       paragraphRenderControl.containerHtmlElement$,
-      skip(1),
-      subscribe((event: Event<HTMLElement>): void => {
+      skip(1)<HTMLElement>,
+      subscribe((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
         }
@@ -2293,7 +2293,9 @@ function combineCommandRegistersOverride<
   return combinedCommandRegister;
 }
 function indexOfNearestLessThan<V, N>(array: V[], needle: N, compare: (value: V, needle: N) => number, low = 0, high = array.length - 1): number {
-  if (array.length === 0) return -1;
+  if (array.length === 0) {
+    return -1;
+  }
   let mid: number;
   let item: V;
   let target = -1;
@@ -3196,8 +3198,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   const withoutCollapsedAtSameSpotSelectionRanges = transformedBeforeSelection.selectionRanges.filter(
                     (selectionRange) => !matita.areSelectionRangesCoveringSameContent(selectionRange, draggedSelectionRange),
                   );
-                  if (withoutCollapsedAtSameSpotSelectionRanges.length !== transformedBeforeSelection.selectionRanges.length)
+                  if (withoutCollapsedAtSameSpotSelectionRanges.length !== transformedBeforeSelection.selectionRanges.length) {
                     return matita.makeSelection(withoutCollapsedAtSameSpotSelectionRanges);
+                  }
                 }
                 return matita.sortAndMergeAndFixSelectionRanges(
                   this.stateControl.stateView.document,

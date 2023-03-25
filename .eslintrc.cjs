@@ -18,6 +18,7 @@ module.exports = {
     },
   ],
   rules: {
+    curly: 'error',
     'max-len': ['warn', { code: 160 }],
     'no-constant-condition': ['error', { checkLoops: false }],
     'no-unused-vars': 'off',
