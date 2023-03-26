@@ -353,10 +353,10 @@ function lazy<T>(createSource: () => Source<T>): Source<T> {
   });
 }
 interface SpyOperators {
-  spyAll: <T>(onEvent: (event: Event<T>) => void) => Operator<T, T>;
-  spyPush: <T>(onPush: (value: T, index: number) => void) => Operator<T, T>;
-  spyThrow: (onThrow: (error: unknown) => void) => IdentityOperator;
-  spyEnd: (onEnd: () => void) => IdentityOperator;
+  event: <T>(onEvent: (event: Event<T>) => void) => Operator<T, T>;
+  push: <T>(onPush: (value: T, index: number) => void) => Operator<T, T>;
+  throw: (onThrow: (error: unknown) => void) => IdentityOperator;
+  end: (onEnd: () => void) => IdentityOperator;
 }
 function _createSpyOperators(spyAfter: boolean): SpyOperators {
   function spy<T>(onEvent: (event: Event<T>) => void): Operator<T, T> {
@@ -409,14 +409,14 @@ function _createSpyOperators(spyAfter: boolean): SpyOperators {
     });
   }
   return {
-    spyAll: spy,
-    spyPush: spyPush,
-    spyThrow: spyThrow,
-    spyEnd: spyEnd,
+    event: spy,
+    push: spyPush,
+    throw: spyThrow,
+    end: spyEnd,
   };
 }
-const spyBeforeOperators = _createSpyOperators(false);
-const spyAfterOperators = _createSpyOperators(true);
+const spyBefore = _createSpyOperators(false);
+const spyAfter = _createSpyOperators(true);
 function memoConsecutive(): IdentityOperator;
 function memoConsecutive<T>(isEqual: (keyA: T, keyB: T, currentIndex: number) => boolean): Operator<T, T>;
 function memoConsecutive<T, K>(isEqual: ((keyA: K, keyB: K, currentIndex: number) => boolean) | undefined, getKey: (value: T) => K): Operator<T, T>;
@@ -874,8 +874,8 @@ export {
   filterMap,
   skip,
   lazy,
-  spyBeforeOperators,
-  spyAfterOperators,
+  spyBefore,
+  spyAfter,
   memoConsecutive,
   fromScheduleFunction,
   interval,

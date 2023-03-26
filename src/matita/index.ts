@@ -1906,6 +1906,7 @@ function makeRange(contentReference: ContentReference, startPoint: Point, endPoi
   if (
     (isBlockPoint(startPoint) && isParagraphPoint(endPoint) && areBlockReferencesAtSameBlock(startPoint.blockReference, endPoint.paragraphBlockReference)) ||
     (isParagraphPoint(startPoint) && isBlockPoint(endPoint) && areBlockReferencesAtSameBlock(startPoint.paragraphBlockReference, endPoint.blockReference)) ||
+    // TODO.
     isEndOfContentPoint(startPoint) ||
     isStartOfContentPoint(endPoint)
   ) {
@@ -2133,11 +2134,12 @@ function makeSelectionRange(
   intention: SelectionRangeIntention,
   data: SelectionRangeData,
   id: string,
+  regenerateTimestamp?: boolean,
 ): SelectionRange {
   assert(ranges.length > 0, 'SelectionRange must have at least one range.', {
     cause: { ranges, anchorRangeId, focusRangeId, id },
   });
-  if (!(SelectionRangeDataCreatedAtKey in data)) {
+  if (regenerateTimestamp || !(SelectionRangeDataCreatedAtKey in data)) {
     data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() };
   }
   return {
@@ -2163,21 +2165,47 @@ function makeSelection(selectionRanges: readonly SelectionRange[]): Selection {
     selectionRanges,
   };
 }
-function getFocusSelectionRangeFromSelection(selection: Selection): SelectionRange | null {
-  if (selection.selectionRanges.length === 0) {
+function getLeastRecentlyCreatedSelectionRangeFromSelectionRanges(selectionRanges: readonly SelectionRange[]): SelectionRange | null {
+  if (selectionRanges.length === 0) {
     return null;
   }
-  let maximumCreatedAt = selection.selectionRanges[0].data[SelectionRangeDataCreatedAtKey] as number;
-  let mostRecentlyCreatedSelectionRange = selection.selectionRanges[0];
-  for (let i = 1; i < selection.selectionRanges.length; i++) {
-    const selectionRange = selection.selectionRanges[i];
+  let minimumCreatedAt = selectionRanges[0].data[SelectionRangeDataCreatedAtKey] as number;
+  assert(typeof minimumCreatedAt === 'number');
+  let leastRecentlyCreatedSelectionRange = selectionRanges[0];
+  for (let i = 1; i < selectionRanges.length; i++) {
+    const selectionRange = selectionRanges[i];
     const createdAt = selectionRange.data[SelectionRangeDataCreatedAtKey] as number;
+    assert(typeof createdAt === 'number');
+    if (createdAt < minimumCreatedAt) {
+      minimumCreatedAt = createdAt;
+      leastRecentlyCreatedSelectionRange = selectionRange;
+    }
+  }
+  return leastRecentlyCreatedSelectionRange;
+}
+function getMostRecentlyCreatedSelectionRangeFromSelectionRanges(selectionRanges: readonly SelectionRange[]): SelectionRange | null {
+  if (selectionRanges.length === 0) {
+    return null;
+  }
+  let maximumCreatedAt = selectionRanges[0].data[SelectionRangeDataCreatedAtKey] as number;
+  assert(typeof maximumCreatedAt === 'number');
+  let mostRecentlyCreatedSelectionRange = selectionRanges[0];
+  for (let i = 1; i < selectionRanges.length; i++) {
+    const selectionRange = selectionRanges[i];
+    const createdAt = selectionRange.data[SelectionRangeDataCreatedAtKey] as number;
+    assert(typeof createdAt === 'number');
     if (createdAt >= maximumCreatedAt) {
       maximumCreatedAt = createdAt;
       mostRecentlyCreatedSelectionRange = selectionRange;
     }
   }
   return mostRecentlyCreatedSelectionRange;
+}
+function getAnchorSelectionRangeFromSelection(selection: Selection): SelectionRange | null {
+  return getLeastRecentlyCreatedSelectionRangeFromSelectionRanges(selection.selectionRanges);
+}
+function getFocusSelectionRangeFromSelection(selection: Selection): SelectionRange | null {
+  return getMostRecentlyCreatedSelectionRangeFromSelectionRanges(selection.selectionRanges);
 }
 function areSelectionsCoveringSameContent(selection1: Selection, selection2: Selection): boolean {
   return (
@@ -3054,6 +3082,15 @@ function makeSortedRangeWithKeysFromRange(
     createdAt,
   };
 }
+interface ResolveOverlappingSelectionRangesInfo {
+  range1WithKeys: RangeWithKeys;
+  range2WithKeys: RangeWithKeys;
+  compare_range1SortedStart_to_range2SortedStart: CompareKeysResult;
+  compare_range1SortedStart_to_range2SortedEnd: CompareKeysResult;
+  compare_range1SortedEnd_to_range2SortedStart: CompareKeysResult;
+  compare_range1SortedEnd_to_range2SortedEnd: CompareKeysResult;
+  updateSelectionRangeId: (removedSelectionRangeId: string, newSelectionRangeId: string) => string;
+}
 function sortAndMergeAndFixSelectionRanges<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -3065,15 +3102,7 @@ function sortAndMergeAndFixSelectionRanges<
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selectionRanges: readonly SelectionRange[],
-  resolveOverlappingSelectionRanges?: (info: {
-    range1WithKeys: RangeWithKeys;
-    range2WithKeys: RangeWithKeys;
-    compare_range1SortedStart_to_range2SortedStart: CompareKeysResult;
-    compare_range1SortedStart_to_range2SortedEnd: CompareKeysResult;
-    compare_range1SortedEnd_to_range2SortedStart: CompareKeysResult;
-    compare_range1SortedEnd_to_range2SortedEnd: CompareKeysResult;
-    updateSelectionRangeId: (removedSelectionRangeId: string, newSelectionRangeId: string) => void;
-  }) => RangeWithKeys | null,
+  resolveOverlappingSelectionRanges?: (info: ResolveOverlappingSelectionRangesInfo) => RangeWithKeys | null,
 ): Selection {
   if (selectionRanges.length === 0) {
     return makeSelection(selectionRanges);
@@ -3099,16 +3128,18 @@ function sortAndMergeAndFixSelectionRanges<
   const eqNonText = [CompareKeysResult.OverlapPreferKey1Before, CompareKeysResult.OverlapPreferKey1After, CompareKeysResult.OverlapSameNonText];
   function sortAndMergeAndFix(selectionRanges: readonly SelectionRange[], isFirstTime: boolean): Selection {
     const rangesWithKeys = selectionRanges.flatMap((selectionRange) =>
-      selectionRange.ranges.map((range) =>
-        makeSortedRangeWithKeysFromRange(
+      selectionRange.ranges.map((range) => {
+        const createdAt = selectionRange.data[SelectionRangeDataCreatedAtKey] as number;
+        assert(typeof createdAt === 'number');
+        return makeSortedRangeWithKeysFromRange(
           document,
           range,
           selectionRange.anchorRangeId === range.id,
           selectionRange.focusRangeId === range.id,
           selectionRange.id,
-          selectionRange.data[SelectionRangeDataCreatedAtKey] as number,
-        ),
-      ),
+          createdAt,
+        );
+      }),
     );
     rangesWithKeys.sort((range1WithKeys, range2WithKeys) => {
       const compare_range1SortedStart_to_range2SortedStart = compareKeys(document, range1WithKeys.sortedStartKey, range2WithKeys.sortedStartKey);
@@ -3122,7 +3153,7 @@ function sortAndMergeAndFixSelectionRanges<
     });
     let didChange = false;
     const changedSelectionRangeIds: Record<string, string> = {};
-    const updateSelectionRangeId = (removedSelectionRangeId: string, newSelectionRangeId: string): void => {
+    const updateSelectionRangeId = (removedSelectionRangeId: string, newSelectionRangeId: string): string => {
       if (removedSelectionRangeId in changedSelectionRangeIds) {
         if (newSelectionRangeId in changedSelectionRangeIds) {
           newSelectionRangeId = changedSelectionRangeIds[newSelectionRangeId];
@@ -3137,6 +3168,7 @@ function sortAndMergeAndFixSelectionRanges<
       } else {
         changedSelectionRangeIds[removedSelectionRangeId] = newSelectionRangeId;
       }
+      return newSelectionRangeId;
     };
     for (let i = 0; i < rangesWithKeys.length - 1; i++) {
       const range1WithKeys = rangesWithKeys[i];
@@ -3154,7 +3186,6 @@ function sortAndMergeAndFixSelectionRanges<
         eqNonText.includes(compare_range1SortedEnd_to_range2SortedStart)
       ) {
         if (resolveOverlappingSelectionRanges !== undefined) {
-          // TODO?
           const newRangeWithKeys = resolveOverlappingSelectionRanges({
             range1WithKeys,
             range2WithKeys,
@@ -3166,7 +3197,7 @@ function sortAndMergeAndFixSelectionRanges<
           });
           if (newRangeWithKeys !== null) {
             didChange = true;
-            rangesWithKeys.splice(i--, 2);
+            rangesWithKeys.splice(i--, 2, newRangeWithKeys);
             continue;
           }
         }
@@ -3226,7 +3257,7 @@ function sortAndMergeAndFixSelectionRanges<
           newSortedEndPoint = range1WithKeys.sortedEndPoint;
           newSortedEndKey = range1WithKeys.sortedEndKey;
         }
-        updateSelectionRangeId(removedSelectionRangeId, newSelectionRangeId);
+        newSelectionRangeId = updateSelectionRangeId(removedSelectionRangeId, newSelectionRangeId);
         didChange = true;
         rangesWithKeys.splice(i--, 2, {
           range: makeRange(newRangeContentReference, newStartPoint, newEndPoint, newRangeId),
@@ -8222,4 +8253,8 @@ export {
   type MutationResultMessage,
   arePointWithContentReferencesEqual,
   SelectionRangeDataCreatedAtKey,
+  type ResolveOverlappingSelectionRangesInfo,
+  getAnchorSelectionRangeFromSelection,
+  getLeastRecentlyCreatedSelectionRangeFromSelectionRanges,
+  getMostRecentlyCreatedSelectionRangeFromSelectionRanges,
 };
