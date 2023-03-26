@@ -3444,9 +3444,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             const separateSelectionId = this.#keyDownSet.get('Alt');
             pipe(
               this.#keyDown$,
-              filterMap<string, undefined>((key) => (key === 'Escape' ? Some(undefined) : None)),
+              filterMap<{ key: string; keyboardEvent?: KeyboardEvent }, KeyboardEvent | undefined>(({ key, keyboardEvent }) =>
+                key === 'Escape' ? Some(keyboardEvent) : None,
+              ),
               subscribe((event) => {
-                assert(event.type === PushType);
+                if (event.type !== PushType) {
+                  throwUnreachable();
+                }
+                const keyboardEvent = event.value;
+                keyboardEvent?.preventDefault();
                 endSelectionDrag();
                 this.stateControl.queueUpdate(() => {
                   assertIsNotNullish(dragState);
@@ -3988,27 +3994,25 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const downKeys = [...this.#keyDownSet.keys()];
     this.#keyDownSet.clear();
     for (const key of downKeys) {
-      this.#keyUp$(Push(key));
+      this.#keyUp$(Push({ key }));
     }
   }
-  #markKeyDown(key: string): void {
+  #markKeyDown(key: string, keyboardEvent?: KeyboardEvent): void {
     this.#keyDownSet.set(key, this.#keyDownId++);
-    this.#keyDown$(Push(key));
+    this.#keyDown$(Push({ key, keyboardEvent }));
   }
-  #markKeyUp(key: string): void {
+  #markKeyUp(key: string, keyboardEvent?: KeyboardEvent): void {
     this.#keyDownSet.delete(key);
-    this.#keyUp$(Push(key));
+    this.#keyUp$(Push({ key, keyboardEvent }));
   }
-  #keyDown$ = Distributor<string>();
-  #keyUp$ = Distributor<string>();
+  #keyDown$ = Distributor<{ key: string; keyboardEvent?: KeyboardEvent }>();
+  #keyUp$ = Distributor<{ key: string; keyboardEvent?: KeyboardEvent }>();
   #onGlobalKeyDown(event: KeyboardEvent): void {
     const normalizedKey = this.#normalizeEventKey(event);
     if (platforms.includes(Platform.Apple) && (this.#keyDownSet.has('Meta') || normalizedKey === 'Meta')) {
-      this.#clearKeys();
-      this.#markKeyDown('Meta'); // MacOS track keyup events after Meta is pressed.
-    } else {
-      this.#markKeyDown(normalizedKey);
+      this.#clearKeys(); // MacOS track keyup events after Meta is pressed.
     }
+    this.#markKeyDown(normalizedKey, event);
     if (!this.#shortcutKeys.includes(normalizedKey)) {
       return;
     }
@@ -4076,7 +4080,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #onGlobalKeyUp(event: KeyboardEvent): void {
     const normalizedKey = this.#normalizeEventKey(event);
-    this.#markKeyUp(normalizedKey);
+    this.#markKeyUp(normalizedKey, event);
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   runCommand(commandInfo: CommandInfo<any>): void {
