@@ -37,7 +37,7 @@ import {
   timer,
   windowScheduledBySource,
 } from './ruscel/source';
-import { pipe, requestAnimationFrameDisposable, setTimeoutDisposable } from './ruscel/util';
+import { pipe, queueMicrotaskDisposable, requestAnimationFrameDisposable, setTimeoutDisposable } from './ruscel/util';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './util';
 import './index.css';
 interface DocumentConfig extends matita.NodeConfig {}
@@ -85,7 +85,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     containerHtmlElement.style.overflowWrap = 'anywhere';
     containerHtmlElement.style.fontFamily = "'IBM Plex Sans', sans-serif";
     containerHtmlElement.style.fontSize = '16px';
-    containerHtmlElement.style.lineHeight = '20px';
+    containerHtmlElement.style.lineHeight = '21px';
     return containerHtmlElement;
   }
   get containerHtmlElement(): HTMLElement {
@@ -243,11 +243,7 @@ class VirtualizedContentRenderControl extends DisposableClass implements matita.
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   #dispose(): void {}
 }
-function isScrollable(element: Element): boolean {
-  const style = window.getComputedStyle(element);
-  return element.scrollHeight > element.clientHeight && style.overflowY !== 'hidden';
-}
-function findScrollContainer(node: Node): HTMLElement {
+function findScrollContainer(node: Node, isScrollable: (element: Element) => boolean): HTMLElement {
   let parent = node.parentNode as HTMLElement;
   let scrollElement: HTMLElement | undefined;
   while (!scrollElement) {
@@ -261,7 +257,7 @@ function findScrollContainer(node: Node): HTMLElement {
     parent = parent.parentNode as HTMLElement;
   }
   if (!scrollElement) {
-    return window.document.documentElement;
+    return document.documentElement;
   }
   return scrollElement;
 }
@@ -782,18 +778,36 @@ type KeyCommands = {
 const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'ArrowLeft,Control+KeyB', command: BuiltInCommandName.MoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+ArrowLeft', command: BuiltInCommandName.MoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+ArrowUp', command: BuiltInCommandName.MoveSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+ArrowUp', command: BuiltInCommandName.MoveSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+KeyA', command: BuiltInCommandName.MoveSelectionParagraphStart, platform: Platform.Apple, context: Context.Editing },
   { key: 'ArrowRight,Control+KeyF', command: BuiltInCommandName.MoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+ArrowRight', command: BuiltInCommandName.MoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+ArrowDown', command: BuiltInCommandName.MoveSelectionParagraphForwards, platform: Platform.Apple, context: Context.Editing },
+  {
+    key: 'Alt+ArrowDown',
+    command: BuiltInCommandName.MoveSelectionParagraphForwards,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
   { key: 'Control+KeyE', command: BuiltInCommandName.MoveSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+ArrowLeft', command: BuiltInCommandName.MoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+ArrowRight', command: BuiltInCommandName.MoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing },
-  { key: 'ArrowDown,Control+KeyN', command: BuiltInCommandName.MoveSelectionSoftLineDown, platform: Platform.Apple, context: Context.Editing },
-  { key: 'ArrowUp,Control+KeyP', command: BuiltInCommandName.MoveSelectionSoftLineUp, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+ArrowUp', command: BuiltInCommandName.MoveSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+ArrowDown', command: BuiltInCommandName.MoveSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+ArrowLeft', command: BuiltInCommandName.MoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+ArrowRight', command: BuiltInCommandName.MoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  {
+    key: 'ArrowDown,Control+KeyN',
+    command: BuiltInCommandName.MoveSelectionSoftLineDown,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'ArrowUp,Control+KeyP',
+    command: BuiltInCommandName.MoveSelectionSoftLineUp,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  { key: 'Meta+ArrowUp', command: BuiltInCommandName.MoveSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+ArrowDown', command: BuiltInCommandName.MoveSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   {
     key: 'Shift+ArrowLeft,Control+Shift+KeyB',
     command: BuiltInCommandName.ExtendSelectionGraphemeBackwards,
@@ -802,7 +816,13 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   },
   { key: 'Alt+Shift+ArrowLeft', command: BuiltInCommandName.ExtendSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+Shift+ArrowUp', command: BuiltInCommandName.ExtendSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Control+Shift+KeyA', command: BuiltInCommandName.ExtendSelectionParagraphStart, platform: Platform.Apple, context: Context.Editing },
+  {
+    key: 'Control+Shift+KeyA',
+    command: BuiltInCommandName.ExtendSelectionParagraphStart,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
   {
     key: 'Shift+ArrowRight,Control+Shift+KeyF',
     command: BuiltInCommandName.ExtendSelectionGraphemeForwards,
@@ -812,20 +832,56 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Alt+Shift+ArrowRight', command: BuiltInCommandName.ExtendSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+Shift+ArrowDown', command: BuiltInCommandName.ExtendSelectionParagraphForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+Shift+KeyE', command: BuiltInCommandName.ExtendSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+Shift+ArrowLeft', command: BuiltInCommandName.ExtendSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+Shift+ArrowRight', command: BuiltInCommandName.ExtendSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Shift+ArrowDown,Control+Shift+KeyN', command: BuiltInCommandName.ExtendSelectionSoftLineDown, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Shift+ArrowUp,Control+Shift+KeyP', command: BuiltInCommandName.ExtendSelectionSoftLineUp, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+Shift+ArrowUp', command: BuiltInCommandName.ExtendSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+Shift+ArrowDown', command: BuiltInCommandName.ExtendSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing },
+  {
+    key: 'Meta+Shift+ArrowLeft',
+    command: BuiltInCommandName.ExtendSelectionSoftLineStart,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Shift+ArrowRight',
+    command: BuiltInCommandName.ExtendSelectionSoftLineEnd,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Shift+ArrowDown,Control+Shift+KeyN',
+    command: BuiltInCommandName.ExtendSelectionSoftLineDown,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Shift+ArrowUp,Control+Shift+KeyP',
+    command: BuiltInCommandName.ExtendSelectionSoftLineUp,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Shift+ArrowUp',
+    command: BuiltInCommandName.ExtendSelectionStartOfDocument,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Shift+ArrowDown',
+    command: BuiltInCommandName.ExtendSelectionEndOfDocument,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
   { key: 'Backspace', command: BuiltInCommandName.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+Backspace', command: BuiltInCommandName.RemoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Delete', command: BuiltInCommandName.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+Delete', command: BuiltInCommandName.RemoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+Backspace', command: BuiltInCommandName.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+Delete', command: BuiltInCommandName.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Backspace', command: BuiltInCommandName.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Delete', command: BuiltInCommandName.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+KeyT', command: BuiltInCommandName.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyA', command: BuiltInCommandName.SelectAll, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyA', command: BuiltInCommandName.SelectAll, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Shift+Enter,Control+KeyO', command: BuiltInCommandName.InsertLineBreak, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Enter', command: BuiltInCommandName.SplitParagraph, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: BuiltInCommandName.Undo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -2238,21 +2294,21 @@ function omit<T extends object, K extends string>(value: T, keys: K[]): Omit<T, 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   return newValue;
 }
-function scrollCursorRectIntoView(cursorRect: ViewRectangle, scrollElement: HTMLElement, nestedCall?: boolean) {
+function scrollCursorRectIntoView(cursorRect: ViewRectangle, scrollElement: HTMLElement, isScrollable: (element: Element) => boolean, nestedCall?: boolean) {
   if (!nestedCall) {
-    scrollElement = findScrollContainer(scrollElement);
-    if (scrollElement !== window.document.body && scrollElement !== window.document.documentElement) {
+    scrollElement = findScrollContainer(scrollElement, isScrollable);
+    if (scrollElement !== document.body && scrollElement !== document.documentElement) {
       let s = scrollElement;
       while (true) {
-        s = findScrollContainer(s);
-        scrollCursorRectIntoView(cursorRect, s, true);
-        if (s === window.document.body || s === window.document.documentElement) {
+        s = findScrollContainer(s, isScrollable);
+        scrollCursorRectIntoView(cursorRect, s, isScrollable, true);
+        if (s === document.body || s === document.documentElement) {
           break;
         }
       }
     }
   }
-  const isWindow = scrollElement === window.document.body || scrollElement === window.document.documentElement;
+  const isWindow = scrollElement === document.body || scrollElement === document.documentElement;
   let width;
   let height;
   let yOffset;
@@ -2731,6 +2787,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #isDraggingSelection = false;
   #endSelectionDrag$ = Distributor<undefined>();
+  #isOverflowClipNotSupported = false;
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
     this.#topLevelContentViewContainerElement = document.createElement('div');
@@ -2792,14 +2849,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         if (event.type !== PushType) {
           throwUnreachable();
         }
-        if (isSafari) {
-          // This fires before compositionstart in safari.
-          requestAnimationFrameDisposable(() => {
-            this.#syncInputElement();
-          }, this);
-        } else {
+        // This fires before compositionstart in safari.
+        requestAnimationFrameDisposable(() => {
           this.#syncInputElement();
-        }
+        }, this);
       }, this),
     );
     this.add(inputElementReactiveMutationObserver);
@@ -2810,14 +2863,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#inputTextElement,
       'selectionchange',
       () => {
-        if (isSafari) {
-          // Same reason as above I think?
-          requestAnimationFrameDisposable(() => {
-            this.#syncInputElement();
-          }, this);
-        } else {
+        // Same reason as above I think?
+        requestAnimationFrameDisposable(() => {
           this.#syncInputElement();
-        }
+        }, this);
       },
       this,
     );
@@ -3276,7 +3325,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   isSome(dragState.separateSelectionId) ? { [SeparateSelectionIdKey]: dragState.separateSelectionId.value } : undefined,
                 ),
                 isSome(extendedSelectionRangeIdMaybe) ? extendedSelectionRangeIdMaybe.value : matita.generateId(),
-                true
+                true,
               );
               if (isNone(dragState.separateSelectionId)) {
                 return matita.makeSelection([draggedSelectionRange]);
@@ -3445,6 +3494,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#containerHtmlElement.style.overflow = 'clip visible';
     if (this.#containerHtmlElement.style.overflow !== 'clip visible') {
       // Old versions of safari do not support 'clip'.
+      this.#isOverflowClipNotSupported = true;
       this.#containerHtmlElement.style.overflow = 'hidden visible';
     }
     this.rootHtmlElement.append(this.#containerHtmlElement);
@@ -3521,9 +3571,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
   ): matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
     return (document, _stateControlConfig, _selectionRangeIntention, _range, _point) => {
-      // TODO.
-      // Use viewport coordinates?
-      const paragraphReferences = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference).blockReferences;
+      // TODO: Use viewport coordinates?
+      const paragraphReferences = matita
+        .accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference)
+        .blockIds.toArray()
+        .map(matita.makeBlockReferenceFromBlockId);
       const { visibleTop, visibleBottom } = this.#getVisibleTopAndBottom();
       if (pointMovement === matita.PointMovement.Previous) {
         const startIndex = Math.max(0, indexOfNearestLessThan(paragraphReferences, visibleTop, this.#compareParagraphTopToOffsetTop.bind(this)) - 1);
@@ -3793,8 +3845,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         cursorPositionAndHeightFromParagraphPoint.height,
       ),
       this.#getScrollContainer(),
+      // TODO.
+      this.#isElementScrollable,
     );
   }
+  #isElementScrollable = (element: Element): boolean => {
+    return element === document.documentElement;
+  };
   isParagraphPointAtWrappedLineWrapPoint(point: matita.ParagraphPoint): boolean {
     const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
     const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
@@ -3815,7 +3872,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     throwUnreachable();
   }
   #getCursorPositionAndHeightFromParagraphPoint(point: matita.ParagraphPoint, isLineWrapToNextLine: boolean): { position: ViewPosition; height: number } {
-    this.#containerHtmlElement.scrollLeft = 0;
+    // Fix horizontal scroll hidden in safari.
+    if (this.#isOverflowClipNotSupported) {
+      this.#containerHtmlElement.scrollLeft = 0;
+    }
     const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
     const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
     const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
@@ -4361,7 +4421,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     // TODO: Graphemes instead of characters.
     // TODO: Rtl.
     // Fix horizontal scroll hidden in safari.
-    this.#containerHtmlElement.scrollLeft = 0;
+    if (this.#isOverflowClipNotSupported) {
+      this.#containerHtmlElement.scrollLeft = 0;
+    }
     const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
     const containerHtmlElement = paragraphRenderControl.containerHtmlElement;
     const containerHtmlElementBoundingRect = containerHtmlElement.getBoundingClientRect();
@@ -4528,7 +4590,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #compareParagraphTopToOffsetTop(paragraphReference: matita.BlockReference, needle: number): number {
     // Fix horizontal scroll hidden in safari.
-    this.#containerHtmlElement.scrollLeft = 0;
+    if (this.#isOverflowClipNotSupported) {
+      this.#containerHtmlElement.scrollLeft = 0;
+    }
     const paragraphNodeControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
     const boundingBox = paragraphNodeControl.containerHtmlElement.getBoundingClientRect();
     return boundingBox.top - needle;
@@ -4542,7 +4606,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const nodeRenderControl = firstContentHitElement ? findClosestNodeRenderControl(this.viewControl, firstContentHitElement) : null;
     if (!nodeRenderControl) {
       // TODO.
-      paragraphReferences = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference).blockReferences;
+      paragraphReferences = matita
+        .accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference)
+        .blockIds.toArray()
+        .map(matita.makeBlockReferenceFromBlockId);
     } else if (nodeRenderControl instanceof VirtualizedParagraphRenderControl) {
       const { paragraphReference } = nodeRenderControl;
       const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
@@ -4550,7 +4617,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       paragraphReferences = [paragraphReference];
     } else {
       // TODO.
-      paragraphReferences = matita.accessContentFromContentReference(this.stateControl.stateView.document, nodeRenderControl.contentReference).blockReferences;
+      paragraphReferences = matita
+        .accessContentFromContentReference(this.stateControl.stateView.document, nodeRenderControl.contentReference)
+        .blockIds.toArray()
+        .map(matita.makeBlockReferenceFromBlockId);
     }
     const startIndex = Math.max(0, indexOfNearestLessThan(paragraphReferences, viewPosition.top, this.#compareParagraphTopToOffsetTop.bind(this)) - 1);
     const endIndex = Math.min(
@@ -4629,18 +4699,25 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #getScrollContainer(): HTMLElement {
     // Horizontal overflow is set to hidden, but it can still be set programmatically (or by the browser). We should be using overflow clip, but it isn't
     // supported in safari <16. We reset it here as calling this method indicates that we are going to measure scroll offsets. This is a hack.
-    this.#containerHtmlElement.scrollLeft = 0;
-    return findScrollContainer(this.#topLevelContentViewContainerElement);
+    if (this.#isOverflowClipNotSupported) {
+      this.#containerHtmlElement.scrollLeft = 0;
+    }
+    return findScrollContainer(this.#topLevelContentViewContainerElement, this.#isElementScrollable);
   }
   #getVisibleTopAndBottom(): { visibleTop: number; visibleBottom: number } {
-    const scrollContainer = this.#getScrollContainer();
-    const scrollContainerBoundingRect = scrollContainer.getBoundingClientRect();
-    const visibleTop = Math.max(scrollContainer.scrollTop + scrollContainerBoundingRect.top, 0);
-    const visibleBottom = Math.min(Math.min(visibleTop + scrollContainer.clientHeight, scrollContainerBoundingRect.bottom), window.innerHeight);
+    // TODO.
     return {
-      visibleTop,
-      visibleBottom,
+      visibleTop: 0,
+      visibleBottom: window.innerHeight,
     };
+    // const scrollContainer = this.#getScrollContainer();
+    // const scrollContainerBoundingRect = scrollContainer.getBoundingClientRect();
+    // const visibleTop = Math.max(scrollContainer.scrollTop + scrollContainerBoundingRect.top, 0);
+    // const visibleBottom = Math.min(Math.min(visibleTop + scrollContainer.clientHeight, scrollContainerBoundingRect.bottom), window.innerHeight);
+    // return {
+    //   visibleTop,
+    //   visibleBottom,
+    // };
   }
   #getVisibleLeftAndRight(): { visibleLeft: number; visibleRight: number } {
     const scrollContainer = this.#getScrollContainer();
@@ -4662,12 +4739,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
-    this.#syncInputElement();
     if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
       this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
       this.#scrollSelectionIntoView();
     }
     this.#replaceViewSelectionRanges();
+    this.#syncInputElement();
   }
   #syncInputElement(): void {
     // Hidden input text for composition.
@@ -5033,6 +5110,45 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const focusPoint = matita.getFocusPointFromRange(range);
     matita.assertIsParagraphPoint(focusPoint);
     const focusParagraphReference = matita.makeBlockReferenceFromParagraphPoint(focusPoint);
+    const setInputElementPosition = (cursorPositionAndHeight: { position: ViewPosition; height: number }, relativeOffsetTop: number): void => {
+      const nativeSelection = getSelection();
+      if (!nativeSelection || nativeSelection.rangeCount === 0) {
+        return;
+      }
+      const anchorPoint = matita.getAnchorPointFromRange(range);
+      matita.assertIsParagraphPoint(anchorPoint);
+      const anchorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(
+        anchorPoint,
+        direction === matita.RangeDirection.NeutralText ? isLineWrapFocusCursorWrapToNextLine : false,
+      );
+      const minTop = Math.min(cursorPositionAndHeight.position.top, anchorPositionAndHeight.position.top);
+      const maxBottom = Math.max(
+        cursorPositionAndHeight.position.top + cursorPositionAndHeight.height,
+        anchorPositionAndHeight.position.top + anchorPositionAndHeight.height,
+      );
+      const fontSize = Math.min(maxBottom - minTop, 40);
+      this.#inputTextElementMeasurementElement.style.fontSize = `${fontSize}px`;
+      const focusParagraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, focusPoint);
+      const textNode = document.createTextNode(this.#getDomInputTextFromParagraph(focusParagraph));
+      this.#inputTextElementMeasurementElement.replaceChildren(textNode);
+      const measureRange = document.createRange();
+      measureRange.setStart(textNode, focusPoint.offset);
+      measureRange.setEnd(textNode, focusPoint.offset);
+      const measureRangeBoundingRect = measureRange.getBoundingClientRect();
+      this.#inputTextElement.style.top = `${maxBottom + relativeOffsetTop - fontSize}px`;
+      // Before we shifted left by fontSize because on macOS the composition dropdown needs to have space to the right at the end of the line, otherwise it
+      // will glitch elsewhere. This introduces more issues (e.g. long press word selection not matching up), so we don't do this anymore.
+      this.#inputTextElement.style.left = `${cursorPositionAndHeight.position.left - measureRangeBoundingRect.left /* - fontSize */}px`;
+      this.#inputTextElement.style.fontSize = `${fontSize}px`;
+    };
+    let setInputElementPositionDisposable: Disposable | null = null;
+    const queueSetInputElementPosition = (cursorPositionAndHeight: { position: ViewPosition; height: number }, relativeOffsetTop: number): void => {
+      if (setInputElementPositionDisposable !== null) {
+        setInputElementPositionDisposable.dispose();
+      }
+      setInputElementPositionDisposable = Disposable();
+      queueMicrotaskDisposable(() => setInputElementPosition(cursorPositionAndHeight, relativeOffsetTop), disposable);
+    };
     const calculateViewCursorInfoForFocusPoint = (relativeOffsetLeft: number, relativeOffsetTop: number): ViewCursorInfo => {
       const cursorOffset = focusPoint.offset;
       const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(focusPoint, isLineWrapFocusCursorWrapToNextLine);
@@ -5049,36 +5165,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         rangeDirection: direction,
       };
       // TODO: Refactor so this function is pure?
-      setInputElementPosition: if (isFocusSelectionRange) {
-        const nativeSelection = getSelection();
-        if (!nativeSelection || nativeSelection.rangeCount === 0) {
-          break setInputElementPosition;
-        }
-        const anchorPoint = matita.getAnchorPointFromRange(range);
-        matita.assertIsParagraphPoint(anchorPoint);
-        const anchorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(
-          anchorPoint,
-          direction === matita.RangeDirection.NeutralText ? isLineWrapFocusCursorWrapToNextLine : false,
-        );
-        const minTop = Math.min(cursorPositionAndHeight.position.top, anchorPositionAndHeight.position.top);
-        const maxBottom = Math.max(
-          cursorPositionAndHeight.position.top + cursorPositionAndHeight.height,
-          anchorPositionAndHeight.position.top + anchorPositionAndHeight.height,
-        );
-        const fontSize = Math.min(maxBottom - minTop, 40);
-        this.#inputTextElementMeasurementElement.style.fontSize = `${fontSize}px`;
-        const focusParagraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, focusPoint);
-        const textNode = document.createTextNode(this.#getDomInputTextFromParagraph(focusParagraph));
-        this.#inputTextElementMeasurementElement.replaceChildren(textNode);
-        const measureRange = document.createRange();
-        measureRange.setStart(textNode, focusPoint.offset);
-        measureRange.setEnd(textNode, focusPoint.offset);
-        const measureRangeBoundingRect = measureRange.getBoundingClientRect();
-        this.#inputTextElement.style.top = `${maxBottom + relativeOffsetTop - fontSize}px`;
-        // Before we shifted left by fontSize because on macOS the composition dropdown needs to have space to the right at the end of the line, otherwise it
-        // will glitch elsewhere. This introduces more issues (e.g. long press word selection not matching up), so we don't do this anymore.
-        this.#inputTextElement.style.left = `${cursorPositionAndHeight.position.left - measureRangeBoundingRect.left /* - fontSize */}px`;
-        this.#inputTextElement.style.fontSize = `${fontSize}px`;
+      if (isFocusSelectionRange) {
+        queueSetInputElementPosition(cursorPositionAndHeight, relativeOffsetTop);
       }
       return viewCursorInfo;
     };

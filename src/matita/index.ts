@@ -8,6 +8,7 @@ import { Distributor } from '../ruscel/distributor';
 import { End, Push, Source } from '../ruscel/source';
 import { requestAnimationFrameDisposable } from '../ruscel/util';
 import { assertUnreachable, throwUnreachable, throwNotImplemented, assert, assertIsNotNullish } from '../util';
+import { IndexableStringList } from './IndexableStringList';
 type JsonPrimitive = undefined | null | string | number | boolean;
 type JsonMap = {
   [key: string]: Json;
@@ -258,7 +259,7 @@ function cloneParagraph<ParagraphConfig extends NodeConfig, TextConfig extends N
   return makeParagraph(cloneNodeConfig(paragraph.config), paragraph.children.map(cloneInline), paragraph.id);
 }
 function cloneEmbed<EmbedConfig extends NodeConfig>(embed: Embed<EmbedConfig>): Embed<EmbedConfig> {
-  return makeEmbed(cloneNodeConfig(embed.config), embed.contentReferences.slice(), embed.id);
+  return makeEmbed(cloneNodeConfig(embed.config), embed.contentIds.toArray().map(makeContentReferenceFromContentId), embed.id);
 }
 function cloneBlock<ParagraphConfig extends NodeConfig, EmbedConfig extends NodeConfig, TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
   block: Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
@@ -274,7 +275,7 @@ function cloneParagraphAndChangeIds<ParagraphConfig extends NodeConfig, TextConf
   return makeParagraph(cloneNodeConfig(paragraph.config), paragraph.children.map(cloneInlineAndChangeIds), generateId());
 }
 function cloneEmbedAndChangeIds<EmbedConfig extends NodeConfig>(embed: Embed<EmbedConfig>): Embed<EmbedConfig> {
-  return makeEmbed(cloneNodeConfig(embed.config), embed.contentReferences.slice(), generateId());
+  return makeEmbed(cloneNodeConfig(embed.config), embed.contentIds.toArray().map(makeContentReferenceFromContentId), generateId());
 }
 function cloneBlockAndChangeIds<
   ParagraphConfig extends NodeConfig,
@@ -308,10 +309,10 @@ function cloneInlineAndChangeIds<TextConfig extends NodeConfig, VoidConfig exten
   return cloneVoidAndChangeIds(inline);
 }
 function cloneContent<ContentConfig extends NodeConfig>(content: Content<ContentConfig>): Content<ContentConfig> {
-  return makeContent(content.config, content.blockReferences.slice(), content.id);
+  return makeContent(content.config, content.blockIds.toArray().map(makeBlockReferenceFromBlockId), content.id);
 }
 function cloneContentAndChangeIds<ContentConfig extends NodeConfig>(content: Content<ContentConfig>): Content<ContentConfig> {
-  return makeContent(content.config, content.blockReferences.slice(), generateId());
+  return makeContent(content.config, content.blockIds.toArray().map(makeBlockReferenceFromBlockId), generateId());
 }
 function cloneContentFragmentAndChangeIds<
   ContentConfig extends NodeConfig,
@@ -625,13 +626,13 @@ function isParagraphEmpty(paragraph: Paragraph<NodeConfig, NodeConfig, NodeConfi
   return paragraph.children.length === 0;
 }
 interface Embed<Config extends NodeConfig> extends NodeBase<NodeType.Embed, Config> {
-  contentReferences: ContentReference[];
+  contentIds: IndexableStringList;
 }
 function makeEmbed<Config extends NodeConfig>(config: Config, contentReferences: ContentReference[], id: string): Embed<Config> {
   return {
     type: NodeType.Embed,
     config,
-    contentReferences,
+    contentIds: new IndexableStringList(contentReferences.map((contentReference) => contentReference.contentId)),
     id,
   };
 }
@@ -668,13 +669,13 @@ function getBlockIdFromParagraphPoint(paragraphPoint: ParagraphPoint): string {
   return getBlockIdFromBlockReference(makeBlockReferenceFromParagraphPoint(paragraphPoint));
 }
 interface Content<Config extends NodeConfig> extends NodeBase<NodeType.Content, Config> {
-  blockReferences: BlockReference[];
+  blockIds: IndexableStringList;
 }
 function makeContent<Config extends NodeConfig>(config: Config, blockReferences: BlockReference[], id: string): Content<Config> {
   return {
     type: NodeType.Content,
     config,
-    blockReferences,
+    blockIds: new IndexableStringList(blockReferences.map((blockReference) => blockReference.blockId)),
     id,
   };
 }
@@ -1388,7 +1389,7 @@ function getNumberOfBlocksInContentAtContentReference<
   VoidConfig extends NodeConfig,
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, contentReference: ContentReference): number {
   const content = accessContentFromContentReference(document, contentReference);
-  return content.blockReferences.length;
+  return content.blockIds.getLength();
 }
 function isContentAtContentReferenceEmpty<
   DocumentConfig extends NodeConfig,
@@ -1409,7 +1410,7 @@ function getIndexOfBlockInContentFromBlockReference<
   VoidConfig extends NodeConfig,
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, blockReference: BlockReference): number {
   const content = accessContentFromBlockReference(document, blockReference);
-  const index = content.blockReferences.findIndex((candidateBlockReference) => areBlockReferencesAtSameBlock(candidateBlockReference, blockReference));
+  const index = content.blockIds.indexOf(blockReference.blockId);
   if (index === -1) {
     throw new BlockNotInContentError({
       cause: {
@@ -1434,7 +1435,7 @@ function accessBlockAtIndexInContentAtContentReference<
   index: number,
 ): Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   const content = accessContentFromContentReference(document, contentReference);
-  if (index < 0 || index >= content.blockReferences.length) {
+  if (index < 0 || index >= content.blockIds.getLength()) {
     throw new BlockNotInContentError({
       cause: {
         document,
@@ -1443,7 +1444,7 @@ function accessBlockAtIndexInContentAtContentReference<
       },
     });
   }
-  return accessBlockFromBlockReference(document, content.blockReferences[index]);
+  return accessBlockFromBlockReference(document, makeBlockReferenceFromBlockId(content.blockIds.access(index)));
 }
 function accessLastBlockInContentAtContentReference<
   DocumentConfig extends NodeConfig,
@@ -1512,7 +1513,7 @@ function getNumberOfEmbedContentsInEmbedAtBlockReference<
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, embedReference: BlockReference): number {
   const embed = accessBlockFromBlockReference(document, embedReference);
   assertIsEmbed(embed);
-  return embed.contentReferences.length;
+  return embed.contentIds.getLength();
 }
 function isEmbedAtBlockReferenceEmpty<
   DocumentConfig extends NodeConfig,
@@ -1559,9 +1560,7 @@ function getIndexOfEmbedContentFromContentReference<
   VoidConfig extends NodeConfig,
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, contentReference: ContentReference): number {
   const embed = accessEmbedFromContentReference(document, contentReference);
-  const index = embed.contentReferences.findIndex((candidateContentReference) =>
-    areContentReferencesAtSameContent(candidateContentReference, contentReference),
-  );
+  const index = embed.contentIds.indexOf(contentReference.contentId);
   if (index === -1) {
     throw new ContentNotInEmbedError({
       cause: { document, embed, contentReference },
@@ -1583,7 +1582,7 @@ function accessContentAtIndexInEmbedAtBlockReference<
 ): Content<ContentConfig> {
   const embed = accessBlockFromBlockReference(document, embedReference);
   assertIsEmbed(embed);
-  if (index < 0 || index >= embed.contentReferences.length) {
+  if (index < 0 || index >= embed.contentIds.getLength()) {
     throw new ContentNotInEmbedError({
       cause: {
         document,
@@ -1592,7 +1591,7 @@ function accessContentAtIndexInEmbedAtBlockReference<
       },
     });
   }
-  return accessContentFromContentReference(document, embed.contentReferences[index]);
+  return accessContentFromContentReference(document, makeContentReferenceFromContentId(embed.contentIds.access(index)));
 }
 function accessLastContentInEmbedAtBlockReference<
   DocumentConfig extends NodeConfig,
@@ -5039,7 +5038,7 @@ function removeContentsFromEmbedAtBlockReferenceBetweenContentReferences<
   }
   const embed = accessBlockFromBlockReference(document, embedReference);
   assertIsEmbed(embed);
-  embed.contentReferences.splice(startContentIndex, endContentIndex - startContentIndex + 1);
+  embed.contentIds.remove(startContentIndex, endContentIndex);
   return makeContentListFragment(contentListFragmentContents);
 }
 function removeBlocksFromContentAtContentReferenceBetweenBlockPoints<
@@ -5123,7 +5122,7 @@ function removeBlocksFromContentAtContentReferenceBetweenBlockPoints<
     }
   }
   const content = accessContentFromContentReference(document, contentReference);
-  content.blockReferences.splice(startBlockIndex, endBlockIndex - startBlockIndex + 1);
+  content.blockIds.remove(startBlockIndex, endBlockIndex);
   return makeContentFragment(contentFragmentBlocks);
 }
 function registerContentListFragmentContents<
@@ -5437,10 +5436,9 @@ function applyMutation<
           previousContentReference = contentReference;
         });
       }
-      embed.contentReferences.splice(
-        contentIndex + (mutation.type === MutationType.InsertContentsBefore ? 0 : 1),
-        0,
-        ...contentListFragmentContents.map(({ content }) => makeContentReferenceFromContent(content)),
+      embed.contentIds.insertAfter(
+        contentIndex + (mutation.type === MutationType.InsertContentsBefore ? -1 : 0),
+        contentListFragmentContents.map(({ content }) => content.id),
       );
       return makeChangedMutationResult(
         makeBatchMutation([
@@ -5475,7 +5473,7 @@ function applyMutation<
       }
       const embed = accessBlockFromBlockPoint(document, embedPoint);
       assertIsEmbed(embed);
-      embed.contentReferences.push(...contentListFragmentContents.map(({ content }) => makeContentReferenceFromContent(content)));
+      embed.contentIds.insertAtEnd(contentListFragmentContents.map(({ content }) => content.id));
       return makeChangedMutationResult(
         makeBatchMutation([
           makeRemoveContentsMutation(
@@ -5512,10 +5510,9 @@ function applyMutation<
           previousBlockReference = blockReference;
         });
       }
-      content.blockReferences.splice(
-        blockIndex + (mutation.type === MutationType.InsertBlocksBefore ? 0 : 1),
-        0,
-        ...contentFragmentBlocks.map((contentFragmentBlock) => makeBlockReferenceFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock))),
+      content.blockIds.insertAfter(
+        blockIndex + (mutation.type === MutationType.InsertBlocksBefore ? -1 : 0),
+        contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
       );
       return makeChangedMutationResult(
         makeBatchMutation([
@@ -5550,9 +5547,7 @@ function applyMutation<
         });
       }
       const content = accessContentFromContentReference(document, contentReference);
-      content.blockReferences.push(
-        ...contentFragmentBlocks.map((contentFragmentBlock) => makeBlockReferenceFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock))),
-      );
+      content.blockIds.insertAtEnd(contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id));
       return makeChangedMutationResult(
         makeBatchMutation([
           makeRemoveBlocksMutation(
@@ -5604,17 +5599,16 @@ function applyMutation<
         const moveIntoEmbed = accessEmbedFromContentReference(document, insertionContentReference);
         registerContentListFragmentContents(document, makeBlockReferenceFromBlock(moveIntoEmbed), contentListFragment);
         const contentIndex = getIndexOfEmbedContentFromContentReference(document, insertionContentReference);
-        moveIntoEmbed.contentReferences.splice(
-          contentIndex + (mutation.type === MutationType.MoveContentsBefore ? 0 : 1),
-          0,
-          ...contentListFragment.contentListFragmentContents.map(({ content }) => makeContentReferenceFromContent(content)),
+        moveIntoEmbed.contentIds.insertAfter(
+          contentIndex + (mutation.type === MutationType.MoveContentsBefore ? -1 : 0),
+          contentListFragment.contentListFragmentContents.map(({ content }) => content.id),
         );
       } else {
         const moveIntoEmbedPoint = mutation.embedPoint;
         registerContentListFragmentContents(document, makeBlockReferenceFromBlockPoint(moveIntoEmbedPoint), contentListFragment);
         const moveIntoEmbed = accessBlockFromBlockPoint(document, moveIntoEmbedPoint);
         assertIsEmbed(moveIntoEmbed);
-        moveIntoEmbed.contentReferences.push(...contentListFragment.contentListFragmentContents.map(({ content }) => makeContentReferenceFromContent(content)));
+        moveIntoEmbed.contentIds.insertAtEnd(contentListFragment.contentListFragmentContents.map(({ content }) => content.id));
       }
       if (startContentIndex > 0) {
         const previousContentReference = makeContentReferenceFromContent(
@@ -5686,21 +5680,16 @@ function applyMutation<
         const moveIntoContent = accessContentFromBlockPoint(document, insertionBlockPoint);
         registerContentFragmentBlocks(document, makeContentReferenceFromContent(moveIntoContent), contentFragment);
         const blockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(insertionBlockPoint));
-        moveIntoContent.blockReferences.splice(
-          blockIndex + (mutation.type === MutationType.MoveBlocksBefore ? 0 : 1),
-          0,
-          ...contentFragment.contentFragmentBlocks.map((contentFragmentBlock) =>
-            makeBlockReferenceFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock)),
-          ),
+        moveIntoContent.blockIds.insertAfter(
+          blockIndex + (mutation.type === MutationType.MoveBlocksBefore ? -1 : 0),
+          contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       } else {
         const moveIntoContentReference = mutation.contentReference;
         registerContentFragmentBlocks(document, moveIntoContentReference, contentFragment);
         const moveIntoContent = accessContentFromContentReference(document, moveIntoContentReference);
-        moveIntoContent.blockReferences.push(
-          ...contentFragment.contentFragmentBlocks.map((contentFragmentBlock) =>
-            makeBlockReferenceFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock)),
-          ),
+        moveIntoContent.blockIds.insertAtEnd(
+          contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       }
       if (startBlockIndex > 0) {
@@ -5736,7 +5725,7 @@ function applyMutation<
       const newParagraph = makeParagraph(newParagraphConfig, paragraphChildrenBeforePoint, newParagraphId);
       const contentReference = makeContentReferenceFromContent(content);
       registerBlockInDocument(document, newParagraph, contentReference);
-      content.blockReferences.splice(paragraphIndex, 0, makeBlockReferenceFromBlock(newParagraph));
+      content.blockIds.insertAfter(paragraphIndex - 1, [newParagraph.id]);
       if (viewDeltaControl) {
         const paragraphReference = makeBlockReferenceFromBlock(paragraph);
         if (splitAtParagraphPoint.offset > 0) {
@@ -5837,7 +5826,7 @@ function applyMutation<
           contentReference,
         );
       }
-      content.blockReferences.splice(paragraphIndex + 1, 0, makeBlockReferenceFromBlock(newParagraph));
+      content.blockIds.insertAfter(paragraphIndex, [newParagraph.id]);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -5916,7 +5905,7 @@ function applyMutation<
       }
       viewDeltaControl?.markBlockAtBlockReferenceRemovedInContentAtContentReference(makeBlockReferenceFromBlock(secondParagraph), contentReference);
       const firstParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromParagraphPoint(firstParagraphPoint));
-      content.blockReferences.splice(firstParagraphIndex + 1, 1);
+      content.blockIds.remove(firstParagraphIndex + 1, firstParagraphIndex + 1);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -5983,7 +5972,7 @@ function applyMutation<
       }
       viewDeltaControl?.markBlockAtBlockReferenceRemovedInContentAtContentReference(makeBlockReferenceFromBlock(firstParagraph), contentReference);
       const secondParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, secondParagraphReference);
-      content.blockReferences.splice(secondParagraphIndex - 1, 1);
+      content.blockIds.remove(secondParagraphIndex - 1, secondParagraphIndex - 1);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
