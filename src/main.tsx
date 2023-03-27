@@ -3851,11 +3851,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         cursorPositionAndHeightFromParagraphPoint.height,
       ),
       this.#getScrollContainer(),
-      // TODO.
       this.#isElementScrollable,
     );
   }
   #isElementScrollable = (element: Element): boolean => {
+    // TODO: Figure this out without forcing style calculation.
     return element === document.documentElement;
   };
   isParagraphPointAtWrappedLineWrapPoint(point: matita.ParagraphPoint): boolean {

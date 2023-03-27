@@ -8,7 +8,7 @@ import { Distributor } from '../ruscel/distributor';
 import { End, Push, Source } from '../ruscel/source';
 import { requestAnimationFrameDisposable } from '../ruscel/util';
 import { assertUnreachable, throwUnreachable, throwNotImplemented, assert, assertIsNotNullish } from '../util';
-import { IndexableStringList } from './IndexableStringList';
+import { IndexableUniqueStringList, AvlTreeIndexableUniqueStringList } from './IndexableUniqueStringList';
 type JsonPrimitive = undefined | null | string | number | boolean;
 type JsonMap = {
   [key: string]: Json;
@@ -626,13 +626,13 @@ function isParagraphEmpty(paragraph: Paragraph<NodeConfig, NodeConfig, NodeConfi
   return paragraph.children.length === 0;
 }
 interface Embed<Config extends NodeConfig> extends NodeBase<NodeType.Embed, Config> {
-  contentIds: IndexableStringList;
+  contentIds: IndexableUniqueStringList;
 }
 function makeEmbed<Config extends NodeConfig>(config: Config, contentReferences: ContentReference[], id: string): Embed<Config> {
   return {
     type: NodeType.Embed,
     config,
-    contentIds: new IndexableStringList(contentReferences.map((contentReference) => contentReference.contentId)),
+    contentIds: new AvlTreeIndexableUniqueStringList(contentReferences.map((contentReference) => contentReference.contentId)),
     id,
   };
 }
@@ -669,13 +669,13 @@ function getBlockIdFromParagraphPoint(paragraphPoint: ParagraphPoint): string {
   return getBlockIdFromBlockReference(makeBlockReferenceFromParagraphPoint(paragraphPoint));
 }
 interface Content<Config extends NodeConfig> extends NodeBase<NodeType.Content, Config> {
-  blockIds: IndexableStringList;
+  blockIds: IndexableUniqueStringList;
 }
 function makeContent<Config extends NodeConfig>(config: Config, blockReferences: BlockReference[], id: string): Content<Config> {
   return {
     type: NodeType.Content,
     config,
-    blockIds: new IndexableStringList(blockReferences.map((blockReference) => blockReference.blockId)),
+    blockIds: new AvlTreeIndexableUniqueStringList(blockReferences.map((blockReference) => blockReference.blockId)),
     id,
   };
 }
@@ -5436,8 +5436,8 @@ function applyMutation<
           previousContentReference = contentReference;
         });
       }
-      embed.contentIds.insertAfter(
-        contentIndex + (mutation.type === MutationType.InsertContentsBefore ? -1 : 0),
+      embed.contentIds.insertBefore(
+        contentIndex + (mutation.type === MutationType.InsertContentsBefore ? 0 : 1),
         contentListFragmentContents.map(({ content }) => content.id),
       );
       return makeChangedMutationResult(
@@ -5473,7 +5473,10 @@ function applyMutation<
       }
       const embed = accessBlockFromBlockPoint(document, embedPoint);
       assertIsEmbed(embed);
-      embed.contentIds.insertAtEnd(contentListFragmentContents.map(({ content }) => content.id));
+      embed.contentIds.insertBefore(
+        embed.contentIds.getLength(),
+        contentListFragmentContents.map(({ content }) => content.id),
+      );
       return makeChangedMutationResult(
         makeBatchMutation([
           makeRemoveContentsMutation(
@@ -5510,8 +5513,8 @@ function applyMutation<
           previousBlockReference = blockReference;
         });
       }
-      content.blockIds.insertAfter(
-        blockIndex + (mutation.type === MutationType.InsertBlocksBefore ? -1 : 0),
+      content.blockIds.insertBefore(
+        blockIndex + (mutation.type === MutationType.InsertBlocksBefore ? 0 : 1),
         contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
       );
       return makeChangedMutationResult(
@@ -5547,7 +5550,10 @@ function applyMutation<
         });
       }
       const content = accessContentFromContentReference(document, contentReference);
-      content.blockIds.insertAtEnd(contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id));
+      content.blockIds.insertBefore(
+        content.blockIds.getLength(),
+        contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
+      );
       return makeChangedMutationResult(
         makeBatchMutation([
           makeRemoveBlocksMutation(
@@ -5599,8 +5605,8 @@ function applyMutation<
         const moveIntoEmbed = accessEmbedFromContentReference(document, insertionContentReference);
         registerContentListFragmentContents(document, makeBlockReferenceFromBlock(moveIntoEmbed), contentListFragment);
         const contentIndex = getIndexOfEmbedContentFromContentReference(document, insertionContentReference);
-        moveIntoEmbed.contentIds.insertAfter(
-          contentIndex + (mutation.type === MutationType.MoveContentsBefore ? -1 : 0),
+        moveIntoEmbed.contentIds.insertBefore(
+          contentIndex + (mutation.type === MutationType.MoveContentsBefore ? 0 : 1),
           contentListFragment.contentListFragmentContents.map(({ content }) => content.id),
         );
       } else {
@@ -5608,7 +5614,10 @@ function applyMutation<
         registerContentListFragmentContents(document, makeBlockReferenceFromBlockPoint(moveIntoEmbedPoint), contentListFragment);
         const moveIntoEmbed = accessBlockFromBlockPoint(document, moveIntoEmbedPoint);
         assertIsEmbed(moveIntoEmbed);
-        moveIntoEmbed.contentIds.insertAtEnd(contentListFragment.contentListFragmentContents.map(({ content }) => content.id));
+        moveIntoEmbed.contentIds.insertBefore(
+          moveIntoEmbed.contentIds.getLength(),
+          contentListFragment.contentListFragmentContents.map(({ content }) => content.id),
+        );
       }
       if (startContentIndex > 0) {
         const previousContentReference = makeContentReferenceFromContent(
@@ -5680,15 +5689,16 @@ function applyMutation<
         const moveIntoContent = accessContentFromBlockPoint(document, insertionBlockPoint);
         registerContentFragmentBlocks(document, makeContentReferenceFromContent(moveIntoContent), contentFragment);
         const blockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(insertionBlockPoint));
-        moveIntoContent.blockIds.insertAfter(
-          blockIndex + (mutation.type === MutationType.MoveBlocksBefore ? -1 : 0),
+        moveIntoContent.blockIds.insertBefore(
+          blockIndex + (mutation.type === MutationType.MoveBlocksBefore ? 0 : 1),
           contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       } else {
         const moveIntoContentReference = mutation.contentReference;
         registerContentFragmentBlocks(document, moveIntoContentReference, contentFragment);
         const moveIntoContent = accessContentFromContentReference(document, moveIntoContentReference);
-        moveIntoContent.blockIds.insertAtEnd(
+        moveIntoContent.blockIds.insertBefore(
+          moveIntoContent.blockIds.getLength(),
           contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       }
@@ -5725,7 +5735,7 @@ function applyMutation<
       const newParagraph = makeParagraph(newParagraphConfig, paragraphChildrenBeforePoint, newParagraphId);
       const contentReference = makeContentReferenceFromContent(content);
       registerBlockInDocument(document, newParagraph, contentReference);
-      content.blockIds.insertAfter(paragraphIndex - 1, [newParagraph.id]);
+      content.blockIds.insertBefore(paragraphIndex, [newParagraph.id]);
       if (viewDeltaControl) {
         const paragraphReference = makeBlockReferenceFromBlock(paragraph);
         if (splitAtParagraphPoint.offset > 0) {
@@ -5826,7 +5836,7 @@ function applyMutation<
           contentReference,
         );
       }
-      content.blockIds.insertAfter(paragraphIndex, [newParagraph.id]);
+      content.blockIds.insertBefore(paragraphIndex + 1, [newParagraph.id]);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
