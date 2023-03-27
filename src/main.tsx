@@ -3005,17 +3005,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     inputElementReactiveMutationObserver.observe(this.#inputTextElement, {
       childList: true,
     });
-    addEventListener(
-      this.#inputTextElement,
-      'selectionchange',
-      () => {
-        // Same reason as above I think?
-        requestAnimationFrameDisposable(() => {
-          this.#syncInputElement();
-        }, this);
-      },
-      this,
-    );
+    addEventListener(this.#inputTextElement, 'selectionchange', this.#syncInputElement.bind(this), this);
     const pointerDownLeft$ = Distributor<PointerEvent>();
     const pointerUpLeft$ = Distributor<PointerEvent>();
     const filterLeft = filter<PointerEvent>((event) => event.pointerType === 'mouse' && event.button === 0);
@@ -4889,12 +4879,21 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
-    if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
-      this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
-      this.#scrollSelectionIntoView();
+    if (isSafari) {
+      this.#syncInputElement();
+      this.#replaceViewSelectionRanges();
+      if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
+        this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
+        this.#scrollSelectionIntoView();
+      }
+    } else {
+      if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
+        this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
+        this.#scrollSelectionIntoView();
+      }
+      this.#replaceViewSelectionRanges();
+      this.#syncInputElement();
     }
-    this.#replaceViewSelectionRanges();
-    this.#syncInputElement();
   }
   #syncInputElement(): void {
     // Hidden input text for composition.
@@ -5285,7 +5284,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       measureRange.setStart(textNode, focusPoint.offset);
       measureRange.setEnd(textNode, focusPoint.offset);
       const measureRangeBoundingRect = measureRange.getBoundingClientRect();
-      this.#inputTextElement.style.top = `${maxBottom + relativeOffsetTop - fontSize}px`;
+      if (direction === matita.RangeDirection.Backwards) {
+        this.#inputTextElement.style.top = `${minTop + relativeOffsetTop}px`;
+      } else {
+        this.#inputTextElement.style.top = `${maxBottom + relativeOffsetTop - fontSize}px`;
+      }
       // Before we shifted left by fontSize because on macOS the composition dropdown needs to have space to the right at the end of the line, otherwise it
       // will glitch elsewhere. This introduces more issues (e.g. long press word selection not matching up), so we don't do this anymore.
       this.#inputTextElement.style.left = `${cursorPositionAndHeight.position.left - measureRangeBoundingRect.left /* - fontSize */}px`;
