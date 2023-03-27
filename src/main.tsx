@@ -535,7 +535,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               if (useCompositionStyle) {
                 spans.push(
                   <span
-                    key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, isInComposition]))}
+                    key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
                     style={{
                       position: 'absolute',
                       top: rectangle.bottom - 2,
@@ -549,7 +549,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               }
               spans.push(
                 <span
-                  key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, isInComposition]))}
+                  key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]))}
                   style={{
                     position: 'absolute',
                     top: rectangle.top,
@@ -3013,6 +3013,30 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               }, endSelectionDragDisposable),
             );
             pipe(
+              this.#keyDown$,
+              filterMap<{ key: string; keyboardEvent?: KeyboardEvent }, KeyboardEvent | undefined>(({ key, keyboardEvent }) =>
+                key === 'Escape' ? Some(keyboardEvent) : None,
+              ),
+              subscribe((event) => {
+                if (event.type !== PushType) {
+                  throwUnreachable();
+                }
+                const keyboardEvent = event.value;
+                keyboardEvent?.preventDefault();
+                endSelectionDrag();
+                this.stateControl.queueUpdate(() => {
+                  assertIsNotNullish(dragState);
+                  this.stateControl.delta.setSelection(
+                    this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
+                      { selection: dragState.originalSelection, fixWhen: matita.MutationSelectionTransformFixWhen.NoFix, shouldTransformAsSelection: true },
+                      dragState.startPointInfo.stateView,
+                      this.stateControl.stateView,
+                    ),
+                  );
+                });
+              }, pointerCaptureDisposable),
+            );
+            pipe(
               pointerUpLeft$,
               subscribe<PointerEvent>((event) => {
                 if (event.type !== PushType) {
@@ -3442,30 +3466,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               return;
             }
             const separateSelectionId = this.#keyDownSet.get('Alt');
-            pipe(
-              this.#keyDown$,
-              filterMap<{ key: string; keyboardEvent?: KeyboardEvent }, KeyboardEvent | undefined>(({ key, keyboardEvent }) =>
-                key === 'Escape' ? Some(keyboardEvent) : None,
-              ),
-              subscribe((event) => {
-                if (event.type !== PushType) {
-                  throwUnreachable();
-                }
-                const keyboardEvent = event.value;
-                keyboardEvent?.preventDefault();
-                endSelectionDrag();
-                this.stateControl.queueUpdate(() => {
-                  assertIsNotNullish(dragState);
-                  this.stateControl.delta.setSelection(
-                    this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
-                      { selection: dragState.originalSelection, fixWhen: matita.MutationSelectionTransformFixWhen.NoFix, shouldTransformAsSelection: true },
-                      dragState.startPointInfo.stateView,
-                      this.stateControl.stateView,
-                    ),
-                  );
-                });
-              }, endSelectionDragDisposable),
-            );
             dragState = {
               startViewPosition: viewPosition,
               lastViewPosition: viewPosition,
