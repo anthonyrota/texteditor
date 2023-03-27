@@ -757,6 +757,8 @@ enum BuiltInCommandName {
   SplitParagraph = 'standard.splitParagraph',
   Undo = 'standard.undo',
   Redo = 'standard.redo',
+  CollapseMultipleSelectionRangesToAnchorRange = 'standard.collapseMultipleSelectionRangesToAnchorRange',
+  CollapseMultipleSelectionRangesToFocusRange = 'standard.collapseMultipleSelectionRangesToFocusRange',
 }
 enum Platform {
   Apple = 'Apple',
@@ -769,12 +771,28 @@ enum Platform {
 }
 enum Context {
   Editing = 'Editing',
+  DraggingSelection = 'DraggingSelection',
 }
+type Selector<T extends string> = T | { not: Selector<T> } | { all: Selector<T>[] } | { any: Selector<T>[] };
+function satisfiesSelector<T extends string>(values: T[], selector: Selector<T>): boolean {
+  if (typeof selector === 'string') {
+    return values.includes(selector);
+  }
+  if ('not' in selector) {
+    return !satisfiesSelector(values, selector.not);
+  }
+  if ('all' in selector) {
+    return selector.all.every((selector) => satisfiesSelector(values, selector));
+  }
+  return selector.any.some((selector) => satisfiesSelector(values, selector));
+}
+type PlatformSelector = Selector<Platform>;
+type ContextSelector = Selector<Context>;
 type KeyCommands = {
   key: string | null;
   command: string | null;
-  platform?: Platform | Platform[] | null;
-  context?: Context | Context[] | null;
+  platform?: PlatformSelector | null;
+  context?: ContextSelector | null;
   cancelKeyEvent?: boolean;
 }[];
 const defaultTextEditingKeyCommands: KeyCommands = [
@@ -817,7 +835,13 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     context: Context.Editing,
   },
   { key: 'Alt+Shift+ArrowLeft', command: BuiltInCommandName.ExtendSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+Shift+ArrowUp', command: BuiltInCommandName.ExtendSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing },
+  {
+    key: 'Alt+Shift+ArrowUp',
+    command: BuiltInCommandName.ExtendSelectionParagraphBackwards,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
   {
     key: 'Control+Shift+KeyA',
     command: BuiltInCommandName.ExtendSelectionParagraphStart,
@@ -832,7 +856,13 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     context: Context.Editing,
   },
   { key: 'Alt+Shift+ArrowRight', command: BuiltInCommandName.ExtendSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+Shift+ArrowDown', command: BuiltInCommandName.ExtendSelectionParagraphForwards, platform: Platform.Apple, context: Context.Editing },
+  {
+    key: 'Alt+Shift+ArrowDown',
+    command: BuiltInCommandName.ExtendSelectionParagraphForwards,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
   { key: 'Control+Shift+KeyE', command: BuiltInCommandName.ExtendSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Meta+Shift+ArrowLeft',
@@ -876,10 +906,10 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     context: Context.Editing,
     cancelKeyEvent: true,
   },
-  { key: 'Backspace', command: BuiltInCommandName.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+Backspace', command: BuiltInCommandName.RemoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Delete', command: BuiltInCommandName.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+Delete', command: BuiltInCommandName.RemoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Backspace', command: BuiltInCommandName.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Alt+Backspace', command: BuiltInCommandName.RemoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Delete', command: BuiltInCommandName.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Alt+Delete', command: BuiltInCommandName.RemoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Backspace', command: BuiltInCommandName.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Delete', command: BuiltInCommandName.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+KeyT', command: BuiltInCommandName.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -890,6 +920,20 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Enter', command: BuiltInCommandName.SplitParagraph, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: BuiltInCommandName.Undo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Shift+KeyZ,Meta+KeyY', command: BuiltInCommandName.Redo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  {
+    key: 'Escape',
+    command: BuiltInCommandName.CollapseMultipleSelectionRangesToAnchorRange,
+    platform: Platform.Apple,
+    context: { all: [Context.Editing, { not: Context.DraggingSelection }] },
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Shift+Escape',
+    command: BuiltInCommandName.CollapseMultipleSelectionRangesToFocusRange,
+    platform: Platform.Apple,
+    context: { all: [Context.Editing, { not: Context.DraggingSelection }] },
+    cancelKeyEvent: true,
+  },
 ];
 function getPlatform(): Platform | null {
   const userAgent = window.navigator.userAgent;
@@ -1560,6 +1604,30 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       ]);
       stateControl.queueUpdate(() => {
         stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
+      });
+    },
+  },
+  [BuiltInCommandName.CollapseMultipleSelectionRangesToAnchorRange]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(() => {
+        if (stateControl.stateView.selection.selectionRanges.length <= 1) {
+          return;
+        }
+        const anchorSelectionRange = matita.getAnchorSelectionRangeFromSelection(stateControl.stateView.selection);
+        assertIsNotNullish(anchorSelectionRange);
+        stateControl.delta.setSelection(matita.makeSelection([anchorSelectionRange]));
+      });
+    },
+  },
+  [BuiltInCommandName.CollapseMultipleSelectionRangesToFocusRange]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(() => {
+        if (stateControl.stateView.selection.selectionRanges.length <= 1) {
+          return;
+        }
+        const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(stateControl.stateView.selection);
+        assertIsNotNullish(focusSelectionRange);
+        stateControl.delta.setSelection(matita.makeSelection([focusSelectionRange]));
       });
     },
   },
@@ -4108,6 +4176,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     'Backspace',
     'Delete',
     'Enter',
+    'Escape',
   ];
   #keyDownId = 0;
   #keyDownSet = new Map<string, number>();
@@ -4141,19 +4210,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const hasControl = event.ctrlKey;
     const hasAlt = event.altKey;
     const hasShift = event.shiftKey;
-    const activeContexts = this.#hasFocusIncludingNotActiveWindow() && !this.#isInComposition ? [Context.Editing] : [];
+    const activeContexts: Context[] = [];
+    if (this.#hasFocusIncludingNotActiveWindow() && !this.#isInComposition) {
+      activeContexts.push(Context.Editing);
+    }
+    if (this.#isDraggingSelection) {
+      activeContexts.push(Context.DraggingSelection);
+    }
     for (let i = 0; i < this.#keyCommands.length; i++) {
       const keyCommand = this.#keyCommands[i];
       const { key, command, context, platform, cancelKeyEvent } = keyCommand;
       if (key === null || command === null) {
         continue;
       }
-      if (
-        !(context == null || (typeof context === 'string' ? activeContexts.includes(context) : context.some((context) => activeContexts.includes(context))))
-      ) {
+      if (!(context == null || satisfiesSelector(activeContexts, context))) {
         continue;
       }
-      if (!(platform == null || (typeof platform === 'string' ? platforms.includes(platform) : platform.some((platform) => platforms.includes(platform))))) {
+      if (!(platform == null || satisfiesSelector(platforms, platform))) {
         continue;
       }
       const parsedKeySets = key
@@ -4234,6 +4307,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #isInComposition = 0;
   #onCompositionStart(_event: CompositionEvent): void {
+    // TODO: Fix composition.
     this.#endSelectionDrag$(Push(undefined));
     this.#isInComposition++;
   }
