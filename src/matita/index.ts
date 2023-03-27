@@ -5,6 +5,7 @@
 import { v4 as makeUuidV4 } from 'uuid';
 import { Disposable, implDisposableMethods } from '../ruscel/disposable';
 import { Distributor } from '../ruscel/distributor';
+import { isSome, Maybe, None, Some } from '../ruscel/maybe';
 import { End, Push, Source } from '../ruscel/source';
 import { requestAnimationFrameDisposable } from '../ruscel/util';
 import { assertUnreachable, throwUnreachable, throwNotImplemented, assert, assertIsNotNullish } from '../util';
@@ -3678,7 +3679,7 @@ type RunUpdateFn<
   EmbedConfig extends NodeConfig,
   TextConfig extends NodeConfig,
   VoidConfig extends NodeConfig,
-> = (stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>) => void;
+> = (stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, updateDataStack: UpdateData[]) => void;
 interface QueuedUpdate<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -3991,7 +3992,8 @@ function makeStateControl<
     const queuedUpdate: QueuedUpdate<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = {
       runUpdate(stateControl) {
         isRemoved = true;
-        runUpdate(stateControl);
+        assertIsNotNullish(updateDataStack);
+        runUpdate(stateControl, updateDataStack);
       },
       data,
     };
@@ -4143,7 +4145,7 @@ function makeStateControl<
       if (data) {
         updateDataStack.push(data);
       }
-      runUpdate(stateControl);
+      runUpdate(stateControl, updateDataStack);
       if (data) {
         updateDataStack.pop();
       }
@@ -4183,7 +4185,7 @@ function makeStateControl<
       if (update.data) {
         updateDataStack.push(update.data);
       }
-      update.runUpdate(stateControl);
+      update.runUpdate(stateControl, updateDataStack);
       if (update.data) {
         updateDataStack.push(update.data);
       }
@@ -7585,6 +7587,38 @@ function makeExtendSelectionByPointTransformFnsUpdateFn<
     delta.setSelection(extendedSelection);
   };
 }
+enum RedoUndoUpdateKey {
+  InsertText = 'standard.redoUndoUpdateKey.insertText',
+  RemoveTextForwards = 'standard.redoUndoUpdateKey.removeTextForwards',
+  RemoveTextBackwards = 'standard.redoUndoUpdateKey.removeTextBackwards',
+  IgnoreRecursiveUpdate = 'standard.redoUndoUpdateKey.ignoreRecursiveUpdate',
+  CompositionUpdate = 'standard.redoUndoUpdateKey.compositionUpdate',
+  UniqueGroupedUpdate = 'standard.redoUndoUpdateKey.uniqueGroupedUpdate',
+  SelectionBefore = 'standard.redoUndoUpdateKey.selectionBefore',
+  SelectionAfter = 'standard.redoUndoUpdateKey.selectionAfter',
+}
+let uniqueGroupedChangeType = 0;
+function makeUniqueGroupedChangeType(): string {
+  return `UniqueGrouped.${uniqueGroupedChangeType++}`;
+}
+function getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack: UpdateData[]): Maybe<UpdateData> {
+  for (let i = updateDataStack.length - 1; i >= 0; i--) {
+    const updateData = updateDataStack[i];
+    if (
+      RedoUndoUpdateKey.InsertText in updateData ||
+      RedoUndoUpdateKey.RemoveTextForwards in updateData ||
+      RedoUndoUpdateKey.RemoveTextBackwards in updateData ||
+      RedoUndoUpdateKey.IgnoreRecursiveUpdate in updateData ||
+      RedoUndoUpdateKey.CompositionUpdate in updateData ||
+      RedoUndoUpdateKey.UniqueGroupedUpdate in updateData ||
+      RedoUndoUpdateKey.SelectionBefore in updateData ||
+      RedoUndoUpdateKey.SelectionAfter in updateData
+    ) {
+      return Some(updateData);
+    }
+  }
+  return None;
+}
 function makeRemoveSelectionContentsUpdateFn<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -7593,7 +7627,9 @@ function makeRemoveSelectionContentsUpdateFn<
   TextConfig extends NodeConfig,
   VoidConfig extends NodeConfig,
 >(selection?: Selection): RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
-  return (stateControl) => {
+  return (stateControl, updateDataStack) => {
+    const lastUpdateData = getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
+    const updateData = isSome(lastUpdateData) ? undefined : { [RedoUndoUpdateKey.UniqueGroupedUpdate]: makeUniqueGroupedChangeType() };
     const { delta } = stateControl;
     let selectionToRemove = selection ?? stateControl.stateView.selection;
     while (true) {
@@ -7625,14 +7661,14 @@ function makeRemoveSelectionContentsUpdateFn<
       );
       if (newSelectionToRemove) {
         const stateViewBeforeMutation = stateControl.snapshotStateThroughStateView();
-        stateControl.delta.applyUpdate(removeRangeUpdate);
+        stateControl.delta.applyUpdate(removeRangeUpdate, updateData);
         selectionToRemove = stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
           { selection: newSelectionToRemove, fixWhen: MutationSelectionTransformFixWhen.NoFix },
           stateViewBeforeMutation,
           stateControl.stateView,
         );
       } else {
-        delta.applyUpdate(removeRangeUpdate);
+        delta.applyUpdate(removeRangeUpdate, updateData);
         break;
       }
     }
@@ -7688,7 +7724,9 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
   ) => boolean,
   treatAsSelection?: boolean,
 ): RunUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
-  return (stateControl) => {
+  return (stateControl, updateDataStack) => {
+    const lastUpdateData = getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
+    const updateData = isSome(lastUpdateData) ? undefined : { [RedoUndoUpdateKey.UniqueGroupedUpdate]: makeUniqueGroupedChangeType() };
     const { delta } = stateControl;
     let selectionToTransform = selection ?? stateControl.stateView.selection;
     while (true) {
@@ -7744,14 +7782,14 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
       }
       if (newSelectionToTransform) {
         const stateViewBeforeMutation = stateControl.snapshotStateThroughStateView();
-        stateControl.delta.applyUpdate(updateFn);
+        stateControl.delta.applyUpdate(updateFn, updateData);
         selectionToTransform = stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
           { selection: newSelectionToTransform, fixWhen: MutationSelectionTransformFixWhen.NoFix },
           stateViewBeforeMutation,
           stateControl.stateView,
         );
       } else {
-        delta.applyUpdate(updateFn);
+        delta.applyUpdate(updateFn, updateData);
         break;
       }
     }
@@ -8258,4 +8296,6 @@ export {
   getAnchorSelectionRangeFromSelection,
   getLeastRecentlyCreatedSelectionRangeFromSelectionRanges,
   getMostRecentlyCreatedSelectionRangeFromSelectionRanges,
+  RedoUndoUpdateKey,
+  getLastWithRedoUndoUpdateDataInUpdateDataStack,
 };

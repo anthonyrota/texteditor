@@ -1048,15 +1048,6 @@ type GenericCommandRegister = CommandRegister<
   matita.EmbedRenderControl
 >;
 const doNotScrollToSelectionAfterChangeDataKey = 'standard.doNotScrollToSelectionAfterChange';
-enum RedoUndoUpdateKey {
-  InsertText = 'standard.redoUndoUpdateKey.insertText',
-  RemoveTextForwards = 'standard.redoUndoUpdateKey.removeTextForwards',
-  RemoveTextBackwards = 'standard.redoUndoUpdateKey.removeTextBackwards',
-  IgnoreRecursiveUpdate = 'standard.redoUndoUpdateKey.ignoreRecursiveUpdate',
-  CompositionUpdate = 'standard.redoUndoUpdateKey.compositionUpdate',
-  SelectionBefore = 'standard.redoUndoUpdateKey.selectionBefore',
-  SelectionAfter = 'standard.redoUndoUpdateKey.selectionAfter',
-}
 const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   [BuiltInCommandName.MoveSelectionGraphemeBackwards]: {
     execute(stateControl): void {
@@ -1278,7 +1269,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
         ),
-        { [RedoUndoUpdateKey.RemoveTextBackwards]: true },
+        { [matita.RedoUndoUpdateKey.RemoveTextBackwards]: true },
       );
     },
   },
@@ -1290,7 +1281,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
         ),
-        { [RedoUndoUpdateKey.RemoveTextBackwards]: true },
+        { [matita.RedoUndoUpdateKey.RemoveTextBackwards]: true },
       );
     },
   },
@@ -1313,7 +1304,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
         ),
-        { [RedoUndoUpdateKey.RemoveTextForwards]: true },
+        { [matita.RedoUndoUpdateKey.RemoveTextForwards]: true },
       );
     },
   },
@@ -1325,7 +1316,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
         ),
-        { [RedoUndoUpdateKey.RemoveTextForwards]: true },
+        { [matita.RedoUndoUpdateKey.RemoveTextForwards]: true },
       );
     },
   },
@@ -1517,7 +1508,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         () => {
           stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
         },
-        { [RedoUndoUpdateKey.InsertText]: true },
+        { [matita.RedoUndoUpdateKey.InsertText]: true },
       );
     },
   },
@@ -2563,10 +2554,10 @@ class LocalUndoControl<
   #undoStateDifferencesStack: LocalUndoStateDifference<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[];
   #redoStateDifferencesStack: LocalUndoStateDifference<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[];
   #mutationResults: MutationResultWithMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[];
-  #lastChangeType: LocalUndoControlLastChangeType | null;
+  #lastChangeType: string | null;
   #selectionBefore: matita.Selection | null;
   #selectionAfter: matita.Selection | null;
-  #forceChange: ((changeType: LocalUndoControlLastChangeType) => boolean) | null;
+  #forceChange: ((changeType: string) => boolean) | null;
   constructor(stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>) {
     super();
     this.#stateControl = stateControl;
@@ -2588,17 +2579,9 @@ class LocalUndoControl<
       return;
     }
     const { updateDataStack } = event.value;
-    if (updateDataStack.length > 0) {
-      const lastUpdateData = updateDataStack[updateDataStack.length - 1];
-      if (
-        !!lastUpdateData[RedoUndoUpdateKey.IgnoreRecursiveUpdate] ||
-        !!lastUpdateData[RedoUndoUpdateKey.InsertText] ||
-        !!lastUpdateData[RedoUndoUpdateKey.RemoveTextBackwards] ||
-        !!lastUpdateData[RedoUndoUpdateKey.RemoveTextForwards] ||
-        !!lastUpdateData[RedoUndoUpdateKey.CompositionUpdate]
-      ) {
-        return;
-      }
+    const updateDataMaybe = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
+    if (isSome(updateDataMaybe)) {
+      return;
     }
     this.#lastChangeType = LocalUndoControlLastChangeType.SelectionAfterChange;
   }
@@ -2607,20 +2590,22 @@ class LocalUndoControl<
       throwUnreachable();
     }
     const { mutationPart, result, updateDataStack, afterMutation$, isFirstMutationPart, isLastMutationPart } = event.value;
-    const lastUpdateData = updateDataStack.length > 0 ? updateDataStack[updateDataStack.length - 1] : undefined;
-    if ((lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.IgnoreRecursiveUpdate]) || !result.didChange) {
+    const lastUpdateData = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
+    if ((isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.IgnoreRecursiveUpdate]) || !result.didChange) {
       return;
     }
     this.#redoStateDifferencesStack = [];
-    let changeType: LocalUndoControlLastChangeType;
-    if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.InsertText]) {
+    let changeType: string;
+    if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.InsertText]) {
       changeType = LocalUndoControlLastChangeType.InsertText;
-    } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.RemoveTextBackwards]) {
+    } else if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.RemoveTextBackwards]) {
       changeType = LocalUndoControlLastChangeType.RemoveTextBackwards;
-    } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.RemoveTextForwards]) {
+    } else if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.RemoveTextForwards]) {
       changeType = LocalUndoControlLastChangeType.RemoveTextForwards;
-    } else if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.CompositionUpdate]) {
+    } else if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.CompositionUpdate]) {
       changeType = LocalUndoControlLastChangeType.CompositionUpdate;
+    } else if (isSome(lastUpdateData) && typeof lastUpdateData.value[matita.RedoUndoUpdateKey.UniqueGroupedUpdate] === 'string') {
+      changeType = lastUpdateData.value[matita.RedoUndoUpdateKey.UniqueGroupedUpdate];
     } else {
       changeType = LocalUndoControlLastChangeType.Other;
     }
@@ -2639,8 +2624,8 @@ class LocalUndoControl<
         subscribe((event) => {
           assert(event.type === EndType);
           if (this.#selectionBefore === null) {
-            if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.SelectionBefore]) {
-              this.#selectionBefore = (lastUpdateData[RedoUndoUpdateKey.SelectionBefore] as { value: matita.Selection }).value;
+            if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionBefore]) {
+              this.#selectionBefore = (lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionBefore] as { value: matita.Selection }).value;
               assertIsNotNullish(this.#selectionBefore);
             } else {
               this.#selectionBefore = defaultSelectionBefore;
@@ -2661,8 +2646,8 @@ class LocalUndoControl<
         afterMutation$,
         subscribe((event) => {
           assert(event.type === EndType);
-          if (lastUpdateData && !!lastUpdateData[RedoUndoUpdateKey.SelectionAfter]) {
-            this.#selectionAfter = (lastUpdateData[RedoUndoUpdateKey.SelectionAfter] as { value: matita.Selection }).value;
+          if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionAfter]) {
+            this.#selectionAfter = (lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionAfter] as { value: matita.Selection }).value;
             assertIsNotNullish(this.#selectionAfter);
           } else {
             this.#selectionAfter = this.#stateControl.stateView.selection;
@@ -2691,7 +2676,7 @@ class LocalUndoControl<
       selectionAfter,
     });
   }
-  forceNextChange(shouldForceChange: (changeType: LocalUndoControlLastChangeType) => boolean): void {
+  forceNextChange(shouldForceChange: (changeType: string) => boolean): void {
     this.#forceChange = shouldForceChange;
   }
   tryUndo(): void {
@@ -2718,7 +2703,7 @@ class LocalUndoControl<
           this.#stateControl.delta.setSelection(selectionBefore);
         }
       },
-      { [RedoUndoUpdateKey.IgnoreRecursiveUpdate]: true },
+      { [matita.RedoUndoUpdateKey.IgnoreRecursiveUpdate]: true },
     );
   }
   tryRedo(): void {
@@ -2741,7 +2726,7 @@ class LocalUndoControl<
           this.#stateControl.delta.setSelection(selectionAfter);
         }
       },
-      { [RedoUndoUpdateKey.IgnoreRecursiveUpdate]: true },
+      { [matita.RedoUndoUpdateKey.IgnoreRecursiveUpdate]: true },
     );
   }
   registerCommands<
@@ -4358,9 +4343,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.stateControl.delta.setSelection(afterSpliceSelection);
       },
       {
-        [RedoUndoUpdateKey.CompositionUpdate]: true,
-        [RedoUndoUpdateKey.SelectionBefore]: selectionBefore,
-        [RedoUndoUpdateKey.SelectionAfter]: selectionAfter,
+        [matita.RedoUndoUpdateKey.CompositionUpdate]: true,
+        [matita.RedoUndoUpdateKey.SelectionBefore]: selectionBefore,
+        [matita.RedoUndoUpdateKey.SelectionAfter]: selectionAfter,
       },
     );
   }
@@ -4523,7 +4508,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               }),
             );
           },
-          inputType === 'insertText' ? { [RedoUndoUpdateKey.InsertText]: true } : {},
+          inputType === 'insertText' ? { [matita.RedoUndoUpdateKey.InsertText]: true } : {},
         );
         return;
       }
