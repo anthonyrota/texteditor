@@ -747,6 +747,8 @@ enum BuiltInCommandName {
   RemoveSelectionSoftLineStart = 'standard.removeSelectionSoftLineStart',
   RemoveSelectionSoftLineEnd = 'standard.removeSelectionSoftLineEnd',
   TransposeGraphemes = 'standard.transposeGraphemes',
+  InsertParagraphBelow = 'standard.insertParagraphBelow',
+  InsertParagraphAbove = 'standard.insertParagraphAbove',
   SelectAll = 'standard.selectAll',
   InsertText = 'standard.insertText',
   PasteText = 'standard.insertPastedText',
@@ -881,6 +883,8 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Backspace', command: BuiltInCommandName.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Delete', command: BuiltInCommandName.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+KeyT', command: BuiltInCommandName.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Enter', command: BuiltInCommandName.InsertParagraphAbove, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Shift+Enter', command: BuiltInCommandName.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+KeyA', command: BuiltInCommandName.SelectAll, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Shift+Enter,Control+KeyO', command: BuiltInCommandName.InsertLineBreak, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Enter', command: BuiltInCommandName.SplitParagraph, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -1339,6 +1343,148 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   [BuiltInCommandName.TransposeGraphemes]: {
     execute(stateControl): void {
       stateControl.queueUpdate(matita.makeTransposeAtSelectionUpdateFn());
+    },
+  },
+  [BuiltInCommandName.InsertParagraphAbove]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(() => {
+        const blockIdCount = new Map<string, number>();
+        const countBlockId = (blockId: string): number => {
+          const count = blockIdCount.get(blockId) ?? 0;
+          blockIdCount.set(blockId, count + 1);
+          return count;
+        };
+        const affectedSelectionRangeInfos: [
+          contentReference: matita.ContentReference,
+          blockId: string,
+          selectionRange: matita.SelectionRange,
+          index: number,
+        ][] = [];
+        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+          const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
+          assertIsNotNullish(focusRange);
+          const focusPoint = matita.getFocusPointFromRange(focusRange);
+          if (matita.isBlockPoint(focusPoint)) {
+            const blockId = matita.getBlockIdFromBlockPoint(focusPoint);
+            const index = countBlockId(blockId);
+            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+          } else if (matita.isParagraphPoint(focusPoint)) {
+            const blockId = matita.getBlockIdFromParagraphPoint(focusPoint);
+            const index = countBlockId(blockId);
+            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+          }
+        }
+        const blockIdToInsertedParagraphIds = new Map<string, string[]>();
+        const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+        blockIdCount.forEach((count, blockId) => {
+          const insertedParagraphIds: string[] = [];
+          const contentFragmentBlocks: matita.ContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig>[] = [];
+          for (let i = 0; i < count; i++) {
+            const insertedParagraphId = matita.generateId();
+            insertedParagraphIds.push(insertedParagraphId);
+            // TODO.
+            contentFragmentBlocks.push(matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], insertedParagraphId)));
+          }
+          blockIdToInsertedParagraphIds.set(blockId, insertedParagraphIds);
+          const mutation = matita.makeInsertBlocksBeforeMutation(
+            matita.makeBlockPointFromBlockReference(matita.makeBlockReferenceFromBlockId(blockId)),
+            matita.makeContentFragment(contentFragmentBlocks),
+          );
+          mutations.push(mutation);
+        });
+        const batchMutation = matita.makeBatchMutation(mutations);
+        stateControl.delta.applyMutation(batchMutation, undefined, (selectionRange) => {
+          for (let i = 0; i < affectedSelectionRangeInfos.length; i++) {
+            const affectedSelectionRangeInfo = affectedSelectionRangeInfos[i];
+            const [contentReference, blockId, affectedSelectionRange, index] = affectedSelectionRangeInfo;
+            if (matita.areSelectionRangesCoveringSameContent(selectionRange, affectedSelectionRange)) {
+              const insertedParagraphIds = blockIdToInsertedParagraphIds.get(blockId);
+              assertIsNotNullish(insertedParagraphIds);
+              const insertedParagraphId = insertedParagraphIds[index];
+              assertIsNotNullish(insertedParagraphId);
+              const paragraphPoint = matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(
+                matita.makeBlockReferenceFromBlockId(insertedParagraphId),
+                0,
+              );
+              const range = matita.makeRange(contentReference, paragraphPoint, paragraphPoint, matita.generateId());
+              return matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, selectionRange.id);
+            }
+          }
+          return undefined;
+        });
+      });
+    },
+  },
+  [BuiltInCommandName.InsertParagraphBelow]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(() => {
+        const blockIdCount = new Map<string, number>();
+        const countBlockId = (blockId: string): number => {
+          const count = blockIdCount.get(blockId) ?? 0;
+          blockIdCount.set(blockId, count + 1);
+          return count;
+        };
+        const affectedSelectionRangeInfos: [
+          contentReference: matita.ContentReference,
+          blockId: string,
+          selectionRange: matita.SelectionRange,
+          index: number,
+        ][] = [];
+        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+          const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
+          assertIsNotNullish(focusRange);
+          const focusPoint = matita.getFocusPointFromRange(focusRange);
+          if (matita.isBlockPoint(focusPoint)) {
+            const blockId = matita.getBlockIdFromBlockPoint(focusPoint);
+            const index = countBlockId(blockId);
+            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+          } else if (matita.isParagraphPoint(focusPoint)) {
+            const blockId = matita.getBlockIdFromParagraphPoint(focusPoint);
+            const index = countBlockId(blockId);
+            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+          }
+        }
+        const blockIdToInsertedParagraphIds = new Map<string, string[]>();
+        const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+        blockIdCount.forEach((count, blockId) => {
+          const insertedParagraphIds: string[] = [];
+          const contentFragmentBlocks: matita.ContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig>[] = [];
+          for (let i = 0; i < count; i++) {
+            const insertedParagraphId = matita.generateId();
+            insertedParagraphIds.push(insertedParagraphId);
+            // TODO.
+            contentFragmentBlocks.push(matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], insertedParagraphId)));
+          }
+          blockIdToInsertedParagraphIds.set(blockId, insertedParagraphIds);
+          const mutation = matita.makeInsertBlocksAfterMutation(
+            matita.makeBlockPointFromBlockReference(matita.makeBlockReferenceFromBlockId(blockId)),
+            matita.makeContentFragment(contentFragmentBlocks),
+          );
+          mutations.push(mutation);
+        });
+        const batchMutation = matita.makeBatchMutation(mutations);
+        stateControl.delta.applyMutation(batchMutation, undefined, (selectionRange) => {
+          for (let i = 0; i < affectedSelectionRangeInfos.length; i++) {
+            const affectedSelectionRangeInfo = affectedSelectionRangeInfos[i];
+            const [contentReference, blockId, affectedSelectionRange, index] = affectedSelectionRangeInfo;
+            if (matita.areSelectionRangesCoveringSameContent(selectionRange, affectedSelectionRange)) {
+              const insertedParagraphIds = blockIdToInsertedParagraphIds.get(blockId);
+              assertIsNotNullish(insertedParagraphIds);
+              const insertedParagraphId = insertedParagraphIds[index];
+              assertIsNotNullish(insertedParagraphId);
+              const paragraphPoint = matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(
+                matita.makeBlockReferenceFromBlockId(insertedParagraphId),
+                0,
+              );
+              const range = matita.makeRange(contentReference, paragraphPoint, paragraphPoint, matita.generateId());
+              return matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, selectionRange.id);
+            }
+          }
+          return undefined;
+        });
+      });
     },
   },
   [BuiltInCommandName.SelectAll]: {

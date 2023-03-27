@@ -971,6 +971,7 @@ interface ContentFragmentParagraph<ParagraphConfig extends NodeConfig, TextConfi
   type: ContentFragmentBlockType.Paragraph;
   paragraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>;
 }
+// TODO.
 function makeContentFragmentParagraph<ParagraphConfig extends NodeConfig, TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
   paragraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
 ): ContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig> {
@@ -991,6 +992,7 @@ interface ContentFragmentEmbed<
   nestedContents: NestedContent<ContentConfig>[];
   nestedBlocks: NestedBlock<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[];
 }
+// TODO.
 function makeContentFragmentEmbed<
   ContentConfig extends NodeConfig,
   ParagraphConfig extends NodeConfig,
