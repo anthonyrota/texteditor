@@ -7360,8 +7360,8 @@ function makeRemoveSelectionContentsUpdateFn<
       const rangesToRemoveWithSelectionRange = selectionToRemove.selectionRanges.flatMap((selectionRange) =>
         selectionRange.ranges.map((range) => ({ range, selectionRange })),
       );
-      const firstRangeWithSelectionRange = rangesToRemoveWithSelectionRange.shift();
-      if (!firstRangeWithSelectionRange) {
+      const lastRangeWithSelectionRange = rangesToRemoveWithSelectionRange.pop();
+      if (!lastRangeWithSelectionRange) {
         break;
       }
       const newSelectionToRemove =
@@ -7382,7 +7382,7 @@ function makeRemoveSelectionContentsUpdateFn<
             );
       const removeRangeUpdate = makeRemoveRangeContentsUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
         stateControl,
-        firstRangeWithSelectionRange.range,
+        lastRangeWithSelectionRange.range,
       );
       if (newSelectionToRemove) {
         const stateViewBeforeMutation = stateControl.snapshotStateThroughStateView();
@@ -7465,8 +7465,8 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
           selectionRange,
         }));
       });
-      const firstRangeWithSelectionRange = rangesToRemoveWithSelectionRange.shift();
-      if (!firstRangeWithSelectionRange) {
+      const lastRangeWithSelectionRange = rangesToRemoveWithSelectionRange.pop();
+      if (!lastRangeWithSelectionRange) {
         break;
       }
       const newSelectionToTransform =
@@ -7489,24 +7489,24 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
       if (
         rangesToRemoveWithSelectionRange.length === 0 || // TODO: Insert at focus range.
         rangesToRemoveWithSelectionRange.every(
-          (rangeToRemoveWithSelectionRange) => rangeToRemoveWithSelectionRange.selectionRange.id !== firstRangeWithSelectionRange.selectionRange.id,
+          (rangeToRemoveWithSelectionRange) => rangeToRemoveWithSelectionRange.selectionRange.id !== lastRangeWithSelectionRange.selectionRange.id,
         )
       ) {
         updateFn = makeInsertContentFragmentAtRangeUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
           stateControl,
-          firstRangeWithSelectionRange.range,
+          lastRangeWithSelectionRange.range,
           contentFragment,
           getShouldReplaceEdgeParagraphConfig,
           selection && !treatAsSelection
             ? undefined
             : (selectionRange) => {
-                return areSelectionRangesCoveringSameContent(selectionRange, firstRangeWithSelectionRange.selectionRange);
+                return areSelectionRangesCoveringSameContent(selectionRange, lastRangeWithSelectionRange.selectionRange);
               },
         );
       } else {
         updateFn = makeRemoveRangeContentsUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
           stateControl,
-          firstRangeWithSelectionRange.range,
+          lastRangeWithSelectionRange.range,
         );
       }
       if (newSelectionToTransform) {
