@@ -26,6 +26,7 @@ module.exports = {
     'no-warning-comments': 'warn',
     'no-fallthrough': 'off',
     'no-empty-function': 'off',
+    eqeqeq: ['error', 'always', { null: 'ignore' }],
     '@typescript-eslint/no-empty-function': 'off',
     '@typescript-eslint/no-unused-vars': [
       'warn',

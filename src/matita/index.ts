@@ -3279,7 +3279,7 @@ function sortAndMergeAndFixSelectionRanges<
     });
     const selection = makeSelection(mergedSelectionRanges);
     if (didChange || isFirstTime) {
-      let didFix = false;
+      let didFix = false as boolean;
       const newSelectionRanges = selection.selectionRanges.flatMap((selectionRange) => {
         const fixedSelectionRange = stateControlConfig.fixSelectionRange(document, selectionRange);
         if (fixedSelectionRange === null) {
@@ -3335,7 +3335,7 @@ function transformSelectionByTransformingSelectionRanges<
   transformSelectionRange: TransformSelectionRangeFn,
 ): Selection {
   // TODO: Fix this stuff.
-  let didTransform = false;
+  let didTransform = false as boolean;
   const newSelectionRanges: readonly SelectionRange[] = selection.selectionRanges.flatMap((selectionRange) => {
     const transformedSelectionRange = transformSelectionRange(selectionRange);
     if (!didTransform && transformedSelectionRange && !areSelectionRangesEqual(selectionRange, transformedSelectionRange)) {
@@ -4102,14 +4102,12 @@ function makeStateControl<
         onMutation(mutation, 0, true);
       }
       assertIsNotNullish(delta);
-      if (customTransformStateSelectionRangeDidTransformSelectionRanges && customTransformStateSelectionRangeDidTransformSelectionRanges.length > 0) {
+      if (customTransformStateSelectionRangeDidTransformSelectionRanges.length > 0) {
         delta.setSelection(
           sortAndMergeAndFixSelectionRanges(
             stateView.document,
             stateControlConfig,
-            customTransformStateSelectionRangeDidTransformSelectionRanges
-              ? customTransformStateSelectionRangeDidTransformSelectionRanges.concat(selectionRangesToTransform)
-              : selectionRangesToTransform,
+            customTransformStateSelectionRangeDidTransformSelectionRanges.concat(selectionRangesToTransform),
           ),
           keepCollapsedSelectionTextConfigWhenSelectionChanges,
         );
@@ -5121,13 +5119,15 @@ function makeRemoveContentsSelectionTransformFn<
       const lastPreviousPoint =
         selectionRange.intention === SelectionRangeIntention.Text
           ? lastPreviousPointText
-          : selectionRange.intention === SelectionRangeIntention.Block
+          : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          selectionRange.intention === SelectionRangeIntention.Block
           ? lastPreviousPointBlock
           : assertUnreachable(selectionRange.intention);
       const lastPreviousPointContentReference =
         selectionRange.intention === SelectionRangeIntention.Text
           ? lastPreviousPointTextContentReference
-          : selectionRange.intention === SelectionRangeIntention.Block
+          : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          selectionRange.intention === SelectionRangeIntention.Block
           ? lastPreviousPointBlockContentReference
           : assertUnreachable(selectionRange.intention);
       if (lastPreviousPoint === null) {
@@ -5205,13 +5205,15 @@ function makeRemoveBlocksSelectionTransformFn<
     const lastPreviousPoint =
       selectionRange.intention === SelectionRangeIntention.Text
         ? lastPreviousPointText
-        : selectionRange.intention === SelectionRangeIntention.Block
+        : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        selectionRange.intention === SelectionRangeIntention.Block
         ? lastPreviousPointBlock
         : assertUnreachable(selectionRange.intention);
     const lastPreviousPointContentReference =
       selectionRange.intention === SelectionRangeIntention.Text
         ? lastPreviousPointTextContentReference
-        : selectionRange.intention === SelectionRangeIntention.Block
+        : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        selectionRange.intention === SelectionRangeIntention.Block
         ? lastPreviousPointBlockContentReference
         : assertUnreachable(selectionRange.intention);
     const newSelectionRanges = selectionRange.ranges.flatMap((range) => {
@@ -6849,7 +6851,8 @@ function makeDefaultPointTransformFn<
                 ? 'grapheme'
                 : movementGranularity === MovementGranularity.Word || movementGranularity === MovementGranularity.WordBoundary
                 ? 'word'
-                : movementGranularity === MovementGranularity.Sentence
+                : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                movementGranularity === MovementGranularity.Sentence
                 ? 'sentence'
                 : assertUnreachable(movementGranularity),
           });
@@ -6951,7 +6954,8 @@ function makeDefaultPointTransformFn<
               ? 'grapheme'
               : movementGranularity === MovementGranularity.Word || movementGranularity === MovementGranularity.WordBoundary
               ? 'word'
-              : movementGranularity === MovementGranularity.Sentence
+              : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+              movementGranularity === MovementGranularity.Sentence
               ? 'sentence'
               : assertUnreachable(movementGranularity),
         });
@@ -7157,8 +7161,8 @@ function extendSelectionByPointTransformFns<
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selection: Selection,
   shouldExtendSelectionRange: ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  anchorPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  focusPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  anchorPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  focusPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
 ): Selection {
   assert(
     anchorPointTransformFn !== undefined || focusPointTransformFn !== undefined,

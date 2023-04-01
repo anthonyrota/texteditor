@@ -6,12 +6,12 @@ function computeLpsArray(pattern: string): number[] {
   let i = 1;
   lps[0] = 0;
   while (i < M) {
-    if (pattern.charAt(i) == pattern.charAt(len)) {
+    if (pattern.charAt(i) === pattern.charAt(len)) {
       len++;
       lps[i] = len;
       i++;
     } else {
-      if (len != 0) {
+      if (len !== 0) {
         len = lps[len - 1];
       } else {
         lps[i] = len;
@@ -27,15 +27,15 @@ function searchKmp(accessChar: (i: number) => string, N: number, pattern: string
   let i = 0;
   const startIndices: number[] = [];
   while (N - i >= M - j) {
-    if (pattern[j] == accessChar(i)) {
+    if (pattern[j] === accessChar(i)) {
       j++;
       i++;
     }
-    if (j == M) {
+    if (j === M) {
       startIndices.push(i - j);
       j = lps[j - 1];
-    } else if (i < N && pattern[j] != accessChar(i)) {
-      if (j != 0) {
+    } else if (i < N && pattern[j] !== accessChar(i)) {
+      if (j !== 0) {
         j = lps[j - 1];
       } else {
         i = i + 1;

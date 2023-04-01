@@ -212,7 +212,8 @@ function isDisposable(value: unknown): value is Disposable {
   if (value == null) {
     return false;
   }
-  const implementationIdentifier = (value as DisposableImplementation)[$$Disposable];
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
+  const implementationIdentifier = (value as any)[$$Disposable];
   return (
     implementationIdentifier === DisposableImplementationIdentifier.RealDisposable ||
     implementationIdentifier === DisposableImplementationIdentifier.FakeDisposable

@@ -14,6 +14,7 @@ interface IntlSegmenterConstructor {
 }
 let IntlSegmenterPromise: Promise<IntlSegmenterConstructor> | undefined;
 function makePromiseResolvingToNativeIntlSegmenterOrPolyfill(): Promise<IntlSegmenterConstructor> {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (Intl.Segmenter) {
     return Promise.resolve(Intl.Segmenter);
   }
