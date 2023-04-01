@@ -1,17 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import { isSafari } from './browserDetection';
-import { makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './IntlSegmenter';
-import { LruCache } from './LruCache';
+import { isSafari } from './common/browserDetection';
+import { makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
+import { LruCache } from './common/LruCache';
+import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
+import {
+  SingleParagraphPlainTextSearchControl,
+  SingleParagraphPlainTextSearchControlConfig,
+  TrackAllControl,
+} from './matita/SingleParagraphPlainTextSearchControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
-import { CurrentAndPreviousValueDistributor, CurrentValueDistributor, Distributor } from './ruscel/distributor';
+import { CurrentAndPreviousValueDistributor, CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
-import { scheduleMicrotask } from './ruscel/schedule';
+import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
 import {
   combine,
   debounce,
+  empty$,
   End,
   EndType,
   Event,
@@ -21,7 +28,9 @@ import {
   flatMap,
   fromArray,
   fromReactiveValue,
+  fromScheduleFunction,
   interval,
+  isSource,
   map,
   memoConsecutive,
   ofEvent,
@@ -33,12 +42,15 @@ import {
   Source,
   startWith,
   subscribe,
+  switchEach,
+  takeUntil,
+  takeWhile,
+  throttle,
   ThrowType,
   timer,
   windowScheduledBySource,
 } from './ruscel/source';
 import { pipe, queueMicrotaskDisposable, requestAnimationFrameDisposable, setTimeoutDisposable } from './ruscel/util';
-import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './util';
 import './index.css';
 interface DocumentConfig extends matita.NodeConfig {}
 interface ContentConfig extends matita.NodeConfig {}
@@ -244,7 +256,7 @@ class VirtualizedContentRenderControl extends DisposableClass implements matita.
   #dispose(): void {}
 }
 function findScrollContainer(node: Node, isScrollable: (element: Element) => boolean): HTMLElement {
-  let parent = node.parentNode as HTMLElement;
+  let parent = node.parentNode as HTMLElement | null;
   let scrollElement: HTMLElement | undefined;
   while (!scrollElement) {
     if (!parent || !parent.parentNode) {
@@ -282,6 +294,9 @@ function addEventListener(
   disposable: Disposable,
   options?: boolean | AddEventListenerOptions,
 ): void {
+  if (!disposable.active) {
+    return;
+  }
   element.addEventListener(type, listener, options);
   disposable.add(
     Disposable(() => {
@@ -308,6 +323,9 @@ function addDocumentEventListener(
   disposable: Disposable,
   options?: boolean | AddEventListenerOptions,
 ): void {
+  if (!disposable.active) {
+    return;
+  }
   document.addEventListener(type, listener, options);
   disposable.add(
     Disposable(() => {
@@ -334,6 +352,9 @@ function addWindowEventListener(
   disposable: Disposable,
   options?: boolean | AddEventListenerOptions,
 ): void {
+  if (!disposable.active) {
+    return;
+  }
   window.addEventListener(type, listener, options);
   disposable.add(
     Disposable(() => {
@@ -437,9 +458,22 @@ interface ViewCursorAndRangeInfosForSelectionRange {
 interface ViewCursorAndRangeInfos {
   viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
 }
-function use$<T>(source: Source<T>, updateSync?: boolean): Maybe<T> {
-  const [value, setValue] = useState<Maybe<T>>(None);
+function use$<T>(source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>), initialMaybe?: Some<T> | (() => Some<T>), updateSync?: boolean): Some<T>;
+function use$<T>(
+  source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
+  initialMaybe?: Maybe<T> | (() => Maybe<T>),
+  updateSync?: boolean,
+): Maybe<T>;
+function use$<T>(
+  source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
+  initialMaybe?: Maybe<T> | (() => Maybe<T>),
+  updateSync?: boolean,
+): Maybe<T> {
+  const [value, setValue] = useState<Maybe<T>>(initialMaybe ?? None);
+  const isFirstUpdateRef = useRef(true);
   useEffect(() => {
+    const isFirstUpdate = isFirstUpdateRef.current;
+    isFirstUpdateRef.current = false;
     let syncFirstMaybe: Maybe<T> | undefined;
     let isSyncFirstEvent = true;
     const sink = Sink<T>((event) => {
@@ -459,12 +493,16 @@ function use$<T>(source: Source<T>, updateSync?: boolean): Maybe<T> {
         setValue(maybe);
       }
     });
-    source(sink);
+    if (isSource(source)) {
+      source(sink);
+    } else {
+      source(sink, isFirstUpdate)(sink);
+    }
     isSyncFirstEvent = false;
     if (syncFirstMaybe) {
       setValue(syncFirstMaybe);
-    } else {
-      setValue(None);
+    } else if (!isFirstUpdate) {
+      setValue(typeof initialMaybe === 'function' ? initialMaybe() : initialMaybe ?? None);
     }
     return () => {
       sink.dispose();
@@ -478,6 +516,18 @@ interface SelectionViewMessage {
 interface SelectionViewProps {
   selectionView$: Source<SelectionViewMessage>;
 }
+class UniqueKeyControl {
+  #keyCount = new Map<string, number>();
+  makeUniqueKey(key: string): string {
+    const count = this.#keyCount.get(key);
+    if (count !== undefined) {
+      this.#keyCount.set(key, count + 1);
+      return JSON.stringify([key, count]);
+    }
+    this.#keyCount.set(key, 1);
+    return JSON.stringify([key, 0]);
+  }
+}
 // TODO: Simplify information passed in.
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
   const { selectionView$ } = props;
@@ -490,6 +540,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
         ),
       [],
     ),
+    undefined,
     true,
   );
   const cursorBlinkSpeed = 500;
@@ -511,16 +562,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
   if (viewCursorAndRangeInfosForSelectionRanges.length === 0) {
     return null;
   }
-  const keyCount = new Map<string, number>();
-  const makeUniqueKey = (key: string) => {
-    const count = keyCount.get(key);
-    if (count !== undefined) {
-      keyCount.set(key, count + 1);
-      return JSON.stringify([key, count]);
-    }
-    keyCount.set(key, 1);
-    return JSON.stringify([key, 0]);
-  };
+  const uniqueKeyControl = new UniqueKeyControl();
   return (
     <>
       {viewCursorAndRangeInfosForSelectionRanges.flatMap((viewCursorAndRangeInfoForSelectionRange) => {
@@ -535,7 +577,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               if (useCompositionStyle) {
                 spans.push(
                   <span
-                    key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
+                    key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
                     style={{
                       position: 'absolute',
                       top: rectangle.bottom - 2,
@@ -549,7 +591,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               }
               spans.push(
                 <span
-                  key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]))}
+                  key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]))}
                   style={{
                     position: 'absolute',
                     top: rectangle.top,
@@ -566,7 +608,9 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               const { isAnchor, isFocus, offset, paragraphReference, rangeDirection } = viewCursorInfo;
               return (
                 <BlinkingCursor
-                  key={makeUniqueKey(JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId]))}
+                  key={uniqueKeyControl.makeUniqueKey(
+                    JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId]),
+                  )}
                   viewCursorInfo={viewCursorInfo}
                   synchronizedCursorVisibility$={synchronizedCursorVisibility$}
                   cursorBlinkSpeed={cursorBlinkSpeed}
@@ -611,7 +655,6 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
             ),
       [cursorBlinkSpeed, synchronizedCursorVisibility$, hasFocus, isDraggingSelection],
     ),
-    true,
   );
   const cursorWidth = 2;
   return (
@@ -626,6 +669,176 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
       }}
     />
+  );
+}
+interface SelectionOverlayMatchInfo {
+  viewRangeInfos: ViewRangeInfo[];
+  hasFocus: boolean;
+}
+interface SearchOverlayMessage {
+  matchInfos: SelectionOverlayMatchInfo[];
+}
+interface SearchOverlayProps {
+  searchOverlay$: Source<SearchOverlayMessage>;
+}
+function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
+  const { searchOverlay$ } = props;
+  const searchOverlayMaybe = use$(
+    useMemo(
+      () =>
+        pipe(
+          searchOverlay$,
+          debounce(() => ofEvent(End, scheduleMicrotask)),
+        ),
+      [],
+    ),
+    undefined,
+    true,
+  );
+  if (isNone(searchOverlayMaybe)) {
+    return null;
+  }
+  const { matchInfos } = searchOverlayMaybe.value;
+  const uniqueKeyControl = new UniqueKeyControl();
+  return (
+    <>
+      {matchInfos.flatMap((matchInfo) => {
+        const { viewRangeInfos, hasFocus } = matchInfo;
+        return viewRangeInfos.flatMap((viewRangeInfo) => {
+          const { rectangle, paragraphReference, paragraphLineIndex } = viewRangeInfo;
+          return (
+            <span
+              key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]))}
+              style={{
+                position: 'absolute',
+                top: rectangle.top,
+                left: rectangle.left,
+                width: rectangle.width,
+                height: rectangle.height,
+                backgroundColor: hasFocus ? '#87d392bb' : '#cdecd2bb',
+              }}
+            />
+          );
+        });
+      })}
+    </>
+  );
+}
+enum SearchBoxConfigType {
+  SingleParagraphPlainText = 'SingleParagraphPlainText',
+}
+interface SearchBoxControlConfig {
+  type: SearchBoxConfigType.SingleParagraphPlainText;
+  config: SingleParagraphPlainTextSearchControlConfig;
+}
+interface SearchBoxProps {
+  isVisible$: CurrentValueSource<boolean>;
+  containerStaticViewRectangle$: CurrentValueSource<ViewRectangle>;
+  query$: Sink<string>;
+  config$: Sink<SearchBoxControlConfig>;
+  matchNumberMaybe$: CurrentValueSource<Maybe<number>>;
+  totalMatchesMaybe$: CurrentValueSource<Maybe<number>>;
+  initialConfig: SearchBoxControlConfig;
+  inputRef: React.Ref<HTMLInputElement>;
+}
+function SearchBox(props: SearchBoxProps): JSX.Element | null {
+  const { isVisible$, containerStaticViewRectangle$, query$, config$, matchNumberMaybe$, totalMatchesMaybe$, initialConfig, inputRef } = props;
+  const margin = 8;
+  type Position = {
+    width: number;
+    dropDownPercent: number;
+  };
+  const calculateWidthFromContainerStaticViewRectangle = (rectangle: ViewRectangle): number => {
+    return Math.min(rectangle.width - margin * 2, 400);
+  };
+  const { value: position } = use$<Position>(
+    useCallback((sink: Sink<Position>) => {
+      const width$ = pipe(containerStaticViewRectangle$, map(calculateWidthFromContainerStaticViewRectangle));
+      const dropDownPercent$ = CurrentValueDistributor<number>(isVisible$.currentValue ? 1 : 0);
+      pipe(
+        isVisible$,
+        subscribe((event) => {
+          if (event.type !== PushType) {
+            throwUnreachable();
+          }
+          const isVisible = event.value;
+          if (isVisible ? dropDownPercent$.currentValue === 1 : dropDownPercent$.currentValue === 0) {
+            return;
+          }
+          const dt = 1000 / 30;
+          const ms = 150;
+          const step = dt / ms;
+          pipe(
+            fromScheduleFunction(ScheduleInterval(dt)),
+            takeUntil(pipe(isVisible$, skip(1))),
+            map(() => (isVisible ? Math.min(dropDownPercent$.currentValue + step, 1) : Math.max(dropDownPercent$.currentValue - step, 0))),
+            takeWhile((dropDownPercent) => (isVisible ? dropDownPercent !== 1 : dropDownPercent !== 0), true),
+            subscribe((event) => {
+              if (event.type !== EndType) {
+                dropDownPercent$(event);
+              }
+            }, sink),
+          );
+        }, sink),
+      );
+      return pipe(
+        combine([width$, dropDownPercent$]),
+        map(([width, dropDownPercent]) => ({
+          width,
+          dropDownPercent,
+        })),
+        memoConsecutive((a, b) => a.width === b.width && a.dropDownPercent === b.dropDownPercent),
+        skip(1),
+      );
+    }, []),
+    useMemo(
+      () =>
+        Some<Position>({
+          width: calculateWidthFromContainerStaticViewRectangle(containerStaticViewRectangle$.currentValue),
+          dropDownPercent: isVisible$.currentValue ? 1 : 0,
+        }),
+      [],
+    ),
+  );
+  const matchNumberMaybe = use$(matchNumberMaybe$, Some(matchNumberMaybe$.currentValue)).value;
+  const totalMatchesMaybe = use$(totalMatchesMaybe$, Some(totalMatchesMaybe$.currentValue)).value;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        display: 'flex',
+        top: 0,
+        transform: `translateY(${margin * (position.dropDownPercent === 0 ? -100000 : 1.5 * Math.sqrt(position.dropDownPercent) - 0.5)}px)`,
+        filter: `opacity(${isVisible$.currentValue ? 1 - (1 - position.dropDownPercent) ** 2 : position.dropDownPercent ** 2})`,
+        right: margin,
+        width: position.width,
+        backgroundColor: '#000',
+        padding: '0.5em',
+        boxShadow: 'rgba(149, 157, 165, 0.1) 0px 8px 24px',
+        contain: 'content',
+        fontFamily: "'IBM Plex Sans', sans-serif",
+      }}
+    >
+      <input
+        type="search"
+        className="unset-selection"
+        style={{
+          padding: '2px 0.25em',
+          outline: '0',
+          backgroundColor: '#000',
+          color: '#fff',
+          flexGrow: 1,
+          marginRight: '0.25em',
+        }}
+        onChange={(event) => {
+          query$(Push(event.target.value));
+        }}
+        ref={inputRef}
+      />
+      <span style={{ marginRight: '0.25em', color: '#aaa' }}>
+        {isSome(matchNumberMaybe) ? matchNumberMaybe.value : '?'} of {isSome(totalMatchesMaybe) ? totalMatchesMaybe.value : '?'}
+      </span>
+    </div>
   );
 }
 interface ViewRectangle extends ViewPosition {
@@ -643,6 +856,14 @@ function makeViewRectangle(left: number, top: number, width: number, height: num
     width,
     height,
   };
+}
+function areViewRectanglesEqual(viewRectangle1: ViewRectangle, viewRectangle2: ViewRectangle): boolean {
+  return (
+    viewRectangle1.left === viewRectangle2.left &&
+    viewRectangle1.top === viewRectangle2.top &&
+    viewRectangle1.width === viewRectangle2.width &&
+    viewRectangle1.height === viewRectangle2.height
+  );
 }
 function shiftViewRectangle(rectangle: ViewRectangle, deltaRight: number, deltaDown: number): ViewRectangle {
   return makeViewRectangle(rectangle.left + deltaRight, rectangle.top + deltaDown, rectangle.width, rectangle.height);
@@ -705,7 +926,7 @@ interface RelativeParagraphMeasureCacheValue {
 interface AbsoluteParagraphMeasurement extends RelativeParagraphMeasureCacheValue {
   boundingRect: ViewRectangle;
 }
-enum BuiltInCommandName {
+enum StandardCommand {
   MoveSelectionGraphemeBackwards = 'standard.moveSelectionGraphemeBackwards',
   MoveSelectionWordBackwards = 'standard.moveSelectionWordBackwards',
   MoveSelectionParagraphBackwards = 'standard.moveSelectionParagraphBackwards',
@@ -759,6 +980,8 @@ enum BuiltInCommandName {
   Redo = 'standard.redo',
   CollapseMultipleSelectionRangesToAnchorRange = 'standard.collapseMultipleSelectionRangesToAnchorRange',
   CollapseMultipleSelectionRangesToFocusRange = 'standard.collapseMultipleSelectionRangesToFocusRange',
+  OpenSearch = 'standard.openSearch',
+  CloseSearch = 'standard.closeSearch',
 }
 enum Platform {
   Apple = 'Apple',
@@ -771,6 +994,7 @@ enum Platform {
 }
 enum Context {
   Editing = 'Editing',
+  Searching = 'Searching',
   DraggingSelection = 'DraggingSelection',
 }
 type Selector<T extends string> = T | { not: Selector<T> } | { all: Selector<T>[] } | { any: Selector<T>[] };
@@ -796,142 +1020,156 @@ type KeyCommands = {
   cancelKeyEvent?: boolean;
 }[];
 const defaultTextEditingKeyCommands: KeyCommands = [
-  { key: 'ArrowLeft,Control+KeyB', command: BuiltInCommandName.MoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+ArrowLeft', command: BuiltInCommandName.MoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+ArrowUp', command: BuiltInCommandName.MoveSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Control+KeyA', command: BuiltInCommandName.MoveSelectionParagraphStart, platform: Platform.Apple, context: Context.Editing },
-  { key: 'ArrowRight,Control+KeyF', command: BuiltInCommandName.MoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+ArrowRight', command: BuiltInCommandName.MoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'ArrowLeft,Control+KeyB', command: StandardCommand.MoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+ArrowLeft', command: StandardCommand.MoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+ArrowUp', command: StandardCommand.MoveSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Control+KeyA', command: StandardCommand.MoveSelectionParagraphStart, platform: Platform.Apple, context: Context.Editing },
+  { key: 'ArrowRight,Control+KeyF', command: StandardCommand.MoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+ArrowRight', command: StandardCommand.MoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Alt+ArrowDown',
-    command: BuiltInCommandName.MoveSelectionParagraphForwards,
+    command: StandardCommand.MoveSelectionParagraphForwards,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
-  { key: 'Control+KeyE', command: BuiltInCommandName.MoveSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+ArrowLeft', command: BuiltInCommandName.MoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+ArrowRight', command: BuiltInCommandName.MoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Control+KeyE', command: StandardCommand.MoveSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+ArrowLeft', command: StandardCommand.MoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+ArrowRight', command: StandardCommand.MoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   {
     key: 'ArrowDown,Control+KeyN',
-    command: BuiltInCommandName.MoveSelectionSoftLineDown,
+    command: StandardCommand.MoveSelectionSoftLineDown,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'ArrowUp,Control+KeyP',
-    command: BuiltInCommandName.MoveSelectionSoftLineUp,
+    command: StandardCommand.MoveSelectionSoftLineUp,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
-  { key: 'Meta+ArrowUp', command: BuiltInCommandName.MoveSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+ArrowDown', command: BuiltInCommandName.MoveSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+ArrowUp', command: StandardCommand.MoveSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+ArrowDown', command: StandardCommand.MoveSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   {
     key: 'Shift+ArrowLeft,Control+Shift+KeyB',
-    command: BuiltInCommandName.ExtendSelectionGraphemeBackwards,
+    command: StandardCommand.ExtendSelectionGraphemeBackwards,
     platform: Platform.Apple,
     context: Context.Editing,
   },
-  { key: 'Alt+Shift+ArrowLeft', command: BuiltInCommandName.ExtendSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+Shift+ArrowLeft', command: StandardCommand.ExtendSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Alt+Shift+ArrowUp',
-    command: BuiltInCommandName.ExtendSelectionParagraphBackwards,
+    command: StandardCommand.ExtendSelectionParagraphBackwards,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Control+Shift+KeyA',
-    command: BuiltInCommandName.ExtendSelectionParagraphStart,
+    command: StandardCommand.ExtendSelectionParagraphStart,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Shift+ArrowRight,Control+Shift+KeyF',
-    command: BuiltInCommandName.ExtendSelectionGraphemeForwards,
+    command: StandardCommand.ExtendSelectionGraphemeForwards,
     platform: Platform.Apple,
     context: Context.Editing,
   },
-  { key: 'Alt+Shift+ArrowRight', command: BuiltInCommandName.ExtendSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+Shift+ArrowRight', command: StandardCommand.ExtendSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Alt+Shift+ArrowDown',
-    command: BuiltInCommandName.ExtendSelectionParagraphForwards,
+    command: StandardCommand.ExtendSelectionParagraphForwards,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
-  { key: 'Control+Shift+KeyE', command: BuiltInCommandName.ExtendSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Shift+KeyE', command: StandardCommand.ExtendSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Meta+Shift+ArrowLeft',
-    command: BuiltInCommandName.ExtendSelectionSoftLineStart,
+    command: StandardCommand.ExtendSelectionSoftLineStart,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Meta+Shift+ArrowRight',
-    command: BuiltInCommandName.ExtendSelectionSoftLineEnd,
+    command: StandardCommand.ExtendSelectionSoftLineEnd,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Shift+ArrowDown,Control+Shift+KeyN',
-    command: BuiltInCommandName.ExtendSelectionSoftLineDown,
+    command: StandardCommand.ExtendSelectionSoftLineDown,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Shift+ArrowUp,Control+Shift+KeyP',
-    command: BuiltInCommandName.ExtendSelectionSoftLineUp,
+    command: StandardCommand.ExtendSelectionSoftLineUp,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Meta+Shift+ArrowUp',
-    command: BuiltInCommandName.ExtendSelectionStartOfDocument,
+    command: StandardCommand.ExtendSelectionStartOfDocument,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Meta+Shift+ArrowDown',
-    command: BuiltInCommandName.ExtendSelectionEndOfDocument,
+    command: StandardCommand.ExtendSelectionEndOfDocument,
     platform: Platform.Apple,
     context: Context.Editing,
     cancelKeyEvent: true,
   },
-  { key: 'Backspace', command: BuiltInCommandName.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Alt+Backspace', command: BuiltInCommandName.RemoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Delete', command: BuiltInCommandName.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Alt+Delete', command: BuiltInCommandName.RemoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Backspace', command: BuiltInCommandName.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Delete', command: BuiltInCommandName.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Control+KeyT', command: BuiltInCommandName.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Enter', command: BuiltInCommandName.InsertParagraphAbove, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+Enter', command: BuiltInCommandName.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyA', command: BuiltInCommandName.SelectAll, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Shift+Enter,Control+KeyO', command: BuiltInCommandName.InsertLineBreak, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Enter', command: BuiltInCommandName.SplitParagraph, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: BuiltInCommandName.Undo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+KeyZ,Meta+KeyY', command: BuiltInCommandName.Redo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Backspace', command: StandardCommand.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Alt+Backspace', command: StandardCommand.RemoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Delete', command: StandardCommand.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Alt+Delete', command: StandardCommand.RemoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Backspace', command: StandardCommand.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Delete', command: StandardCommand.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Control+KeyT', command: StandardCommand.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Enter', command: StandardCommand.InsertParagraphAbove, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Shift+Enter', command: StandardCommand.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+KeyA', command: StandardCommand.SelectAll, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Shift+Enter,Control+KeyO', command: StandardCommand.InsertLineBreak, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Enter', command: StandardCommand.SplitParagraph, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: StandardCommand.Undo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Shift+KeyZ,Meta+KeyY', command: StandardCommand.Redo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   {
     key: 'Escape',
-    command: BuiltInCommandName.CollapseMultipleSelectionRangesToAnchorRange,
+    command: StandardCommand.CollapseMultipleSelectionRangesToAnchorRange,
     platform: Platform.Apple,
     context: { all: [Context.Editing, { not: Context.DraggingSelection }] },
     cancelKeyEvent: true,
   },
   {
     key: 'Shift+Escape',
-    command: BuiltInCommandName.CollapseMultipleSelectionRangesToFocusRange,
+    command: StandardCommand.CollapseMultipleSelectionRangesToFocusRange,
     platform: Platform.Apple,
     context: { all: [Context.Editing, { not: Context.DraggingSelection }] },
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+KeyF',
+    command: StandardCommand.OpenSearch,
+    platform: Platform.Apple,
+    context: { any: [Context.Editing, Context.Searching] },
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Escape',
+    command: StandardCommand.CloseSearch,
+    platform: Platform.Apple,
+    context: Context.Searching,
     cancelKeyEvent: true,
   },
 ];
@@ -1093,10 +1331,11 @@ type GenericCommandRegister = CommandRegister<
 >;
 const doNotScrollToSelectionAfterChangeDataKey = 'standard.doNotScrollToSelectionAfterChange';
 const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
-  [BuiltInCommandName.MoveSelectionGraphemeBackwards]: {
+  [StandardCommand.MoveSelectionGraphemeBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) =>
             shouldCollapseSelectionRangeInTextCommand(document, selectionRange) ? collapseSelectionRangeBackwards(document, selectionRange) : false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
@@ -1104,40 +1343,44 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionWordBackwards]: {
+  [StandardCommand.MoveSelectionWordBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionParagraphBackwards]: {
+  [StandardCommand.MoveSelectionParagraphBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionParagraphStart]: {
+  [StandardCommand.MoveSelectionParagraphStart]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.PreviousBoundByEdge),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionGraphemeForwards]: {
+  [StandardCommand.MoveSelectionGraphemeForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) =>
             shouldCollapseSelectionRangeInTextCommand(document, selectionRange) ? collapseSelectionRangeForwards(document, selectionRange) : false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
@@ -1145,60 +1388,66 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionWordForwards]: {
+  [StandardCommand.MoveSelectionWordForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionParagraphForwards]: {
+  [StandardCommand.MoveSelectionParagraphForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionParagraphEnd]: {
+  [StandardCommand.MoveSelectionParagraphEnd]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.NextBoundByEdge),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionStartOfDocument]: {
+  [StandardCommand.MoveSelectionStartOfDocument]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Previous),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionEndOfDocument]: {
+  [StandardCommand.MoveSelectionEndOfDocument]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Next),
         ),
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionGraphemeBackwards]: {
+  [StandardCommand.ExtendSelectionGraphemeBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
@@ -1206,10 +1455,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionWordBackwards]: {
+  [StandardCommand.ExtendSelectionWordBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
@@ -1217,10 +1467,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionParagraphBackwards]: {
+  [StandardCommand.ExtendSelectionParagraphBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
@@ -1228,10 +1479,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionParagraphStart]: {
+  [StandardCommand.ExtendSelectionParagraphStart]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.PreviousBoundByEdge),
@@ -1239,10 +1491,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionGraphemeForwards]: {
+  [StandardCommand.ExtendSelectionGraphemeForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
@@ -1250,10 +1503,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionWordForwards]: {
+  [StandardCommand.ExtendSelectionWordForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
@@ -1261,10 +1515,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionParagraphForwards]: {
+  [StandardCommand.ExtendSelectionParagraphForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
@@ -1272,10 +1527,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionParagraphEnd]: {
+  [StandardCommand.ExtendSelectionParagraphEnd]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.NextBoundByEdge),
@@ -1283,10 +1539,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionStartOfDocument]: {
+  [StandardCommand.ExtendSelectionStartOfDocument]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Previous),
@@ -1294,10 +1551,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionEndOfDocument]: {
+  [StandardCommand.ExtendSelectionEndOfDocument]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Next),
@@ -1305,10 +1563,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionGraphemeBackwards]: {
+  [StandardCommand.RemoveSelectionGraphemeBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
@@ -1317,10 +1576,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionWordBackwards]: {
+  [StandardCommand.RemoveSelectionWordBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
@@ -1329,10 +1589,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionParagraphBackwards]: {
+  [StandardCommand.RemoveSelectionParagraphBackwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
@@ -1340,10 +1601,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionGraphemeForwards]: {
+  [StandardCommand.RemoveSelectionGraphemeForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
@@ -1352,10 +1614,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionWordForwards]: {
+  [StandardCommand.RemoveSelectionWordForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
@@ -1364,10 +1627,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionParagraphForwards]: {
+  [StandardCommand.RemoveSelectionParagraphForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
           matita.noopPointTransformFn,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
@@ -1375,12 +1639,12 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [BuiltInCommandName.TransposeGraphemes]: {
+  [StandardCommand.TransposeGraphemes]: {
     execute(stateControl): void {
-      stateControl.queueUpdate(matita.makeTransposeAtSelectionUpdateFn());
+      stateControl.queueUpdate(matita.makeTransposeAtSelectionUpdateFn(stateControl));
     },
   },
-  [BuiltInCommandName.InsertParagraphAbove]: {
+  [StandardCommand.InsertParagraphAbove]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
         const blockIdCount = new Map<string, number>();
@@ -1451,7 +1715,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       });
     },
   },
-  [BuiltInCommandName.InsertParagraphBelow]: {
+  [StandardCommand.InsertParagraphBelow]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
         const blockIdCount = new Map<string, number>();
@@ -1522,7 +1786,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       });
     },
   },
-  [BuiltInCommandName.SelectAll]: {
+  [StandardCommand.SelectAll]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
         const extendedSelection = matita.extendSelectionByPointTransformFns(
@@ -1539,7 +1803,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       });
     },
   },
-  [BuiltInCommandName.InsertText]: {
+  [StandardCommand.InsertText]: {
     execute(stateControl, _viewControl, data: InsertTextCommandData): void {
       const { insertText } = data;
       const contentFragment = matita.makeContentFragment(
@@ -1550,13 +1814,13 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
       stateControl.queueUpdate(
         () => {
-          stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
+          stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, contentFragment));
         },
         { [matita.RedoUndoUpdateKey.InsertText]: true },
       );
     },
   },
-  [BuiltInCommandName.PasteText]: {
+  [StandardCommand.PasteText]: {
     execute(stateControl, _viewControl, data: PasteTextCommandData): void {
       const { pasteText } = data;
       const contentFragment = matita.makeContentFragment(
@@ -1566,11 +1830,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         }),
       );
       stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
+        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, contentFragment));
       });
     },
   },
-  [BuiltInCommandName.DropText]: {
+  [StandardCommand.DropText]: {
     execute(stateControl, _viewControl, data: DropTextCommandData): void {
       const { dropText } = data;
       const contentFragment = matita.makeContentFragment(
@@ -1580,22 +1844,22 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         }),
       );
       stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
+        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, contentFragment));
       });
     },
   },
-  [BuiltInCommandName.InsertLineBreak]: {
+  [StandardCommand.InsertLineBreak]: {
     execute(stateControl): void {
       // TODO.
       const contentFragment = matita.makeContentFragment([
         matita.makeContentFragmentParagraph(matita.makeParagraph({}, [matita.makeText({}, '\n')], matita.generateId())),
       ]);
       stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
+        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, contentFragment));
       });
     },
   },
-  [BuiltInCommandName.SplitParagraph]: {
+  [StandardCommand.SplitParagraph]: {
     execute(stateControl): void {
       // TODO.
       const contentFragment = matita.makeContentFragment([
@@ -1603,11 +1867,11 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], matita.generateId())),
       ]);
       stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(contentFragment));
+        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, contentFragment));
       });
     },
   },
-  [BuiltInCommandName.CollapseMultipleSelectionRangesToAnchorRange]: {
+  [StandardCommand.CollapseMultipleSelectionRangesToAnchorRange]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
         if (stateControl.stateView.selection.selectionRanges.length <= 1) {
@@ -1619,7 +1883,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       });
     },
   },
-  [BuiltInCommandName.CollapseMultipleSelectionRangesToFocusRange]: {
+  [StandardCommand.CollapseMultipleSelectionRangesToFocusRange]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
         if (stateControl.stateView.selection.selectionRanges.length <= 1) {
@@ -1641,7 +1905,7 @@ interface InsertTextCommandData {
 }
 function makeInsertTextCommandInfo(insertText: string): CommandInfo<InsertTextCommandData> {
   return {
-    commandName: BuiltInCommandName.InsertText,
+    commandName: StandardCommand.InsertText,
     data: {
       insertText,
     },
@@ -1652,7 +1916,7 @@ interface PasteTextCommandData {
 }
 function makePasteTextCommandInfo(pasteText: string): CommandInfo<PasteTextCommandData> {
   return {
-    commandName: BuiltInCommandName.PasteText,
+    commandName: StandardCommand.PasteText,
     data: {
       pasteText,
     },
@@ -1663,7 +1927,7 @@ interface DropTextCommandData {
 }
 function makeDropTextCommandInfo(dropText: string): CommandInfo<DropTextCommandData> {
   return {
-    commandName: BuiltInCommandName.DropText,
+    commandName: StandardCommand.DropText,
     data: {
       dropText,
     },
@@ -1701,7 +1965,7 @@ enum VirtualizedDataKey {
   IgnoreRecursiveUpdate = 'virtualized.ignoreRecursiveUpdate',
 }
 const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredCommand> = {
-  [BuiltInCommandName.MoveSelectionGraphemeBackwards]: {
+  [StandardCommand.MoveSelectionGraphemeBackwards]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       const pointTransformFn = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous);
@@ -1797,7 +2061,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.MoveSelectionWordBackwards]: {
+  [StandardCommand.MoveSelectionWordBackwards]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       const pointTransformFn = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous);
@@ -1849,7 +2113,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.MoveSelectionSoftLineStart]: {
+  [StandardCommand.MoveSelectionSoftLineStart]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(() => {
@@ -1880,18 +2144,19 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.MoveSelectionSoftLineEnd]: {
+  [StandardCommand.MoveSelectionSoftLineEnd]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionSoftLineDown]: {
+  [StandardCommand.MoveSelectionSoftLineDown]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Next);
@@ -2006,7 +2271,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.MoveSelectionSoftLineUp]: {
+  [StandardCommand.MoveSelectionSoftLineUp]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Previous);
@@ -2121,29 +2386,31 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.MoveSelectionStartOfPage]: {
+  [StandardCommand.MoveSelectionStartOfPage]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           documentRenderControl.makePagePointTransformFn(matita.PointMovement.Previous),
         ),
       );
     },
   },
-  [BuiltInCommandName.MoveSelectionEndOfPage]: {
+  [StandardCommand.MoveSelectionEndOfPage]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
           documentRenderControl.makePagePointTransformFn(matita.PointMovement.Previous),
         ),
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionSoftLineStart]: {
+  [StandardCommand.ExtendSelectionSoftLineStart]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(() => {
@@ -2175,11 +2442,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.ExtendSelectionSoftLineEnd]: {
+  [StandardCommand.ExtendSelectionSoftLineEnd]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
@@ -2187,7 +2455,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionSoftLineDown]: {
+  [StandardCommand.ExtendSelectionSoftLineDown]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Next);
@@ -2260,7 +2528,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.ExtendSelectionSoftLineUp]: {
+  [StandardCommand.ExtendSelectionSoftLineUp]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Previous);
@@ -2333,11 +2601,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
-  [BuiltInCommandName.ExtendSelectionStartOfPage]: {
+  [StandardCommand.ExtendSelectionStartOfPage]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           documentRenderControl.makePagePointTransformFn(matita.PointMovement.Previous),
@@ -2345,11 +2614,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
-  [BuiltInCommandName.ExtendSelectionEndOfPage]: {
+  [StandardCommand.ExtendSelectionEndOfPage]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.noopPointTransformFn,
           documentRenderControl.makePagePointTransformFn(matita.PointMovement.Next),
@@ -2357,11 +2627,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionSoftLineStart]: {
+  [StandardCommand.RemoveSelectionSoftLineStart]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) =>
             !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) || matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
           matita.noopPointTransformFn,
@@ -2370,17 +2641,30 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
-  [BuiltInCommandName.RemoveSelectionSoftLineEnd]: {
+  [StandardCommand.RemoveSelectionSoftLineEnd]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+          stateControl,
           (document, _stateControlConfig, selectionRange) =>
             !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) || !matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
           matita.noopPointTransformFn,
           documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
         ),
       );
+    },
+  },
+  [StandardCommand.OpenSearch]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      documentRenderControl.openSearch();
+    },
+  },
+  [StandardCommand.CloseSearch]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      documentRenderControl.closeSearch();
     },
   },
 };
@@ -2460,6 +2744,38 @@ function combineCommandRegistersOverride<
     combinedCommandRegister.set(commandName, lastCommand);
   }
   return combinedCommandRegister;
+}
+function indexOfNearestLessThanDynamic<V, N>(
+  access: (i: number) => V,
+  length: number,
+  needle: N,
+  compare: (value: V, needle: N) => number,
+  low = 0,
+  high = length - 1,
+): number {
+  if (length === 0) {
+    return -1;
+  }
+  let mid: number;
+  let item: V;
+  let target = -1;
+  if (compare(access(high), needle) < 0) {
+    return high;
+  }
+  while (low <= high) {
+    mid = (low + high) >> 1;
+    item = access(mid);
+    const compareResult = compare(item, needle);
+    if (compareResult > 0) {
+      high = mid - 1;
+    } else if (compareResult < 0) {
+      target = mid;
+      low = mid + 1;
+    } else {
+      return low;
+    }
+  }
+  return target;
 }
 function indexOfNearestLessThan<V, N>(array: V[], needle: N, compare: (value: V, needle: N) => number, low = 0, high = array.length - 1): number {
   if (array.length === 0) {
@@ -2637,7 +2953,7 @@ class LocalUndoControl<
     this.#selectionAfter = null;
     this.#forceChange = null;
     pipe(this.#stateControl.selectionChange$, subscribe(this.#onSelectionChange.bind(this), this));
-    pipe(this.#stateControl.mutationPartResult$, subscribe(this.#onMutationResult.bind(this), this));
+    pipe(this.#stateControl.afterMutationPart$, subscribe(this.#onAfterMutationPart.bind(this), this));
   }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
     if (event.type !== PushType) {
@@ -2653,7 +2969,9 @@ class LocalUndoControl<
     }
     this.#lastChangeType = LocalUndoControlLastChangeType.SelectionAfterChange;
   }
-  #onMutationResult(event: Event<matita.MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>): void {
+  #onAfterMutationPart(
+    event: Event<matita.AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>,
+  ): void {
     if (event.type !== PushType) {
       throwUnreachable();
     }
@@ -2816,10 +3134,10 @@ class LocalUndoControl<
       MyEmbedRenderControl
     >,
   ): void {
-    commandRegister.set(BuiltInCommandName.Undo, {
+    commandRegister.set(StandardCommand.Undo, {
       execute: this.tryUndo.bind(this),
     });
-    commandRegister.set(BuiltInCommandName.Redo, {
+    commandRegister.set(StandardCommand.Redo, {
       execute: this.tryRedo.bind(this),
     });
   }
@@ -2841,8 +3159,8 @@ class ReactiveMutationObserver extends DisposableClass {
     super(() => this.#dispose());
     this.#observerTargets = [];
     this.#records$ = Distributor();
-    this.records$ = Source(this.#records$);
     this.add(this.#records$);
+    this.records$ = Source(this.#records$);
     this.#mutationObserver = new MutationObserver((records) => {
       this.#records$(Push(records));
     });
@@ -2882,8 +3200,8 @@ class ReactiveIntersectionObserver extends DisposableClass {
   constructor(options?: IntersectionObserverInit) {
     super(() => this.#dispose());
     this.#entries$ = Distributor();
-    this.entries$ = Source(this.#entries$);
     this.add(this.#entries$);
+    this.entries$ = Source(this.#entries$);
     this.#intersectionObserver = new IntersectionObserver((entries) => {
       this.#entries$(Push(entries));
     }, options);
@@ -2914,8 +3232,8 @@ class ReactiveResizeObserver extends DisposableClass {
   constructor() {
     super(() => this.#dispose());
     this.#entries$ = Distributor();
-    this.entries$ = Source(this.#entries$);
     this.add(this.#entries$);
+    this.entries$ = Source(this.#entries$);
     this.#resizeObserver = new ResizeObserver((entries) => {
       this.#entries$(Push(entries));
     });
@@ -2953,7 +3271,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #inputElementContainedInSingleParagraph: boolean;
   #inputTextElement!: HTMLElement;
   #inputTextElementMeasurementElement!: HTMLElement;
+  #searchOverlayContainerElement!: HTMLElement;
+  #searchElementContainerElement!: HTMLElement;
+  #searchInputRef = createRef<HTMLInputElement>();
   #selectionView$: CurrentValueDistributor<SelectionViewMessage>;
+  #searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
   #relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
   #keyCommands: KeyCommands;
   #commandRegister: VirtualizedCommandRegister;
@@ -2975,9 +3297,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         viewCursorAndRangeInfosForSelectionRanges: [],
       },
     });
+    this.#searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
+      matchInfos: [],
+    });
     this.#relativeParagraphMeasurementCache = new LruCache(250);
     this.#keyCommands = defaultTextEditingKeyCommands;
-    this.#commandRegister = combineCommandRegistersOverride([genericCommandRegister, virtualizedCommandRegister]);
+    this.#commandRegister = combineCommandRegistersOverride<
+      DocumentConfig,
+      ContentConfig,
+      ParagraphConfig,
+      EmbedConfig,
+      TextConfig,
+      VoidConfig,
+      VirtualizedDocumentRenderControl,
+      VirtualizedContentRenderControl,
+      VirtualizedParagraphRenderControl,
+      matita.EmbedRenderControl
+    >([genericCommandRegister, virtualizedCommandRegister]);
     this.#undoControl = new LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(this.stateControl);
     this.add(this.#undoControl);
     this.#undoControl.registerCommands(this.#commandRegister);
@@ -2987,16 +3323,26 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #isDraggingSelection = false;
   #endSelectionDrag$ = Distributor<undefined>();
   #isOverflowClipNotSupported = false;
+  #searchControl!: SingleParagraphPlainTextSearchControl;
+  #isSearchElementContainerVisible$ = CurrentValueDistributor<boolean>(false);
+  #searchElementTrackAllControl: TrackAllControl | null = null;
+  #matchNumberMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
+  #totalMatchesMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
     this.#topLevelContentViewContainerElement = document.createElement('div');
     // TODO: Hack to fix virtual selection and input overflowing bottom.
     this.#topLevelContentViewContainerElement.style.paddingBottom = '8px';
     this.#selectionViewContainerElement = document.createElement('div');
-    pipe(this.stateControl.viewDelta$, subscribe(this.#onViewDelta.bind(this), this));
+    this.#searchOverlayContainerElement = document.createElement('div');
+    pipe(
+      this.stateControl.afterMutationPart$,
+      map((message) => message.viewDelta),
+      subscribe(this.#onViewDelta.bind(this), this),
+    );
     pipe(this.stateControl.finishedUpdating$, subscribe(this.#onFinishedUpdating.bind(this), this));
     pipe(this.stateControl.selectionChange$, subscribe(this.#onSelectionChange.bind(this), this));
-    pipe(this.stateControl.mutationPartResult$, subscribe(this.#onMutationResult.bind(this), this));
+    pipe(this.stateControl.afterMutationPart$, subscribe(this.#onAfterMutationPart.bind(this), this));
     const topLevelContentRenderControl = new VirtualizedContentRenderControl(this.topLevelContentReference, this.viewControl);
     this.viewControl.renderControlRegister.registerContentRenderControl(topLevelContentRenderControl);
     this.add(topLevelContentRenderControl);
@@ -3049,9 +3395,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           throwUnreachable();
         }
         // This fires before compositionstart in safari.
-        requestAnimationFrameDisposable(() => {
+        if (isSafari) {
+          requestAnimationFrameDisposable(() => {
+            this.#syncInputElement();
+          }, this);
+        } else {
           this.#syncInputElement();
-        }, this);
+        }
       }, this),
     );
     this.add(inputElementReactiveMutationObserver);
@@ -3066,9 +3416,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#inputTextElementMeasurementElement,
       this.#topLevelContentViewContainerElement,
       this.#selectionViewContainerElement,
+      this.#searchOverlayContainerElement,
       this.#inputTextElement, // TODO: Overflows parent, changing dimensions.
     ];
     dragElements.forEach((element) => {
+      element.classList.add('hidden-selection');
       element.style.cursor = 'text';
       pipe(
         fromReactiveValue<[PointerEvent]>((callback, disposable) => addEventListener(element, 'pointerdown', callback, disposable)),
@@ -3462,6 +3814,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                       ? matita.arePointWithContentReferencesEqual(originalFirstPointWithContentReference, firstPointWithContentReference)
                       : matita.arePointWithContentReferencesEqual(originalSecondPointWithContentReference, secondPointWithContentReference));
                 } else {
+                  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
                   if (dragState.selectionType !== 'paragraph') {
                     assertUnreachable(dragState.selectionType);
                   }
@@ -3672,19 +4025,140 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }, this),
     );
     this.#topLevelContentViewContainerElement.appendChild(topLevelContentRenderControl.containerHtmlElement);
-    const root = createRoot(this.#selectionViewContainerElement);
-    root.render(<SelectionView selectionView$={this.#selectionView$} />);
-    this.add(
-      Disposable(() => {
-        root.unmount();
-      }),
-    );
+    const renderReactNodeIntoHtmlContainerElement = (element: React.ReactNode, containerElement: HTMLElement): void => {
+      const root = createRoot(containerElement);
+      root.render(element);
+      this.add(
+        Disposable(() => {
+          root.unmount();
+        }),
+      );
+    };
+    renderReactNodeIntoHtmlContainerElement(<SelectionView selectionView$={this.#selectionView$} />, this.#selectionViewContainerElement);
+    renderReactNodeIntoHtmlContainerElement(<SearchOverlay searchOverlay$={this.#searchOverlay$} />, this.#searchOverlayContainerElement);
+    this.#searchElementContainerElement = document.createElement('div');
     this.#containerHtmlElement.style.position = 'relative';
     this.#containerHtmlElement.append(
       this.#inputTextElementMeasurementElement,
       this.#topLevelContentViewContainerElement,
       this.#selectionViewContainerElement,
+      this.#searchOverlayContainerElement,
       this.#inputTextElement,
+      this.#searchElementContainerElement,
+    );
+    let searchContainerStaticViewRectangle$: CurrentValueDistributor<ViewRectangle> | undefined;
+    const calculateCurrentSearchContainerStaticViewRectangle = (): ViewRectangle => {
+      const { visibleTop, visibleBottom } = this.#getVisibleTopAndBottom();
+      const { visibleLeft, visibleRight } = this.#getVisibleLeftAndRight();
+      return makeViewRectangle(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+    };
+    const initialSearchControlConfig = {
+      ignoreCase: true,
+      ignoreDiacritics: true,
+      ignorePunctuation: false,
+      ignoreVoids: false,
+      searchQueryWordsIndividually: false,
+      wholeWords: false,
+    };
+    this.#searchControl = new SingleParagraphPlainTextSearchControl(this.stateControl, '', initialSearchControlConfig, this.topLevelContentReference);
+    this.add(this.#searchControl);
+    pipe(
+      this.#isSearchElementContainerVisible$,
+      skip(1),
+      memoConsecutive<boolean>((previous, current) => previous === current),
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const isVisible = event.value;
+        this.#matchNumberMaybe$(Push(None));
+        this.#totalMatchesMaybe$(Push(None));
+        if (isVisible) {
+          assert(this.#searchElementTrackAllControl === null);
+          this.#searchElementTrackAllControl = this.#searchControl.trackAll();
+          pipe(
+            this.#searchElementTrackAllControl.totalMatches$,
+            map((value) => Some(value)),
+            subscribe(this.#totalMatchesMaybe$),
+          );
+        } else {
+          assertIsNotNullish(this.#searchElementTrackAllControl);
+          this.#searchElementTrackAllControl.dispose();
+          this.#searchElementTrackAllControl = null;
+        }
+      }, this.#searchControl),
+    );
+    requestAnimationFrameDisposable(() => {
+      searchContainerStaticViewRectangle$ = CurrentValueDistributor(calculateCurrentSearchContainerStaticViewRectangle());
+      const searchConfigSink = Sink<SearchBoxControlConfig>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const searchBoxControlConfig = event.value;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (searchBoxControlConfig.type !== SearchBoxConfigType.SingleParagraphPlainText) {
+          assertUnreachable(searchBoxControlConfig.type);
+        }
+        const newConfig = searchBoxControlConfig.config;
+        this.#searchControl.config = newConfig;
+        this.stateControl.queueUpdate(() => {
+          // TODO: This is a hack to queue onFinishedUpdating.
+        });
+      });
+      const searchQuery$ = Sink<string>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const query = event.value;
+        this.#searchControl.query = query;
+        this.stateControl.queueUpdate(() => {
+          // TODO: This is a hack to queue onFinishedUpdating.
+        });
+      });
+      renderReactNodeIntoHtmlContainerElement(
+        <SearchBox
+          config$={searchConfigSink}
+          containerStaticViewRectangle$={searchContainerStaticViewRectangle$}
+          initialConfig={{
+            type: SearchBoxConfigType.SingleParagraphPlainText,
+            config: initialSearchControlConfig,
+          }}
+          isVisible$={this.#isSearchElementContainerVisible$}
+          query$={searchQuery$}
+          matchNumberMaybe$={this.#matchNumberMaybe$}
+          totalMatchesMaybe$={this.#totalMatchesMaybe$}
+          inputRef={this.#searchInputRef}
+        />,
+        this.#searchElementContainerElement,
+      );
+    }, this);
+    pipe(
+      fromArray([
+        this.#isSearchElementContainerVisible$,
+        pipe(
+          this.#isSearchElementContainerVisible$,
+          map((isVisible) =>
+            isVisible
+              ? pipe(
+                  fromArray([
+                    topLevelContentViewContainerElementReactiveResizeObserver.entries$,
+                    pipe(
+                      fromReactiveValue<[globalThis.Event]>((callback, disposable) =>
+                        addWindowEventListener('scroll', callback, disposable, { passive: true }),
+                      ),
+                      map((args) => args[0]),
+                    ),
+                  ]),
+                  flat()<unknown>,
+                  throttle(() => timer(16)),
+                )
+              : empty$,
+          ),
+          switchEach,
+        ),
+      ]),
+      flat(),
+      subscribe(this.#replaceVisibleSearchResults.bind(this), this),
     );
     this.#containerHtmlElement.style.overflow = 'clip visible';
     if (this.#containerHtmlElement.style.overflow !== 'clip visible') {
@@ -3696,17 +4170,34 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
     this.add(topLevelContentViewContainerElementReactiveResizeObserver);
     pipe(
+      fromArray([
+        topLevelContentViewContainerElementReactiveResizeObserver.entries$,
+        pipe(
+          fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+          map((args) => args[0]),
+        ),
+      ]),
+      flat()<unknown>,
+      debounce(() => timer(400)),
+      map(calculateCurrentSearchContainerStaticViewRectangle),
+      memoConsecutive(areViewRectanglesEqual),
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        searchContainerStaticViewRectangle$?.(event);
+      }, this),
+    );
+    pipe(
       topLevelContentViewContainerElementReactiveResizeObserver.entries$,
       filterMap((entries) => {
-        let lastWidth: number | undefined;
-        for (const entry of entries) {
-          const width = entry.borderBoxSize?.[0].inlineSize;
-          if (typeof width === 'number') {
-            lastWidth = width;
+        // TODO.
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const entry = entries[i];
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if (entry.borderBoxSize && entry.borderBoxSize.length > 0) {
+            return Some(entry.borderBoxSize[0].inlineSize);
           }
-        }
-        if (typeof lastWidth !== 'undefined') {
-          return Some(lastWidth);
         }
         return None;
       }),
@@ -3735,8 +4226,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           }),
         ),
         pipe(
-          this.stateControl.viewDelta$,
-          flatMap((viewDelta) => fromArray(viewDelta.changes)),
+          this.stateControl.afterMutationPart$,
+          flatMap((message) => fromArray(message.viewDelta.changes)),
           filterMap((viewDeltaChange) => {
             if (viewDeltaChange.type !== matita.ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated) {
               return None;
@@ -3757,6 +4248,20 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     );
     addWindowEventListener('keydown', this.#onGlobalKeyDown.bind(this), this);
     addWindowEventListener('keyup', this.#onGlobalKeyUp.bind(this), this);
+  }
+  openSearch(): void {
+    if (!this.#isSearchElementContainerVisible$.currentValue) {
+      this.#isSearchElementContainerVisible$(Push(true));
+    }
+    this.#searchInputRef.current?.select();
+  }
+  closeSearch(): void {
+    if (this.#isSearchElementContainerVisible$.currentValue) {
+      this.#isSearchElementContainerVisible$(Push(false));
+    }
+    this.#inputTextElement.focus({
+      preventScroll: true,
+    });
   }
   #onInputElementFocus(): void {
     // TODO.
@@ -3883,6 +4388,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #markScrollSelectionIntoViewWhenFinishedUpdating(): void {
     this.#scrollSelectionIntoViewWhenFinishedUpdating = true;
   }
+  #isSearchFocused(): boolean {
+    return !!this.#searchInputRef.current && document.activeElement === this.#searchInputRef.current;
+  }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
     // TODO: Can't do this with multiple selectionChange$ listeners.
     if (event.type !== PushType) {
@@ -3901,7 +4409,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.#inputTextElement.blur();
       }
     } else {
-      if (!this.#hasFocusIncludingNotActiveWindow()) {
+      if (!this.#hasFocusIncludingNotActiveWindow() && !this.#isSearchFocused()) {
         this.#inputTextElement.focus({
           preventScroll: true,
         });
@@ -4010,7 +4518,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.stateControl.delta.setSelection(newSelection, undefined, { [VirtualizedDataKey.IgnoreRecursiveUpdate]: true });
     }
   }
-  #onMutationResult(event: Event<matita.MutationResultMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>): void {
+  #onAfterMutationPart(
+    event: Event<matita.AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>,
+  ): void {
     if (event.type !== PushType) {
       throwUnreachable();
     }
@@ -4217,6 +4727,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (this.#isDraggingSelection) {
       activeContexts.push(Context.DraggingSelection);
     }
+    if (this.#isSearchFocused()) {
+      activeContexts.push(Context.Searching);
+    }
     for (let i = 0; i < this.#keyCommands.length; i++) {
       const keyCommand = this.#keyCommands[i];
       const { key, command, context, platform, cancelKeyEvent } = keyCommand;
@@ -4296,7 +4809,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     event.preventDefault();
     this.stateControl.queueUpdate(() => {
       this.#copySelectionToClipboard();
-      this.stateControl.delta.applyUpdate(matita.makeRemoveSelectionContentsUpdateFn());
+      this.stateControl.delta.applyUpdate(matita.makeRemoveSelectionContentsUpdateFn(this.stateControl));
     });
   }
   #copySelectionToClipboard(): void {
@@ -4535,7 +5048,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   shouldCollapseSelectionRangeInTextCommand(this.stateControl.stateView.document, this.stateControl.stateView.selection.selectionRanges[0])))
             ) {
               // 'insertText' only is handled using the native selection when it is collapsed, as this is for compatibility with composition in chrome/firefox.
-              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(replacementContentFragment));
+              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, replacementContentFragment));
               return;
             }
             let paragraph: matita.Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -4545,13 +5058,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               if (!(error instanceof matita.BlockNotInBlockStoreError)) {
                 throw error;
               }
-              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(replacementContentFragment));
+              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, replacementContentFragment));
               return;
             }
             matita.assertIsParagraph(paragraph);
             const currentTextContent = this.#getDomInputTextFromParagraph(paragraph);
             if (originalTextContent !== currentTextContent) {
-              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(replacementContentFragment));
+              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, replacementContentFragment));
               return;
             }
             assert(startOffset <= endOffset);
@@ -4563,7 +5076,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               matita.generateId(),
             );
             this.stateControl.delta.applyUpdate(
-              matita.makeInsertContentFragmentAtRangeUpdateFn(range, replacementContentFragment, undefined, (selectionRange) => {
+              matita.makeInsertContentFragmentAtRangeUpdateFn(this.stateControl, range, replacementContentFragment, undefined, (selectionRange) => {
                 if (selectionRange.ranges.length > 1) {
                   return false;
                 }
@@ -4604,14 +5117,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     event.preventDefault();
     if (inputType === 'insertParagraph') {
       this.runCommand({
-        commandName: BuiltInCommandName.SplitParagraph,
+        commandName: StandardCommand.SplitParagraph,
         data: null,
       });
       return;
     }
     if (inputType === 'insertLineBreak') {
       this.runCommand({
-        commandName: BuiltInCommandName.InsertLineBreak,
+        commandName: StandardCommand.InsertLineBreak,
         data: null,
       });
     }
@@ -4909,23 +5422,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       visibleTop: 0,
       visibleBottom: window.innerHeight,
     };
-    // const scrollContainer = this.#getScrollContainer();
-    // const scrollContainerBoundingRect = scrollContainer.getBoundingClientRect();
-    // const visibleTop = Math.max(scrollContainer.scrollTop + scrollContainerBoundingRect.top, 0);
-    // const visibleBottom = Math.min(Math.min(visibleTop + scrollContainer.clientHeight, scrollContainerBoundingRect.bottom), window.innerHeight);
-    // return {
-    //   visibleTop,
-    //   visibleBottom,
-    // };
   }
   #getVisibleLeftAndRight(): { visibleLeft: number; visibleRight: number } {
-    const scrollContainer = this.#getScrollContainer();
-    const scrollContainerBoundingRect = scrollContainer.getBoundingClientRect();
-    const visibleLeft = Math.max(scrollContainer.scrollLeft + scrollContainerBoundingRect.left, 0);
-    const visibleRight = Math.min(Math.min(visibleLeft + scrollContainer.clientWidth, scrollContainerBoundingRect.right), window.innerWidth);
+    // TODO.
     return {
-      visibleLeft,
-      visibleRight,
+      visibleLeft: 0,
+      visibleRight: window.innerWidth,
     };
   }
   #onViewDelta(event: Event<matita.ViewDelta>): void {
@@ -4940,6 +5442,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     if (isSafari) {
       this.#syncInputElement();
+      if (this.#isSearchElementContainerVisible$.currentValue) {
+        this.#replaceVisibleSearchResults();
+      }
       this.#replaceViewSelectionRanges();
       if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
         this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
@@ -4950,11 +5455,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
         this.#scrollSelectionIntoView();
       }
+      if (this.#isSearchElementContainerVisible$.currentValue) {
+        this.#replaceVisibleSearchResults();
+      }
       this.#replaceViewSelectionRanges();
       this.#syncInputElement();
     }
   }
   #syncInputElement(): void {
+    if (!this.#hasFocusIncludingNotActiveWindow()) {
+      return;
+    }
     // Hidden input text for composition.
     const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
     if (!focusSelectionRange) {
@@ -5042,6 +5553,71 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
     }
   }
+  #replaceVisibleSearchResults(): void {
+    if (!this.#isSearchElementContainerVisible$.currentValue) {
+      this.#searchOverlay$(
+        Push({
+          matchInfos: [],
+        }),
+      );
+      return;
+    }
+    const { visibleTop, visibleBottom } = this.#getVisibleTopAndBottom();
+    const { relativeOffsetLeft, relativeOffsetTop } = this.#calculateRelativeOffsets();
+    const marginTopBottom = this.#getBufferMarginTopBottom();
+    const accessParagraphReferenceAtIndex = (index: number) => {
+      return matita.makeBlockReferenceFromBlock(
+        matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference, index),
+      );
+    };
+    const numParagraphReferences = matita.getNumberOfBlocksInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+    const startIndex = Math.max(
+      0,
+      indexOfNearestLessThanDynamic(
+        accessParagraphReferenceAtIndex,
+        numParagraphReferences,
+        visibleTop - marginTopBottom,
+        this.#compareParagraphTopToOffsetTop.bind(this),
+      ) - 1,
+    );
+    const endIndex = Math.min(
+      numParagraphReferences - 1,
+      indexOfNearestLessThanDynamic(
+        accessParagraphReferenceAtIndex,
+        numParagraphReferences,
+        visibleBottom + marginTopBottom,
+        this.#compareParagraphTopToOffsetTop.bind(this),
+        startIndex,
+      ) + 1,
+    );
+    const matchInfos: SelectionOverlayMatchInfo[] = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      const paragraph = matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference, i);
+      const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+      const paragraphMatches = this.#searchControl.getMatchesForParagraphAtBlockReference(paragraphReference);
+      for (let i = 0; i < paragraphMatches.matches.length; i++) {
+        const match = paragraphMatches.matches[i];
+        const { startOffset, endOffset } = match;
+        const viewRangeInfos = this.#calculateViewRangeInfosForParagraphAtBlockReference(
+          paragraphReference,
+          startOffset,
+          endOffset,
+          true,
+          relativeOffsetLeft,
+          relativeOffsetTop,
+        );
+        matchInfos.push({
+          viewRangeInfos,
+          hasFocus: false,
+        });
+      }
+    }
+    this.#searchOverlay$(
+      Push({
+        matchInfos,
+      }),
+    );
+  }
   #virtualSelectionDisposable: Disposable | null = null;
   // TODO: Deduplicate calling this method.
   #replaceViewSelectionRanges(): void {
@@ -5108,6 +5684,101 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       })),
     );
   }
+  #calculateRelativeOffsets(): { relativeOffsetLeft: number; relativeOffsetTop: number } {
+    const scrollContainer = this.#getScrollContainer();
+    const { visibleLeft } = this.#getVisibleLeftAndRight();
+    const { visibleTop } = this.#getVisibleTopAndBottom();
+    const relativeOffsetLeft = scrollContainer.scrollLeft + visibleLeft;
+    const relativeOffsetTop = scrollContainer.scrollTop + visibleTop;
+    return {
+      relativeOffsetLeft,
+      relativeOffsetTop,
+    };
+  }
+  #calculateViewRangeInfosForParagraphAtBlockReference(
+    paragraphReference: matita.BlockReference,
+    includedParagraphStartOffset: number,
+    includedParagraphEndOffset: number,
+    isLastParagraphInRange: boolean,
+    relativeOffsetLeft: number,
+    relativeOffsetTop: number,
+  ): ViewRangeInfo[] {
+    const defaultVisibleLineBreakPadding = 8;
+    const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
+    const viewRangeInfos: ViewRangeInfo[] = [];
+    for (let j = 0; j < paragraphMeasurement.measuredParagraphLineRanges.length; j++) {
+      const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[j];
+      const includedLineStartOffset = Math.max(measuredParagraphLineRange.startOffset, includedParagraphStartOffset);
+      const includedLineEndOffset = Math.min(measuredParagraphLineRange.endOffset, includedParagraphEndOffset);
+      if (includedLineStartOffset > measuredParagraphLineRange.endOffset || includedLineEndOffset < measuredParagraphLineRange.startOffset) {
+        continue;
+      }
+      const hasVisibleLineBreakPaddingIfEndOfLine =
+        (includedLineEndOffset === measuredParagraphLineRange.endOffset &&
+          measuredParagraphLineRange.endsWithLineBreak &&
+          !(includedLineEndOffset === includedParagraphEndOffset && isLastParagraphInRange)) ||
+        (includedLineEndOffset === includedParagraphEndOffset && !isLastParagraphInRange);
+      if (includedLineStartOffset === measuredParagraphLineRange.endOffset) {
+        if (hasVisibleLineBreakPaddingIfEndOfLine) {
+          let lineRect: ViewRectangle;
+          if (measuredParagraphLineRange.characterRectangles.length === 0) {
+            lineRect = makeViewRectangle(
+              measuredParagraphLineRange.boundingRect.left + relativeOffsetLeft,
+              measuredParagraphLineRange.boundingRect.top + relativeOffsetTop,
+              defaultVisibleLineBreakPadding,
+              measuredParagraphLineRange.boundingRect.height,
+            );
+          } else {
+            const lastCharacterBoundingRect = measuredParagraphLineRange.characterRectangles[measuredParagraphLineRange.characterRectangles.length - 1];
+            lineRect = makeViewRectangle(
+              lastCharacterBoundingRect.right + relativeOffsetLeft,
+              lastCharacterBoundingRect.top + relativeOffsetTop,
+              defaultVisibleLineBreakPadding,
+              lastCharacterBoundingRect.height,
+            );
+          }
+          viewRangeInfos.push({
+            rectangle: lineRect,
+            paragraphLineIndex: j,
+            startOffset: 0,
+            endOffset: 0,
+            paragraphReference,
+          });
+        }
+        continue;
+      }
+      const lineRectLeft =
+        (includedLineStartOffset === measuredParagraphLineRange.endOffset
+          ? measuredParagraphLineRange.characterRectangles[includedLineStartOffset - measuredParagraphLineRange.startOffset - 1].right
+          : measuredParagraphLineRange.characterRectangles[includedLineStartOffset - measuredParagraphLineRange.startOffset].left) + relativeOffsetLeft;
+      const lineRectTop = measuredParagraphLineRange.boundingRect.top + relativeOffsetTop;
+      const lineRectHeight = measuredParagraphLineRange.boundingRect.height;
+      let lineRectWidth: number =
+        includedLineStartOffset === includedLineEndOffset
+          ? 0
+          : measuredParagraphLineRange.characterRectangles[includedLineEndOffset - measuredParagraphLineRange.startOffset - 1].right +
+            relativeOffsetLeft -
+            lineRectLeft;
+      if (hasVisibleLineBreakPaddingIfEndOfLine) {
+        const visibleLineBreakPadding = measuredParagraphLineRange.boundingRect.width / measuredParagraphLineRange.characterRectangles.length;
+        lineRectWidth += visibleLineBreakPadding === 0 ? defaultVisibleLineBreakPadding : visibleLineBreakPadding;
+      } else if (includedLineStartOffset === includedLineEndOffset) {
+        continue;
+      }
+      viewRangeInfos.push({
+        rectangle: makeViewRectangle(lineRectLeft, lineRectTop, lineRectWidth, lineRectHeight),
+        paragraphLineIndex: j,
+        startOffset: includedLineStartOffset,
+        endOffset: includedLineEndOffset,
+        paragraphReference,
+      });
+    }
+    return viewRangeInfos;
+  }
+  #getBufferMarginTopBottom(): number {
+    return Math.min(300, window.innerHeight);
+  }
+  // TODO: check works when removing paragraphs?
   #makeViewCursorAndRangeInfosForRange(
     range: matita.Range,
     isAnchor: boolean,
@@ -5135,7 +5806,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
       observedParagraphReferences.push(paragraphReference);
     }
-    const marginTopBottom = Math.min(600, window.innerHeight);
+    const marginTopBottom = this.#getBufferMarginTopBottom();
     const makeIntersectionObserver = (): ReactiveIntersectionObserver => {
       const intersectionObserver = new ReactiveIntersectionObserver({
         rootMargin: `${marginTopBottom}px 0px`,
@@ -5181,7 +5852,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               newRenderedViewParagraphInfos.splice(currentRenderedIndex, 1);
               return;
             }
-            const { relativeOffsetLeft, relativeOffsetTop } = calculateRelativeOffsets();
+            const { relativeOffsetLeft, relativeOffsetTop } = this.#calculateRelativeOffsets();
             const viewRangeInfos = calculateViewRangeInfosForParagraphAtIndex(
               observedParagraphReferences.findIndex((observedParagraphReference) => {
                 return matita.areBlockReferencesAtSameBlock(observedParagraphReference, paragraphReference);
@@ -5211,7 +5882,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     observeParagraphs();
     // Intersection observer doesn't track correctly, so fix when scroll stops.
     pipe(
-      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable)),
+      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
       map((args) => args[0]),
       debounce(() => timer(100)),
       subscribe((event) => {
@@ -5243,77 +5914,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       } else {
         includedParagraphEndOffset = matita.getParagraphLength(paragraph);
       }
-      const defaultVisibleLineBreakPadding = 8;
-      const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
-      const viewRangeInfos: ViewRangeInfo[] = [];
-      for (let j = 0; j < paragraphMeasurement.measuredParagraphLineRanges.length; j++) {
-        const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[j];
-        const includedLineStartOffset = Math.max(measuredParagraphLineRange.startOffset, includedParagraphStartOffset);
-        const includedLineEndOffset = Math.min(measuredParagraphLineRange.endOffset, includedParagraphEndOffset);
-        if (includedLineStartOffset > measuredParagraphLineRange.endOffset || includedLineEndOffset < measuredParagraphLineRange.startOffset) {
-          continue;
-        }
-        const hasVisibleLineBreakPaddingIfEndOfLine =
-          (includedLineEndOffset === measuredParagraphLineRange.endOffset &&
-            measuredParagraphLineRange.endsWithLineBreak &&
-            !(includedLineEndOffset === includedParagraphEndOffset && i === lastParagraphIndex)) ||
-          (includedLineEndOffset === includedParagraphEndOffset && i !== lastParagraphIndex);
-        if (includedLineStartOffset === measuredParagraphLineRange.endOffset) {
-          if (hasVisibleLineBreakPaddingIfEndOfLine) {
-            let lineRect: ViewRectangle;
-            if (measuredParagraphLineRange.characterRectangles.length === 0) {
-              lineRect = makeViewRectangle(
-                measuredParagraphLineRange.boundingRect.left + relativeOffsetLeft,
-                measuredParagraphLineRange.boundingRect.top + relativeOffsetTop,
-                defaultVisibleLineBreakPadding,
-                measuredParagraphLineRange.boundingRect.height,
-              );
-            } else {
-              const lastCharacterBoundingRect = measuredParagraphLineRange.characterRectangles[measuredParagraphLineRange.characterRectangles.length - 1];
-              lineRect = makeViewRectangle(
-                lastCharacterBoundingRect.right + relativeOffsetLeft,
-                lastCharacterBoundingRect.top + relativeOffsetTop,
-                defaultVisibleLineBreakPadding,
-                lastCharacterBoundingRect.height,
-              );
-            }
-            viewRangeInfos.push({
-              rectangle: lineRect,
-              paragraphLineIndex: j,
-              startOffset: 0,
-              endOffset: 0,
-              paragraphReference,
-            });
-          }
-          continue;
-        }
-        const lineRectLeft =
-          (includedLineStartOffset === measuredParagraphLineRange.endOffset
-            ? measuredParagraphLineRange.characterRectangles[includedLineStartOffset - measuredParagraphLineRange.startOffset - 1].right
-            : measuredParagraphLineRange.characterRectangles[includedLineStartOffset - measuredParagraphLineRange.startOffset].left) + relativeOffsetLeft;
-        const lineRectTop = measuredParagraphLineRange.boundingRect.top + relativeOffsetTop;
-        const lineRectHeight = measuredParagraphLineRange.boundingRect.height;
-        let lineRectWidth: number =
-          includedLineStartOffset === includedLineEndOffset
-            ? 0
-            : measuredParagraphLineRange.characterRectangles[includedLineEndOffset - measuredParagraphLineRange.startOffset - 1].right +
-              relativeOffsetLeft -
-              lineRectLeft;
-        if (hasVisibleLineBreakPaddingIfEndOfLine) {
-          const visibleLineBreakPadding = measuredParagraphLineRange.boundingRect.width / measuredParagraphLineRange.characterRectangles.length;
-          lineRectWidth += visibleLineBreakPadding === 0 ? defaultVisibleLineBreakPadding : visibleLineBreakPadding;
-        } else if (includedLineStartOffset === includedLineEndOffset) {
-          continue;
-        }
-        viewRangeInfos.push({
-          rectangle: makeViewRectangle(lineRectLeft, lineRectTop, lineRectWidth, lineRectHeight),
-          paragraphLineIndex: j,
-          startOffset: includedLineStartOffset,
-          endOffset: includedLineEndOffset,
-          paragraphReference,
-        });
-      }
-      return viewRangeInfos;
+      return this.#calculateViewRangeInfosForParagraphAtBlockReference(
+        paragraphReference,
+        includedParagraphStartOffset,
+        includedParagraphEndOffset,
+        i === lastParagraphIndex,
+        relativeOffsetLeft,
+        relativeOffsetTop,
+      );
     };
     const focusPoint = matita.getFocusPointFromRange(range);
     matita.assertIsParagraphPoint(focusPoint);
@@ -5382,19 +5990,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       return viewCursorInfo;
     };
-    const calculateRelativeOffsets = (): { relativeOffsetLeft: number; relativeOffsetTop: number } => {
-      const scrollContainer = this.#getScrollContainer();
-      const { visibleLeft } = this.#getVisibleLeftAndRight();
-      const { visibleTop } = this.#getVisibleTopAndBottom();
-      const relativeOffsetLeft = scrollContainer.scrollLeft + visibleLeft;
-      const relativeOffsetTop = scrollContainer.scrollTop + visibleTop;
-      return {
-        relativeOffsetLeft,
-        relativeOffsetTop,
-      };
-    };
     const calculateViewCursorAndRangeInfosForKnownVisibleParagraphs = (visibleStartIndex: number, visibleEndIndex: number): ViewCursorAndRangeInfosForRange => {
-      const { relativeOffsetLeft, relativeOffsetTop } = calculateRelativeOffsets();
+      const { relativeOffsetLeft, relativeOffsetTop } = this.#calculateRelativeOffsets();
       const viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[] = [];
       if (direction === matita.RangeDirection.NeutralText) {
         const viewCursorInfo = calculateViewCursorInfoForFocusPoint(relativeOffsetLeft, relativeOffsetTop);

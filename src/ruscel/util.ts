@@ -85,29 +85,50 @@ function queueMicrotaskDisposable<T extends any[]>(callback: (...args: T) => voi
     callback(...args);
   });
 }
-function requestIdleCallbackDisposable(callback: IdleRequestCallback, options?: IdleRequestOptions) {
-  if (typeof requestIdleCallback === 'undefined') {
-    const disposable = Disposable(() => {
-      clearTimeout(timeoutId);
-    });
+let requestedShimmedIdleCallbacks = 0;
+let requestedShimmedIdleCallbacksFactor = 0;
+const shouldShimRequestIdleCallback = typeof requestIdleCallback === 'undefined';
+function requestIdleCallbackDisposable(callback: IdleRequestCallback, disposable: Disposable, options?: IdleRequestOptions): void {
+  if (!disposable.active) {
+    return;
+  }
+  if (shouldShimRequestIdleCallback) {
+    let ran = false;
+    requestedShimmedIdleCallbacks++;
+    requestedShimmedIdleCallbacksFactor = 1 / Math.sqrt(requestedShimmedIdleCallbacks + 1);
+    disposable.add(
+      Disposable(() => {
+        if (ran) {
+          return;
+        }
+        requestedShimmedIdleCallbacks--;
+        requestedShimmedIdleCallbacksFactor = 1 / Math.sqrt(requestedShimmedIdleCallbacks + 1);
+        clearTimeout(timeoutId);
+      }),
+    );
     const timeoutId = setTimeout(() => {
-      disposable.dispose();
-      const start = Date.now();
+      ran = true;
+      requestedShimmedIdleCallbacks--;
+      requestedShimmedIdleCallbacksFactor = 1 / Math.sqrt(requestedShimmedIdleCallbacks + 1);
+      const startTime = performance.now();
       callback({
         didTimeout: false,
-        timeRemaining: () => Math.max(0, 10 - start),
+        timeRemaining: () => Math.max(0, (startTime + 25 - performance.now()) * requestedShimmedIdleCallbacksFactor),
       });
-    }, 500);
-    return disposable;
+    }, 0);
+    return;
   }
-  const disposable = Disposable(() => {
-    cancelIdleCallback(requestId);
-  });
+  disposable.add(
+    Disposable(() => {
+      cancelIdleCallback(requestId);
+    }),
+  );
   const requestId = requestIdleCallback((deadline) => {
-    disposable.dispose();
+    if (!disposable.active) {
+      return;
+    }
     callback(deadline);
   }, options);
-  return disposable;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyMapFunction = (a: any) => any;

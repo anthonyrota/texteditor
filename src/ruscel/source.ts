@@ -88,7 +88,7 @@ function Source<T>(produce: (sink: Sink<T>) => void): Source<T> {
         // This can throw if one of the sink's parents is disposed but
         // the sink itself is not disposed yet, meaning while checking
         // if it is active, it disposes itself.
-        active = sink.active;
+        active = sink.active as boolean;
       } catch (innerError) {
         // This try/catch is to ensure that when sink.active throws
         // synchronously, the original error caught when calling the
@@ -132,6 +132,7 @@ function fromArray<T>(array: ArrayLike<T>): Source<T> {
     sink(End);
   });
 }
+function ofEvent<T>(event: End, schedule?: ScheduleFunction): Source<never>;
 function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T>;
 function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T> {
   if (schedule) {
@@ -150,7 +151,7 @@ function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T> {
 function combine<T extends unknown[]>(sources: { [K in keyof T]: Source<T[K]> }): Source<T>;
 function combine<T>(sources: Source<T>[]): Source<T[]> {
   if (sources.length === 0) {
-    return ofEvent(End);
+    return empty$;
   }
   return Source((sink) => {
     const valueMaybes: Maybe<T>[] = [];
@@ -524,60 +525,12 @@ function share(Distributor_ = Distributor): IdentityOperator {
     });
   };
 }
-function shareOnce<T>(Distributor_: () => Distributor<T>): Operator<T, T>;
-function shareOnce(Distributor_?: typeof Distributor): IdentityOperator;
-function shareOnce(Distributor_ = Distributor): IdentityOperator {
-  return <T>(source: Source<T>): Source<T> => {
-    const distributor = Distributor_<T>();
-    return pipe(
-      source,
-      share(() => distributor),
-    );
-  };
-}
-function sharePersist<T>(Distributor_: () => Distributor<T>): Operator<T, T>;
-function sharePersist(Distributor_?: typeof Distributor): IdentityOperator;
-function sharePersist(Distributor_ = Distributor): IdentityOperator {
-  return <T>(source: Source<T>): Source<T> => {
-    let distributor: Distributor<T> | undefined;
-    const shared = pipe(
-      source,
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      shareControlled(() => distributor!),
-    );
-    return Source((sink) => {
-      if (!distributor) {
-        distributor = Distributor_();
-      }
-      shared(sink);
-      shared.produce();
-    });
-  };
-}
-function shareTransform<T, U>(Distributor_: () => Distributor<T>, transform: (shared: Source<T>) => Source<U>): Operator<T, U>;
-function shareTransform<U>(Distributor_: typeof Distributor, transform: <T>(source: Source<T>) => Source<U>): <T>(shared: Source<T>) => Source<U>;
-function shareTransform<T, U>(Distributor_: () => Distributor<T>, transform: (shared: Source<T>) => Source<U>): Operator<T, U> {
-  return (source) =>
-    Source((sink) => {
-      const distributor = Distributor_();
-      let transformed: Source<U>;
-      try {
-        transformed = transform(distributor);
-      } catch (error) {
-        sink(Throw(error));
-        return;
-      }
-      transformed(sink);
-      sink.add(distributor);
-      source(distributor);
-    });
-}
 function timer(durationMs: number): Source<never> {
   return ofEvent(End, ScheduleTimeout(durationMs));
 }
 function take(amount: number): IdentityOperator {
   if (amount === 0) {
-    return () => ofEvent(End);
+    return () => empty$;
   }
   return <T>(source: Source<T>) =>
     Source<T>((sink) => {
@@ -599,19 +552,13 @@ function take(amount: number): IdentityOperator {
       source(sourceSink);
     });
 }
-function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading?: boolean, trailing?: boolean, emitPendingOnEnd?: boolean): Operator<T, T> {
-  leading ??= false;
-  trailing ??= true;
-  emitPendingOnEnd ??= false;
+// TODO: emitPendingOnEnd.
+function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading = false, trailing = true): Operator<T, T> {
   return (source) =>
     Source((sink) => {
       let debounceSink: Sink<unknown> | null = null;
       let trailingPush: Push<T> | null = null;
-      let endPush: Push<T> | null = null;
       const sourceSink = Sink<T>((event) => {
-        if (event.type === EndType && endPush) {
-          Push(endPush);
-        }
         if (event.type !== PushType) {
           sink(event);
           return;
@@ -625,29 +572,65 @@ function debounce<T>(getDurationSource: (value: T) => Source<unknown>, leading?:
             sink(event);
             return;
           }
+          const trailingPush_ = trailingPush;
           // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           const debounceSink_ = debounceSink!;
           debounceSink = null;
           debounceSink_.dispose();
-          if (trailingPush) {
-            sink(trailingPush);
-            endPush = null;
+          if (trailingPush_) {
+            trailingPush = null;
+            sink(trailingPush_);
           }
         });
+        sink.add(debounceSink);
         if (leading && !hasDebounceSink) {
           sink(event);
-        } else if (emitPendingOnEnd) {
-          endPush = event;
         }
         if (trailing) {
           if (!leading || hasDebounceSink) {
             trailingPush = event;
-            endPush = null;
           } else {
             trailingPush = null;
           }
         }
         getDurationSource(event.value)(debounceSink);
+      });
+      sink.add(sourceSink);
+      source(sourceSink);
+    });
+}
+// TODO: leading, trailing & emitPendingOnEnd.
+function throttle<T>(getDurationSource: (value: T) => Source<unknown>): Operator<T, T> {
+  return (source) =>
+    Source((sink) => {
+      let throttleSink: Sink<unknown> | null = null;
+      let pendingPush: Push<T> | null = null;
+      const sourceSink = Sink<T>((event) => {
+        if (event.type !== PushType) {
+          sink(event);
+          return;
+        }
+        pendingPush = event;
+        if (throttleSink) {
+          return;
+        }
+        throttleSink = Sink((event) => {
+          if (event.type === ThrowType) {
+            sink(event);
+            return;
+          }
+          const pendingPush_ = pendingPush;
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          const throttleSink_ = throttleSink!;
+          throttleSink = null;
+          throttleSink_.dispose();
+          if (pendingPush_) {
+            pendingPush = null;
+            sink(pendingPush_);
+          }
+        });
+        sink.add(throttleSink);
+        getDurationSource(event.value)(throttleSink);
       });
       sink.add(sourceSink);
       source(sourceSink);
@@ -808,7 +791,7 @@ function pluck<T, K extends keyof T>(key: K): Operator<T, T[K]> {
 function takeLast(amount: number): IdentityOperator {
   const amount_ = Math.floor(amount);
   if (amount_ < 1) {
-    return () => ofEvent(End);
+    return () => empty$;
   }
   return <T>(source: Source<T>) =>
     Source<T>((sink) => {
@@ -846,6 +829,36 @@ function takeUntil(stopSource: Source<unknown>): IdentityOperator {
       source(sink);
     });
 }
+function takeWhile<T, S extends T>(shouldContinue: (value: T, index: number) => value is S, includeLast?: false): Operator<T, S>;
+function takeWhile<T>(shouldContinue: (value: T, index: number) => unknown, includeLast?: boolean): Operator<T, T>;
+function takeWhile<T>(shouldContinue: (value: T, index: number) => unknown, includeLast?: boolean): Operator<T, T> {
+  return (source) =>
+    Source((sink) => {
+      let idx = 0;
+      const sourceSink = Sink<T>((event) => {
+        if (event.type === PushType) {
+          let keepGoing: unknown;
+          try {
+            keepGoing = shouldContinue(event.value, idx++);
+          } catch (error) {
+            sink(Throw(error));
+            return;
+          }
+          if (!keepGoing) {
+            if (includeLast) {
+              sink(event);
+            }
+            sink(End);
+            return;
+          }
+        }
+        sink(event);
+      });
+      sink.add(sourceSink);
+      source(sourceSink);
+    });
+}
+const empty$ = ofEvent(End);
 export {
   PushType,
   ThrowType,
@@ -883,9 +896,6 @@ export {
   type ControllableSource,
   shareControlled,
   share,
-  shareOnce,
-  sharePersist,
-  shareTransform,
   timer,
   take,
   debounce,
@@ -901,4 +911,7 @@ export {
   takeLast,
   windowScheduledBySource,
   takeUntil,
+  takeWhile,
+  empty$,
+  throttle,
 };

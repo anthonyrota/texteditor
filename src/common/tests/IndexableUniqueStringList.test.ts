@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, test } from '@jest/globals';
-import { ArrayIndexableUniqueStringList, AvlTreeIndexableUniqueStringList, IndexableUniqueStringList } from '../IndexableUniqueStringList';
+import { IndexableUniqueStringList } from '../IndexableUniqueStringList';
 let mw = 123456789;
 let mz = 987654321;
 const mask = 0xffffffff;
@@ -40,14 +40,11 @@ function areFailsEqual(fail1: Fail, fail2: Fail): boolean {
     })
   );
 }
-describe.each([
-  ['ArrayIndexableUniqueStringList', (values: string[]) => new ArrayIndexableUniqueStringList(values)],
-  ['AvlTreeIndexableUniqueStringList', (values: string[]) => new AvlTreeIndexableUniqueStringList(values)],
-])('%s', (name, makeImpl) => {
+describe('IndexableUniqueStringList', () => {
   const checkSame = (array: string[], impl: IndexableUniqueStringList) => {
     expect(impl.getLength()).toBe(array.length);
     expect(impl.toArray()).toEqual(array);
-    if (impl instanceof AvlTreeIndexableUniqueStringList) {
+    if (impl instanceof IndexableUniqueStringList) {
       impl.assertStructure();
     }
     for (let i = 0; i < array.length; i++) {
@@ -56,7 +53,7 @@ describe.each([
       expect(impl.indexOf(value)).toBe(i);
     }
   };
-  const failPath = path.join(__dirname, `${name}.fails.json`);
+  const failPath = path.join(__dirname, `IndexableUniqueStringList.fails.json`);
   const readFails = (): Fail[] => {
     if (fs.existsSync(failPath)) {
       return (JSON.parse(fs.readFileSync(failPath, 'utf8')) as { fails: Fail[] }).fails;
@@ -71,7 +68,7 @@ describe.each([
     test.each(fails.map((fail, i) => [i, fail] as const))('fail #%i', (_index, { mySeed, initialValues, ops }) => {
       seed(mySeed);
       const array = initialValues.slice();
-      const impl = makeImpl(initialValues);
+      const impl = new IndexableUniqueStringList(initialValues);
       checkSame(array, impl);
       ops.forEach((op) => {
         if (op.type === 'insert') {
@@ -95,7 +92,7 @@ describe.each([
     let charIndex = 100;
     const initialValues = chars.slice(0, charIndex);
     const array = initialValues.slice();
-    const impl = makeImpl(initialValues);
+    const impl = new IndexableUniqueStringList(initialValues);
     const multiOpCount = 50;
     const checkSameAndPersistIfFail = (): void => {
       try {
@@ -115,14 +112,14 @@ describe.each([
     while (charIndex < chars.length) {
       const r = random();
       if (r < 0.05 && charIndex <= chars.length - multiOpCount) {
-        const i = Math.floor(random() * (chars.length - multiOpCount + 1));
+        const i = Math.floor(random() * (array.length + 1));
         const charsToInsert = chars.slice(charIndex, charIndex + multiOpCount);
         charIndex += multiOpCount;
         impl.insertBefore(i, charsToInsert);
         array.splice(i, 0, ...charsToInsert);
         ops.push({ type: 'insert', at: i, chars: charsToInsert });
       } else if (r < 0.5) {
-        const i = Math.floor(random() * chars.length);
+        const i = Math.floor(random() * (array.length + 1));
         const charToInsert = chars[charIndex++];
         impl.insertBefore(i, [charToInsert]);
         array.splice(i, 0, charToInsert);

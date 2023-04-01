@@ -36,6 +36,7 @@ module.exports = {
       },
     ],
     '@typescript-eslint/no-empty-interface': ['warn', { allowSingleExtends: true }],
+    '@typescript-eslint/no-unnecessary-condition': ['error', { allowConstantLoopConditions: true }],
     'import/order': [
       'error',
       {

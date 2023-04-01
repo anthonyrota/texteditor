@@ -1,6 +1,6 @@
 import { Disposable, implDisposableMethods, DisposalError } from './disposable';
 import { isSome, Maybe, None, Some } from './maybe';
-import { PushType, Event, Push, Throw, End, Source, isSource, Sink, isSink, ThrowType, $$Sink, $$Source } from './source';
+import { PushType, Event, Push, Throw, End, Source, isSource, Sink, isSink, ThrowType, $$Sink, $$Source, EndType } from './source';
 import { asyncReportError, joinErrors } from './util';
 interface Distributor<T> extends Source<T>, Sink<T> {
   (eventOrSink: Event<T> | Sink<T>): void;
@@ -23,6 +23,7 @@ interface DistributorBasePrivateActiveState<T> {
   __sinksToAdd: SinkInfo<T>[];
   __eventsQueue: Event<T>[];
 }
+// TODO: Behaviour when disposing before ending.
 function DistributorBase<T>(): Distributor<T> {
   let distributingEvent = false;
   let sinkIndex = 0;
@@ -225,6 +226,9 @@ function Distributor<T>(): Distributor<T> {
     }, base),
   );
 }
+interface CurrentValueSource<T> extends Source<T> {
+  currentValue: T;
+}
 interface CurrentValueDistributor<T> extends Distributor<T> {
   currentValue: T;
 }
@@ -281,12 +285,44 @@ function CurrentAndPreviousValueDistributor<T>(initialValue: T, pushCurrentValue
   distributor.add(base);
   return distributor;
 }
+interface LastValueSource<T> extends Source<T> {
+  ended: boolean;
+  lastValue: Maybe<T>;
+}
+interface LastValueDistributor<T> extends Distributor<T> {
+  ended: boolean;
+  lastValue: Maybe<T>;
+}
+function LastValueDistributor<T>(initialValue: Maybe<T> = None, pushLastValue = true): LastValueDistributor<T> {
+  const base = Distributor<T>();
+  const distributor = markAsDistributor(
+    implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
+      if (typeof eventOrSink === 'function') {
+        if (pushLastValue && eventOrSink.active && isSome(distributor.lastValue)) {
+          eventOrSink(Push(distributor.lastValue.value));
+        }
+        base(eventOrSink);
+      } else {
+        if (eventOrSink.type === PushType) {
+          distributor.lastValue = Some(eventOrSink.value);
+        }
+        base(eventOrSink);
+      }
+    }, base),
+  ) as LastValueDistributor<T>;
+  distributor.lastValue = initialValue;
+  distributor.add(base);
+  return distributor;
+}
 export {
   markAsDistributor,
   isDistributor,
   DistributorBase,
   DistributorDistributionSinkDisposalError,
   Distributor,
+  type CurrentValueSource,
   CurrentValueDistributor,
   CurrentAndPreviousValueDistributor,
+  type LastValueSource,
+  LastValueDistributor,
 };

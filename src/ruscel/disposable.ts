@@ -10,57 +10,59 @@ interface Disposable {
   remove(child: Disposable): void;
   dispose(): void;
   [$$Disposable]: DisposableImplementationIdentifier;
-}
-interface DisposableImplementationBase extends Disposable {
-  __id: number;
-  __children_: () => DisposableImplementationBase[] | null;
-  __prepareForDisposal: () => void;
+  __$$DISPOSABLE$$_id: number;
+  __$$DISPOSABLE$$_children_: () => Disposable[] | null;
+  __$$DISPOSABLE$$_prepareForDisposal: () => void;
+  __$$DISPOSABLE$$_activeDescriptor?: FakeDisposableActiveDescriptor;
 }
 let lastId = 0;
-class RealDisposableImplementation implements DisposableImplementationBase {
-  public __id = ++lastId;
-  private __children: DisposableImplementationBase[] | null = [];
-  private __parents: DisposableImplementationBase[] | null = [];
-  private __markedForDisposal = false;
-  public [$$Disposable]: DisposableImplementationIdentifier.RealDisposable = DisposableImplementationIdentifier.RealDisposable;
-  constructor(private __onDispose?: () => void) {}
-  public get active(): boolean {
-    if (!this.__children) {
+class RealDisposableImplementation implements Disposable {
+  __$$DISPOSABLE$$_id = ++lastId;
+  #children: Disposable[] | null = [];
+  #parents: Disposable[] | null = [];
+  #markedForDisposal = false;
+  #onDispose: (() => void) | undefined;
+  [$$Disposable]: DisposableImplementationIdentifier.RealDisposable = DisposableImplementationIdentifier.RealDisposable;
+  constructor(__onDispose?: () => void) {
+    this.#onDispose = __onDispose;
+  }
+  get active(): boolean {
+    if (!this.#children) {
       return false;
     }
     // If a disposable is determined to not be active, it should be ensured
     // that its dispose method was called.
-    if (this.__markedForDisposal) {
+    if (this.#markedForDisposal) {
       this.dispose();
       return false;
     }
     return true;
   }
-  public __children_(): DisposableImplementationBase[] | null {
-    return this.__children;
+  __$$DISPOSABLE$$_children_(): Disposable[] | null {
+    return this.#children;
   }
-  public add(child: Disposable): void {
-    if (!this.__children) {
+  add(child: Disposable): void {
+    if (!this.#children) {
       child.dispose();
       return;
     }
-    if (!(child as DisposableImplementationBase).__children_()) {
+    if (!child.__$$DISPOSABLE$$_children_()) {
       return;
     }
-    if (this.__markedForDisposal) {
-      this.__children.push(child as DisposableImplementationBase);
+    if (this.#markedForDisposal) {
+      this.#children.push(child);
       // Already marked children as disposed -> have to manually here.
-      (child as DisposableImplementationBase).__prepareForDisposal();
+      child.__$$DISPOSABLE$$_prepareForDisposal();
       this.dispose();
       return;
     }
-    if ((child as DisposableImplementationBase).__id === this.__id) {
+    if (child.__$$DISPOSABLE$$_id === this.__$$DISPOSABLE$$_id) {
       return;
     }
-    this.__children.push(child as DisposableImplementationBase);
+    this.#children.push(child);
   }
-  public remove(child: Disposable): void {
-    if (this.__markedForDisposal) {
+  remove(child: Disposable): void {
+    if (this.#markedForDisposal) {
       // Note that there are two cases here:
       //     1. We have already been disposed, which means we have no
       //            children and should return.
@@ -74,33 +76,35 @@ class RealDisposableImplementation implements DisposableImplementationBase {
       //            disposed.
       return;
     }
-    if (!(child as DisposableImplementationBase).__children_()) {
+    if (!child.__$$DISPOSABLE$$_children_()) {
       return;
     }
+    // Note that this will only remove the specific instance revering to the Disposable, e.g. delineates between the fake and real implementation. This behavior
+    // is unstable and TBD.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const index = this.__children!.indexOf(child as DisposableImplementationBase);
+    const index = this.#children!.indexOf(child);
     if (index !== -1) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      this.__children!.splice(index, 1);
+      this.#children!.splice(index, 1);
     }
   }
-  public dispose(): void {
-    const children = this.__children;
+  dispose(): void {
+    const children = this.#children;
     if (!children) {
       return;
     }
     // Walk the tree of all children and mark that one of their parents
     // has been disposed.
-    this.__prepareForDisposal();
+    this.__$$DISPOSABLE$$_prepareForDisposal();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const parents = this.__parents!;
+    const parents = this.#parents!;
     const errors: unknown[] = [];
-    this.__children = null;
-    this.__parents = null;
+    this.#children = null;
+    this.#parents = null;
     for (let i = 0; i < parents.length; i++) {
       parents[i].remove(this);
     }
-    const onDispose = this.__onDispose;
+    const onDispose = this.#onDispose;
     if (onDispose) {
       try {
         onDispose();
@@ -119,15 +123,15 @@ class RealDisposableImplementation implements DisposableImplementationBase {
       throw new DisposalError(errors);
     }
   }
-  public __prepareForDisposal(): void {
-    if (this.__markedForDisposal) {
+  __$$DISPOSABLE$$_prepareForDisposal(): void {
+    if (this.#markedForDisposal) {
       return;
     }
-    this.__markedForDisposal = true;
+    this.#markedForDisposal = true;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const children = this.__children!;
+    const children = this.#children!;
     for (let i = 0; i < children.length; i++) {
-      children[i].__prepareForDisposal();
+      children[i].__$$DISPOSABLE$$_prepareForDisposal();
     }
   }
 }
@@ -136,9 +140,9 @@ interface FakeDisposableActiveDescriptor {
   enumerable: false;
   configurable: true;
 }
-interface FakeDisposableImplementation extends DisposableImplementationBase {
+interface FakeDisposableImplementation extends Disposable {
   [$$Disposable]: DisposableImplementationIdentifier.FakeDisposable;
-  __activeDescriptor: FakeDisposableActiveDescriptor;
+  __$$DISPOSABLE$$_activeDescriptor: FakeDisposableActiveDescriptor;
 }
 type DisposableImplementation = RealDisposableImplementation | FakeDisposableImplementation;
 // eslint-disable-next-line @typescript-eslint/unbound-method, @typescript-eslint/no-non-null-assertion
@@ -154,16 +158,16 @@ function implDisposableMethods<T extends object>(value: T, disposable = Disposab
       enumerable: false,
       configurable: true,
     };
-    fakeDisposable.__activeDescriptor = activeDescriptor;
+    fakeDisposable.__$$DISPOSABLE$$_activeDescriptor = activeDescriptor;
     Object.defineProperty(value, 'active', activeDescriptor);
     fakeDisposable.add = disposableImplementation.add.bind(disposableImplementation);
     fakeDisposable.remove = disposableImplementation.remove.bind(disposableImplementation);
     fakeDisposable.dispose = disposableImplementation.dispose.bind(disposableImplementation);
-    fakeDisposable.__children_ = disposableImplementation.__children_.bind(disposableImplementation);
-    fakeDisposable.__prepareForDisposal = disposableImplementation.__prepareForDisposal.bind(disposableImplementation);
+    fakeDisposable.__$$DISPOSABLE$$_children_ = disposableImplementation.__$$DISPOSABLE$$_children_.bind(disposableImplementation);
+    fakeDisposable.__$$DISPOSABLE$$_prepareForDisposal = disposableImplementation.__$$DISPOSABLE$$_prepareForDisposal.bind(disposableImplementation);
   } else {
-    const activeDescriptor = disposableImplementation.__activeDescriptor;
-    fakeDisposable.__activeDescriptor = activeDescriptor;
+    const activeDescriptor = disposableImplementation.__$$DISPOSABLE$$_activeDescriptor;
+    fakeDisposable.__$$DISPOSABLE$$_activeDescriptor = activeDescriptor;
     Object.defineProperty(value, 'active', activeDescriptor);
     // eslint-disable-next-line @typescript-eslint/unbound-method
     fakeDisposable.add = disposableImplementation.add;
@@ -171,20 +175,22 @@ function implDisposableMethods<T extends object>(value: T, disposable = Disposab
     fakeDisposable.remove = disposableImplementation.remove;
     // eslint-disable-next-line @typescript-eslint/unbound-method
     fakeDisposable.dispose = disposableImplementation.dispose;
-    fakeDisposable.__children_ = disposableImplementation.__children_;
-    fakeDisposable.__prepareForDisposal = disposableImplementation.__prepareForDisposal;
+    fakeDisposable.__$$DISPOSABLE$$_children_ = disposableImplementation.__$$DISPOSABLE$$_children_;
+    fakeDisposable.__$$DISPOSABLE$$_prepareForDisposal = disposableImplementation.__$$DISPOSABLE$$_prepareForDisposal;
   }
-  fakeDisposable.__id = disposableImplementation.__id;
+  fakeDisposable.__$$DISPOSABLE$$_id = disposableImplementation.__$$DISPOSABLE$$_id;
   return fakeDisposable as unknown as T & Disposable;
 }
 class DisposalError extends Error {
   name = 'DisposalError';
-  constructor(public errors: unknown[], options?: ErrorOptions) {
+  errors: unknown[];
+  constructor(errors: unknown[], options?: ErrorOptions) {
     const flattenedErrors = flattenDisposalErrors(errors);
     super(
       `Failed to dispose a resource. ${flattenedErrors.length} error${flattenedErrors.length === 1 ? ' was' : 's were'} caught.${joinErrors(flattenedErrors)}`,
       { cause: options?.cause !== undefined ? { errors, originalCause: options.cause } : { errors } },
     );
+    this.errors = errors;
   }
 }
 function flattenDisposalErrors(errors: unknown[]): unknown[] {
