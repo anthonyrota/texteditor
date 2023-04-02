@@ -5,7 +5,7 @@ import { UniqueStringQueue } from '../common/UniqueStringQueue';
 import { assert, assertIsNotNullish, assertUnreachable, groupConsecutiveItemsInArray, throwNotImplemented, throwUnreachable } from '../common/util';
 import { Disposable, DisposableClass, implDisposableMethods } from '../ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor } from '../ruscel/distributor';
-import { isNone } from '../ruscel/maybe';
+import { isNone, Maybe, None, Some } from '../ruscel/maybe';
 import { End, EndType, Push, PushType, subscribe, take, takeUntil, ThrowType } from '../ruscel/source';
 import { pipe, requestIdleCallbackDisposable } from '../ruscel/util';
 import * as matita from '.';
@@ -1142,14 +1142,25 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     };
     return implDisposableMethods(trackAllControlBase, disposable);
   }
-  findAllMatchesSync(): Map<string, ParagraphMatches> {
+  findAllMatchesSyncLimitedToMaxAmount(maxMatches: number): Maybe<Map<string, ParagraphMatches>> {
+    if (this.#searchPatterns.length === 0) {
+      return Some(new Map<string, ParagraphMatches>());
+    }
     const paragraphIdToParagraphMatches = new Map<string, ParagraphMatches>();
+    let totalMatches = 0;
     for (const paragraphReference of matita.iterContentSubParagraphs(this.#stateControl.stateView.document, this.#topLevelContentReference)) {
       const paragraphMatches = this.#getMatchesForParagraphAtBlockReference(paragraphReference, false);
+      if (paragraphMatches.matches.length === 0) {
+        continue;
+      }
+      totalMatches += paragraphMatches.matches.length;
+      if (totalMatches > maxMatches) {
+        return None;
+      }
       const paragraphId = matita.getBlockIdFromBlockReference(paragraphReference);
       paragraphIdToParagraphMatches.set(paragraphId, paragraphMatches);
     }
-    return paragraphIdToParagraphMatches;
+    return Some(paragraphIdToParagraphMatches);
   }
 }
 export {

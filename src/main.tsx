@@ -2,7 +2,7 @@ import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isSafari } from './common/browserDetection';
-import { makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
+import { isTermIntlWordLike, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
 import { LruCache } from './common/LruCache';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
@@ -43,6 +43,7 @@ import {
   startWith,
   subscribe,
   switchEach,
+  take,
   takeUntil,
   takeWhile,
   throttle,
@@ -458,16 +459,20 @@ interface ViewCursorAndRangeInfosForSelectionRange {
 interface ViewCursorAndRangeInfos {
   viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
 }
-function use$<T>(source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>), initialMaybe?: Some<T> | (() => Some<T>), updateSync?: boolean): Some<T>;
+function use$<T>(
+  source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
+  initialMaybe?: Some<T> | (() => Some<T>),
+  updateSync?: boolean | ((value: Maybe<T>) => boolean),
+): Some<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
-  updateSync?: boolean,
+  updateSync?: boolean | ((value: Maybe<T>) => boolean),
 ): Maybe<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
-  updateSync?: boolean,
+  updateSync?: boolean | ((value: Maybe<T>) => boolean),
 ): Maybe<T> {
   const [value, setValue] = useState<Maybe<T>>(initialMaybe ?? None);
   const isFirstUpdateRef = useRef(true);
@@ -485,7 +490,7 @@ function use$<T>(
         syncFirstMaybe = maybe;
         return;
       }
-      if (updateSync) {
+      if (typeof updateSync === 'function' ? updateSync(maybe) : updateSync) {
         flushSync(() => {
           setValue(maybe);
         });
@@ -677,6 +682,7 @@ interface SelectionOverlayMatchInfo {
 }
 interface SearchOverlayMessage {
   matchInfos: SelectionOverlayMatchInfo[];
+  renderSync: boolean;
 }
 interface SearchOverlayProps {
   searchOverlay$: Source<SearchOverlayMessage>;
@@ -693,7 +699,7 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
       [],
     ),
     undefined,
-    true,
+    (maybe) => isSome(maybe) && maybe.value.renderSync,
   );
   if (isNone(searchOverlayMaybe)) {
     return null;
@@ -868,44 +874,6 @@ function areViewRectanglesEqual(viewRectangle1: ViewRectangle, viewRectangle2: V
 function shiftViewRectangle(rectangle: ViewRectangle, deltaRight: number, deltaDown: number): ViewRectangle {
   return makeViewRectangle(rectangle.left + deltaRight, rectangle.top + deltaDown, rectangle.width, rectangle.height);
 }
-function getViewRectangleIntersection(rectangle1: ViewRectangle, rectangle2: ViewRectangle): ViewRectangle {
-  const x1 = Math.max(rectangle1.left, rectangle2.left);
-  const x2 = Math.min(rectangle1.right, rectangle2.right);
-  const y1 = Math.max(rectangle1.top, rectangle2.top);
-  const y2 = Math.min(rectangle1.bottom, rectangle2.bottom);
-  return makeViewRectangle(x1, y1, Math.max(0, x2 - x1), Math.max(0, y2 - y1));
-}
-function subtractViewRectangles(rectangle: ViewRectangle, holeRectangle: ViewRectangle): ViewRectangle[] {
-  const intersection = getViewRectangleIntersection(rectangle, holeRectangle);
-  if (intersection.width === 0 || intersection.height === 0) {
-    return [rectangle];
-  }
-  // -------------------------
-  // |          A            |
-  // |-----------------------|
-  // |  B  |   hole    |  C  |
-  // |-----------------------|
-  // |          D            |
-  // -------------------------
-  const rectangles: ViewRectangle[] = [];
-  const heightA = intersection.top - rectangle.top;
-  if (heightA > 0) {
-    rectangles.push(makeViewRectangle(rectangle.left, rectangle.top, rectangle.width, heightA));
-  }
-  const widthB = intersection.left - rectangle.left;
-  if (widthB > 0) {
-    rectangles.push(makeViewRectangle(rectangle.left, intersection.top, widthB, intersection.height));
-  }
-  const widthC = rectangle.right - intersection.right;
-  if (widthC > 0) {
-    rectangles.push(makeViewRectangle(intersection.right, intersection.top, widthC, intersection.height));
-  }
-  const heightD = rectangle.bottom - intersection.bottom;
-  if (heightD > 0) {
-    rectangles.push(makeViewRectangle(rectangle.left, intersection.bottom, rectangle.width, heightD));
-  }
-  return rectangles;
-}
 interface MeasuredParagraphLineRange {
   startOffset: number;
   endOffset: number;
@@ -982,6 +950,8 @@ enum StandardCommand {
   CollapseMultipleSelectionRangesToFocusRange = 'standard.collapseMultipleSelectionRangesToFocusRange',
   OpenSearch = 'standard.openSearch',
   CloseSearch = 'standard.closeSearch',
+  SelectAllInstancesOfWord = 'standard.selectAllInstancesOfWord',
+  SelectAllInstancesOfSearchQuery = 'standard.selectAllInstancesOfSearchQuery',
 }
 enum Platform {
   Apple = 'Apple',
@@ -1168,6 +1138,20 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   {
     key: 'Escape',
     command: StandardCommand.CloseSearch,
+    platform: Platform.Apple,
+    context: Context.Searching,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Shift+KeyL',
+    command: StandardCommand.SelectAllInstancesOfWord,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Shift+KeyL',
+    command: StandardCommand.SelectAllInstancesOfSearchQuery,
     platform: Platform.Apple,
     context: Context.Searching,
     cancelKeyEvent: true,
@@ -2655,16 +2639,29 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
+  // TODO.
   [StandardCommand.OpenSearch]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      documentRenderControl.openSearch();
+      stateControl.queueUpdate(documentRenderControl.openSearch());
     },
   },
   [StandardCommand.CloseSearch]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      documentRenderControl.closeSearch();
+      stateControl.queueUpdate(documentRenderControl.closeSearch());
+    },
+  },
+  [StandardCommand.SelectAllInstancesOfWord]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(documentRenderControl.selectAllInstancesOfWord());
+    },
+  },
+  [StandardCommand.SelectAllInstancesOfSearchQuery]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(documentRenderControl.selectAllInstancesOfSearchQuery());
     },
   },
 };
@@ -3299,6 +3296,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     });
     this.#searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
       matchInfos: [],
+      renderSync: false,
     });
     this.#relativeParagraphMeasurementCache = new LruCache(250);
     this.#keyCommands = defaultTextEditingKeyCommands;
@@ -4249,19 +4247,200 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addWindowEventListener('keydown', this.#onGlobalKeyDown.bind(this), this);
     addWindowEventListener('keyup', this.#onGlobalKeyUp.bind(this), this);
   }
-  openSearch(): void {
-    if (!this.#isSearchElementContainerVisible$.currentValue) {
-      this.#isSearchElementContainerVisible$(Push(true));
-    }
-    this.#searchInputRef.current?.select();
+  openSearch(): matita.RunUpdateFn {
+    return () => {
+      if (!this.#isSearchElementContainerVisible$.currentValue) {
+        this.#isSearchElementContainerVisible$(Push(true));
+      }
+      this.#searchInputRef.current?.select();
+    };
   }
-  closeSearch(): void {
-    if (this.#isSearchElementContainerVisible$.currentValue) {
-      this.#isSearchElementContainerVisible$(Push(false));
-    }
-    this.#inputTextElement.focus({
-      preventScroll: true,
-    });
+  closeSearch(): matita.RunUpdateFn {
+    return () => {
+      if (this.#isSearchElementContainerVisible$.currentValue) {
+        this.#isSearchElementContainerVisible$(Push(false));
+      }
+      this.#inputTextElement.focus({
+        preventScroll: true,
+      });
+    };
+  }
+  selectAllInstancesOfWord(): matita.RunUpdateFn {
+    return () => {
+      const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
+      if (!focusSelectionRange || focusSelectionRange.ranges.length > 1) {
+        return;
+      }
+      const focusRange = focusSelectionRange.ranges[0];
+      if (
+        !matita.isParagraphPoint(focusRange.startPoint) ||
+        !matita.isParagraphPoint(focusRange.endPoint) ||
+        !matita.areParagraphPointsAtSameParagraph(focusRange.startPoint, focusRange.endPoint)
+      ) {
+        return;
+      }
+      const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, focusRange.startPoint);
+      const extractText = (startOffset: number, endOffset: number): Maybe<string> => {
+        const inlineNodes = matita.sliceParagraphChildren(paragraph, startOffset, endOffset);
+        if (inlineNodes.some((inline) => matita.isVoid(inline))) {
+          return None;
+        }
+        return Some(inlineNodes.map((inline) => (inline as matita.Text<TextConfig>).text).join(''));
+      };
+      const extractTextIfWordLike = (startOffset: number, endOffset: number): Maybe<string> => {
+        const textMaybe = extractText(startOffset, endOffset);
+        if (isNone(textMaybe) || !isTermIntlWordLike(this.stateControl.stateControlConfig.IntlSegmenter, textMaybe.value)) {
+          return None;
+        }
+        return textMaybe;
+      };
+      let query: string;
+      let newFocusSelectionRange: matita.SelectionRange;
+      const firstPoint = focusRange.startPoint.offset < focusRange.endPoint.offset ? focusRange.startPoint : focusRange.endPoint;
+      const lastPoint = focusRange.startPoint.offset < focusRange.endPoint.offset ? focusRange.endPoint : focusRange.startPoint;
+      if (focusRange.startPoint.offset === focusRange.endPoint.offset) {
+        const prevFirstBounded = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.PreviousBoundByEdge)(
+          this.stateControl.stateView.document,
+          this.stateControl.stateControlConfig,
+          matita.SelectionRangeIntention.Text,
+          focusRange,
+          firstPoint,
+          focusSelectionRange,
+        );
+        const nextLastBounded = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.NextBoundByEdge)(
+          this.stateControl.stateView.document,
+          this.stateControl.stateControlConfig,
+          matita.SelectionRangeIntention.Text,
+          focusRange,
+          lastPoint,
+          focusSelectionRange,
+        );
+        if (
+          !matita.isParagraphPoint(prevFirstBounded.point) ||
+          !matita.areParagraphPointsAtSameParagraph(prevFirstBounded.point, focusRange.startPoint) ||
+          !matita.isParagraphPoint(nextLastBounded.point) ||
+          !matita.areParagraphPointsAtSameParagraph(nextLastBounded.point, focusRange.startPoint)
+        ) {
+          return;
+        }
+        let startOffset: number;
+        let endOffset: number;
+        if (matita.areParagraphPointsAtSameOffsetInSameParagraph(prevFirstBounded.point, nextLastBounded.point)) {
+          // At edge. Try forwards.
+          const nextLast = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next)(
+            this.stateControl.stateView.document,
+            this.stateControl.stateControlConfig,
+            matita.SelectionRangeIntention.Text,
+            focusRange,
+            lastPoint,
+            focusSelectionRange,
+          );
+          if (
+            !matita.isParagraphPoint(nextLast.point) ||
+            !matita.areParagraphPointsAtSameParagraph(nextLast.point, focusRange.startPoint) ||
+            !matita.areParagraphPointsAtSameParagraph(nextLast.point, nextLastBounded.point) ||
+            isNone(extractTextIfWordLike(prevFirstBounded.point.offset, nextLast.point.offset))
+          ) {
+            // Try backwards.
+            const prevFirst = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous)(
+              this.stateControl.stateView.document,
+              this.stateControl.stateControlConfig,
+              matita.SelectionRangeIntention.Text,
+              focusRange,
+              firstPoint,
+              focusSelectionRange,
+            );
+            if (
+              !matita.isParagraphPoint(prevFirst.point) ||
+              !matita.areParagraphPointsAtSameParagraph(prevFirst.point, focusRange.startPoint) ||
+              !matita.areParagraphPointsAtSameParagraph(prevFirst.point, prevFirstBounded.point) ||
+              isNone(extractTextIfWordLike(prevFirst.point.offset, nextLastBounded.point.offset))
+            ) {
+              return;
+            }
+            startOffset = prevFirst.point.offset;
+            endOffset = nextLastBounded.point.offset;
+          } else {
+            startOffset = prevFirstBounded.point.offset;
+            endOffset = nextLast.point.offset;
+          }
+        } else {
+          startOffset = prevFirstBounded.point.offset;
+          endOffset = nextLastBounded.point.offset;
+        }
+        const textMaybe = extractText(startOffset, endOffset);
+        if (isNone(textMaybe)) {
+          return;
+        }
+        const range = matita.makeRange(
+          focusRange.contentReference,
+          matita.changeParagraphPointOffset(focusRange.startPoint, startOffset),
+          matita.changeParagraphPointOffset(focusRange.endPoint, endOffset),
+          matita.generateId(),
+        );
+        newFocusSelectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+        query = textMaybe.value;
+      } else {
+        newFocusSelectionRange = focusSelectionRange;
+        const textMaybe = extractText(firstPoint.offset, lastPoint.offset);
+        if (isNone(textMaybe)) {
+          return;
+        }
+        query = textMaybe.value;
+      }
+      if (this.#searchInputRef.current) {
+        this.#searchInputRef.current.value = query;
+      }
+      this.#searchControl.query = query;
+      this.stateControl.queueUpdate(this.selectAllInstancesOfSearchQuery(newFocusSelectionRange));
+    };
+  }
+  selectAllInstancesOfSearchQuery(focusSelectionRange?: matita.SelectionRange): matita.RunUpdateFn {
+    return () => {
+      const paragraphIdToParagraphMatchesMapMaybe = this.#searchControl.findAllMatchesSyncLimitedToMaxAmount(200);
+      if (isNone(paragraphIdToParagraphMatchesMapMaybe)) {
+        // TODO: Show feedback.
+        return;
+      }
+      const paragraphIdToParagraphMatchesMap = paragraphIdToParagraphMatchesMapMaybe.value;
+      if (paragraphIdToParagraphMatchesMap.size === 0) {
+        return;
+      }
+      const selectionRanges: matita.SelectionRange[] = [];
+      let matchingFocusSelectionRangeWithIndex: [selectionRange: matita.SelectionRange, index: number] | null = null;
+      for (const [paragraphId, paragraphMatches] of paragraphIdToParagraphMatchesMap) {
+        const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
+        const contentReference = matita.makeContentReferenceFromContent(
+          matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+        );
+        for (let i = 0; i < paragraphMatches.matches.length; i++) {
+          const match = paragraphMatches.matches[i];
+          const { startOffset, endOffset } = match;
+          const range = matita.makeRange(
+            contentReference,
+            matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, startOffset),
+            matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, endOffset),
+            matita.generateId(),
+          );
+          const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+          if (focusSelectionRange && matita.areSelectionRangesCoveringSameContent(selectionRange, focusSelectionRange)) {
+            matchingFocusSelectionRangeWithIndex = [focusSelectionRange, selectionRanges.length];
+            selectionRanges.push(focusSelectionRange);
+          } else {
+            selectionRanges.push(selectionRange);
+          }
+        }
+      }
+      if (matchingFocusSelectionRangeWithIndex !== null) {
+        selectionRanges[matchingFocusSelectionRangeWithIndex[1]] = matita.regenerateSelectionRangeCreatedAtTimestamp(
+          matchingFocusSelectionRangeWithIndex[0],
+          true,
+        );
+      }
+      const selection = matita.makeSelection(selectionRanges);
+      this.stateControl.delta.setSelection(selection);
+      this.#inputTextElement.focus();
+    };
   }
   #onInputElementFocus(): void {
     // TODO.
@@ -5558,6 +5737,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#searchOverlay$(
         Push({
           matchInfos: [],
+          renderSync: false,
         }),
       );
       return;
@@ -5615,6 +5795,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#searchOverlay$(
       Push({
         matchInfos,
+        renderSync: !this.#isSearchFocused(),
       }),
     );
   }

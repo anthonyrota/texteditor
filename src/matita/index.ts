@@ -2103,12 +2103,13 @@ function makeSelectionRange(
   data: SelectionRangeData,
   id: string,
   regenerateTimestamp?: boolean,
+  regenerateTimestampAddEpsilon?: boolean,
 ): SelectionRange {
   assert(ranges.length > 0, 'SelectionRange must have at least one range.', {
     cause: { ranges, anchorRangeId, focusRangeId, id },
   });
   if (regenerateTimestamp || !(SelectionRangeDataCreatedAtKey in data)) {
-    data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() };
+    data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() + (regenerateTimestampAddEpsilon ? 0.1 : 0) };
   }
   return {
     ranges,
@@ -2118,6 +2119,18 @@ function makeSelectionRange(
     data,
     id,
   };
+}
+function regenerateSelectionRangeCreatedAtTimestamp(selectionRange: SelectionRange, addEpsilon: boolean): SelectionRange {
+  return makeSelectionRange(
+    selectionRange.ranges,
+    selectionRange.anchorRangeId,
+    selectionRange.focusRangeId,
+    selectionRange.intention,
+    selectionRange.data,
+    selectionRange.id,
+    true,
+    addEpsilon,
+  );
 }
 function getAnchorPointFromRange(anchorRange: Range): StartOfContentPoint | BlockPoint | ParagraphPoint {
   return isStartOfContentPoint(anchorRange.startPoint) && !isEndOfContentPoint(anchorRange.endPoint) ? anchorRange.endPoint : anchorRange.startPoint;
@@ -8070,4 +8083,5 @@ export {
   iterEmbedSubParagraphs,
   iterContentSubBlocks,
   iterEmbedSubBlocks,
+  regenerateSelectionRangeCreatedAtTimestamp,
 };

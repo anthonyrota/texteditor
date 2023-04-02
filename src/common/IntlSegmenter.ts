@@ -24,4 +24,16 @@ function makePromiseResolvingToNativeIntlSegmenterOrPolyfill(): Promise<IntlSegm
   IntlSegmenterPromise = createIntlSegmenterPolyfill() as unknown as Promise<IntlSegmenterConstructor>;
   return IntlSegmenterPromise;
 }
-export { type IntlSegments, type IntlSegmenter, type IntlSegmenterConstructor, makePromiseResolvingToNativeIntlSegmenterOrPolyfill };
+function isTermIntlWordLike(IntlSegmenter: IntlSegmenterConstructor, term: string): boolean {
+  const wordSegmenter = new IntlSegmenter(undefined, {
+    granularity: 'word',
+  });
+  const segments = wordSegmenter.segment(term);
+  for (const segment of segments) {
+    if (!segment.isWordLike) {
+      return false;
+    }
+  }
+  return true;
+}
+export { type IntlSegments, type IntlSegmenter, type IntlSegmenterConstructor, makePromiseResolvingToNativeIntlSegmenterOrPolyfill, isTermIntlWordLike };
