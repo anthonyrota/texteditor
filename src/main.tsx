@@ -2,7 +2,7 @@ import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isSafari } from './common/browserDetection';
-import { isTermIntlWordLike, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
+import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
 import { LruCache } from './common/LruCache';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
@@ -835,13 +835,14 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
           color: '#fff',
           flexGrow: 1,
           marginRight: '0.25em',
+          minWidth: 0,
         }}
         onChange={(event) => {
           query$(Push(event.target.value));
         }}
         ref={inputRef}
       />
-      <span style={{ marginRight: '0.25em', color: '#aaa' }}>
+      <span style={{ marginRight: '0.25em', color: '#aaa', whiteSpace: 'nowrap' }}>
         {isSome(matchNumberMaybe) ? matchNumberMaybe.value : '?'} of {isSome(totalMatchesMaybe) ? totalMatchesMaybe.value : '?'}
       </span>
     </div>
@@ -4280,6 +4281,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return;
       }
       const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, focusRange.startPoint);
+      let wordSegmenter: IntlSegmenter | null = null;
+      const makeWordSegmenter = (): IntlSegmenter => {
+        if (wordSegmenter === null) {
+          wordSegmenter = new this.stateControl.stateControlConfig.IntlSegmenter(undefined, {
+            granularity: 'word',
+          });
+        }
+        return wordSegmenter;
+      };
       const extractText = (startOffset: number, endOffset: number): Maybe<string> => {
         const inlineNodes = matita.sliceParagraphChildren(paragraph, startOffset, endOffset);
         if (inlineNodes.some((inline) => matita.isVoid(inline))) {
@@ -4287,9 +4297,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
         return Some(inlineNodes.map((inline) => (inline as matita.Text<TextConfig>).text).join(''));
       };
+      function isTermIntlWordLike(term: string): boolean {
+        const wordSegmenter = makeWordSegmenter();
+        const segments = wordSegmenter.segment(term);
+        for (const segment of segments) {
+          if (!segment.isWordLike) {
+            return false;
+          }
+        }
+        return true;
+      }
       const extractTextIfWordLike = (startOffset: number, endOffset: number): Maybe<string> => {
         const textMaybe = extractText(startOffset, endOffset);
-        if (isNone(textMaybe) || !isTermIntlWordLike(this.stateControl.stateControlConfig.IntlSegmenter, textMaybe.value)) {
+        if (isNone(textMaybe) || !isTermIntlWordLike(textMaybe.value)) {
           return None;
         }
         return textMaybe;
@@ -4325,6 +4345,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
         let startOffset: number;
         let endOffset: number;
+        let traceWord = false;
         if (matita.areParagraphPointsAtSameOffsetInSameParagraph(prevFirstBounded.point, nextLastBounded.point)) {
           // At edge. Try forwards.
           const nextLast = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next)(
@@ -4367,10 +4388,26 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         } else {
           startOffset = prevFirstBounded.point.offset;
           endOffset = nextLastBounded.point.offset;
+          traceWord = true;
         }
-        const textMaybe = extractText(startOffset, endOffset);
+        let textMaybe = extractText(startOffset, endOffset);
         if (isNone(textMaybe)) {
           return;
+        }
+        if (traceWord) {
+          const segmenter = makeWordSegmenter();
+          const segments = segmenter.segment(textMaybe.value);
+          for (const segment of segments) {
+            if (segment.isWordLike) {
+              startOffset += segment.index;
+              endOffset = startOffset + segment.segment.length;
+              textMaybe = extractText(startOffset, endOffset);
+              if (isNone(textMaybe)) {
+                return;
+              }
+              break;
+            }
+          }
         }
         const range = matita.makeRange(
           focusRange.contentReference,

@@ -24,16 +24,4 @@ function makePromiseResolvingToNativeIntlSegmenterOrPolyfill(): Promise<IntlSegm
   IntlSegmenterPromise = createIntlSegmenterPolyfill() as unknown as Promise<IntlSegmenterConstructor>;
   return IntlSegmenterPromise;
 }
-function isTermIntlWordLike(IntlSegmenter: IntlSegmenterConstructor, term: string): boolean {
-  const wordSegmenter = new IntlSegmenter(undefined, {
-    granularity: 'word',
-  });
-  const segments = wordSegmenter.segment(term);
-  for (const segment of segments) {
-    if (!segment.isWordLike) {
-      return false;
-    }
-  }
-  return true;
-}
-export { type IntlSegments, type IntlSegmenter, type IntlSegmenterConstructor, makePromiseResolvingToNativeIntlSegmenterOrPolyfill, isTermIntlWordLike };
+export { type IntlSegments, type IntlSegmenter, type IntlSegmenterConstructor, makePromiseResolvingToNativeIntlSegmenterOrPolyfill };

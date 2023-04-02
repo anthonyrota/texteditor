@@ -2109,7 +2109,7 @@ function makeSelectionRange(
     cause: { ranges, anchorRangeId, focusRangeId, id },
   });
   if (regenerateTimestamp || !(SelectionRangeDataCreatedAtKey in data)) {
-    data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() + (regenerateTimestampAddEpsilon ? 0.1 : 0) };
+    data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() + (regenerateTimestampAddEpsilon ? 1 : 0) };
   }
   return {
     ranges,
