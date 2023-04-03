@@ -1087,11 +1087,10 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         return;
       }
       while (deadline.timeRemaining() > 0) {
-        const paragraphIdMaybe = this.#pendingParagraphIds.shift();
-        if (isNone(paragraphIdMaybe)) {
+        const paragraphId = this.#pendingParagraphIds.shift();
+        if (paragraphId === null) {
           break;
         }
-        const paragraphId = paragraphIdMaybe.value;
         const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
         const { matches } = this.#getMatchesForParagraphAtBlockReference(paragraphReference, false);
         this.#paragraphMatchCounts.setCount(paragraphId, matches.length);
