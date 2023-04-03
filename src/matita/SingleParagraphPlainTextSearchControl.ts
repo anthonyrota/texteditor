@@ -51,13 +51,21 @@ interface TrackAllControlBase {
   totalMatches$: CurrentValueSource<number>;
 }
 interface TrackAllControl extends TrackAllControlBase, Disposable {}
-interface TextPart {
+class TextPart {
   text: string;
   startOffset: number;
   endOffset: number;
+  constructor(text: string, startOffset: number, endOffset: number) {
+    this.text = text;
+    this.startOffset = startOffset;
+    this.endOffset = endOffset;
+  }
 }
-interface TextPartGroup {
+class TextPartGroup {
   textParts: TextPart[];
+  constructor(textParts: TextPart[]) {
+    this.textParts = textParts;
+  }
 }
 function normalizePunctuation(char: string): string {
   return char.replace(/[^\p{L}\p{N}\s]/gu, '');
@@ -98,18 +106,11 @@ function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextS
       previousNormalizedTextPart.text += normalizedChar;
       previousNormalizedTextPart.endOffset = endOffset;
     } else {
-      normalizedTextParts.push({
-        text: normalizedChar,
-        startOffset: segmentOffset,
-        endOffset: endOffset,
-      });
+      normalizedTextParts.push(new TextPart(normalizedChar, textPart.startOffset + segmentOffset, textPart.startOffset + endOffset));
     }
     previousNormalizedEndOffset = segmentOffset + normalizedChar.length;
   }
   return normalizedTextParts;
-}
-function normalizeTextParts(textParts: TextPart[], config: SingleParagraphPlainTextSearchControlConfig, graphemeSegmenter: IntlSegmenter): TextPart[] {
-  return textParts.flatMap((textPart) => normalizeTextPart(textPart, config, graphemeSegmenter));
 }
 function normalizeQuery(query: string, config: SingleParagraphPlainTextSearchControlConfig, graphemeSegmenter: IntlSegmenter): string {
   return normalizeTextPart({ text: query, startOffset: 0, endOffset: query.length }, config, graphemeSegmenter)
@@ -607,7 +608,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     matita.assertIsParagraph(paragraph);
     const textPartGroups: TextPartGroup[] = [];
     if (ignoreVoids) {
-      const textParts: TextPart[] = [];
+      const normalizedTextParts: TextPart[] = [];
       const inlineGroups = groupConsecutiveItemsInArray(
         paragraph.children,
         (inline) => inline.type,
@@ -627,18 +628,15 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
           groupText += textNode.text;
         }
         const endOffset = startOffset + groupText.length;
-        textParts.push({
-          text: groupText,
-          startOffset,
-          endOffset,
-        });
+        const textPart = new TextPart(groupText, startOffset, endOffset);
+        const subNormalizedTextParts = normalizeTextPart(textPart, this.#config, this.#graphemeSegmenter);
+        for (let j = 0; j < subNormalizedTextParts.length; j++) {
+          normalizedTextParts.push(subNormalizedTextParts[j]);
+        }
         startOffset = endOffset;
       }
-      const normalizedTextParts = normalizeTextParts(textParts, this.#config, this.#graphemeSegmenter);
       if (normalizedTextParts.length > 0) {
-        textPartGroups.push({
-          textParts: normalizedTextParts,
-        });
+        textPartGroups.push(new TextPartGroup(normalizedTextParts));
       }
     } else {
       let startOffset = 0;
@@ -650,16 +648,10 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
         const { text } = inline;
         const endOffset = startOffset + text.length;
-        const textPart: TextPart = {
-          text,
-          startOffset,
-          endOffset,
-        };
-        const textParts: TextPart[] = [textPart];
-        if (normalizeTextParts.length > 0) {
-          textPartGroups.push({
-            textParts: normalizeTextParts(textParts, this.#config, this.#graphemeSegmenter),
-          });
+        const textPart = new TextPart(text, startOffset, endOffset);
+        const normalizedTextParts = normalizeTextPart(textPart, this.#config, this.#graphemeSegmenter);
+        if (normalizedTextParts.length > 0) {
+          textPartGroups.push(new TextPartGroup(normalizedTextParts));
         }
         startOffset = endOffset;
       }
@@ -828,7 +820,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         if (matita.isParagraph(firstBlock)) {
           const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
           const startOffset = matita.isParagraphPoint(firstPoint) ? firstPoint.offset : 0;
-          const matchIndex = matches.findIndex((match) => startOffset <= match.endOffset);
+          const matchIndex = matches.findIndex((match) => startOffset < match.endOffset);
           if (matchIndex !== -1) {
             const match = matches[matchIndex];
             if (strategy === WrapCurrentOrSearchFurtherMatchStrategy.WrapCurrentOrSearchFurther) {
@@ -936,7 +928,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
           let matchIndex = -1;
           for (let i = matches.length - 1; i >= 0; i--) {
             const match = matches[i];
-            if (endOffset >= match.startOffset) {
+            if (endOffset > match.startOffset) {
               matchIndex = i;
               break;
             }
