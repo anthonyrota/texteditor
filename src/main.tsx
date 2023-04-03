@@ -3426,6 +3426,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #matchNumberMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
   #totalMatchesMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
   #isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
+  #renderSearchOverlayAsync = false;
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
     this.#topLevelContentViewContainerElement = document.createElement('div');
@@ -4211,6 +4212,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
         const query = event.value;
         this.#searchControl.query = query;
+        this.#renderSearchOverlayAsync = true;
         this.stateControl.queueUpdate(() => {
           // TODO: This is a hack to queue onFinishedUpdating.
         });
@@ -5901,6 +5903,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
+    const message = event.value;
     if (isSafari) {
       this.#syncInputElement();
       if (this.#isSearchElementContainerVisible$.currentValue) {
@@ -6016,6 +6019,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #trackMatchIndexDisposable: Disposable | null = null;
   #replaceVisibleSearchResults(): void {
+    const renderSync = !this.#renderSearchOverlayAsync;
+    this.#renderSearchOverlayAsync = false;
     this.#trackMatchIndexDisposable?.dispose();
     this.#matchNumberMaybe$(Push(None));
     if (!this.#isSearchElementContainerVisible$.currentValue) {
@@ -6023,7 +6028,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#searchOverlay$(
         Push({
           matchInfos: [],
-          renderSync: false,
+          renderSync,
         }),
       );
       return;
@@ -6149,7 +6154,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#searchOverlay$(
       Push({
         matchInfos,
-        renderSync: !this.#isSearchFocused(),
+        renderSync,
       }),
     );
   }
