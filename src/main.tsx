@@ -736,7 +736,7 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
                 left: rectangle.left,
                 width: rectangle.width,
                 height: rectangle.height,
-                backgroundColor: hasFocus ? '#aa77ff66' : isSelected ? '#aa77ff33' : '#f5c6ec99',
+                backgroundColor: hasFocus ? '#aa77ff99' : isSelected ? '#aa77ff66' : '#f5c6ec99',
               }}
             />
           );
@@ -4142,8 +4142,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#containerHtmlElement.append(
       this.#inputTextElementMeasurementElement,
       this.#topLevelContentViewContainerElement,
-      this.#selectionViewContainerElement,
       this.#searchOverlayContainerElement,
+      this.#selectionViewContainerElement,
       this.#inputTextElement,
       this.#searchElementContainerElement,
     );

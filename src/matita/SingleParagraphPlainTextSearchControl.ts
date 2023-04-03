@@ -359,7 +359,8 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
                         nextBlockReference = matita.makeBlockReferenceFromBlockPoint(nextPoint);
                         const block = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, nextBlockReference);
                         if (matita.isParagraph(block)) {
-                          insertBeforeIndex = matita.getIndexOfBlockInContentFromBlockReference(this.#stateControl.stateView.document, nextBlockReference);
+                          // Subtract one because the inserted block isn't accounted for yet.
+                          insertBeforeIndex = matita.getIndexOfBlockInContentFromBlockReference(this.#stateControl.stateView.document, nextBlockReference) - 1;
                           break;
                         }
                         if (previousBlockReference !== null) {
@@ -460,7 +461,8 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
           nextBlockReference = matita.makeBlockReferenceFromBlockPoint(nextPoint);
           const block = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, nextBlockReference);
           if (matita.isParagraph(block)) {
-            insertBeforeIndex = matita.getIndexOfBlockInContentFromBlockReference(this.#stateControl.stateView.document, nextBlockReference);
+            // Subtract one because the inserted block isn't accounted for yet.
+            insertBeforeIndex = matita.getIndexOfBlockInContentFromBlockReference(this.#stateControl.stateView.document, nextBlockReference) - 1;
             break;
           }
           if (previousBlockReference !== null) {
@@ -1135,8 +1137,11 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
           recalculateIndex$,
           takeUntil(this.#endPendingQueries),
           subscribe((event) => {
-            if (event.type !== PushType) {
-              throwUnreachable();
+            if (event.type === ThrowType) {
+              throw event.error;
+            }
+            if (event.type === EndType) {
+              return;
             }
             assertIsNotNullish(this.#paragraphMatchCounts);
             totalMatchesBeforeParagraph$(Push(this.#paragraphMatchCounts.calculatePrefixSumBefore(paragraphId)));

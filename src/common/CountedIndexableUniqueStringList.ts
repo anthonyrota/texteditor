@@ -2,7 +2,7 @@ import { assert, assertIsNotNullish } from '../common/util';
 class CountedIndexableUniqueStringList {
   #valueToNode = Object.create(null) as Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
   #root: AvlTreeCountedIndexableUniqueStringListNode = new AvlTreeCountedIndexableUniqueStringListLeafNode(null, this.#valueToNode);
-  constructor(valuesAndCounts: Iterable<[value: string, count: number]>) {
+  constructor(valuesAndCounts: Iterable<readonly [value: string, count: number]>) {
     let i = 0;
     for (const valueAndCount of valuesAndCounts) {
       this.#root = this.#root.insertBefore(i++, valueAndCount[0], valueAndCount[1]);
@@ -16,7 +16,7 @@ class CountedIndexableUniqueStringList {
     const node = (this.#root as AvlTreeCountedIndexableUniqueStringListInternalNode).getNodeAt(index);
     return [node.value, node.count];
   }
-  insertBefore(index: number, valuesAndCounts: [value: string, count: number][]): void {
+  insertBefore(index: number, valuesAndCounts: (readonly [value: string, count: number])[]): void {
     assert(0 <= index && index <= this.#root.size);
     for (let i = 0; i < valuesAndCounts.length; i++) {
       const valueAndCount = valuesAndCounts[i];
@@ -67,7 +67,7 @@ class CountedIndexableUniqueStringList {
     let prefixSum = node.left.totalCount;
     while (node.parent !== null) {
       if (node === node.parent.right) {
-        prefixSum += node.parent.left.totalCount;
+        prefixSum += node.parent.left.totalCount + node.parent.count;
       }
       node = node.parent;
     }
@@ -179,6 +179,7 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
         temp = temp.left as AvlTreeCountedIndexableUniqueStringListInternalNode;
       }
       this.value = temp.value;
+      this.count = temp.count;
       this.right = (this.right as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(0);
       this.#valueToNode[this.value] = this;
     }
