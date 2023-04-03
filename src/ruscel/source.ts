@@ -148,7 +148,7 @@ function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T> {
     sink(End);
   });
 }
-function combine<T extends unknown[]>(sources: { [K in keyof T]: Source<T[K]> }): Source<T>;
+function combine<T extends readonly unknown[]>(sources: { [K in keyof T]: Source<T[K]> }): Source<T>;
 function combine<T>(sources: Source<T>[]): Source<T[]> {
   if (sources.length === 0) {
     return empty$;

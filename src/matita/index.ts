@@ -2095,6 +2095,7 @@ interface SelectionRange {
   readonly id: string;
 }
 const SelectionRangeDataCreatedAtKey = 'createdAt';
+let timestamp = 0;
 function makeSelectionRange(
   ranges: readonly Range[],
   anchorRangeId: string,
@@ -2103,13 +2104,12 @@ function makeSelectionRange(
   data: SelectionRangeData,
   id: string,
   regenerateTimestamp?: boolean,
-  regenerateTimestampAddEpsilon?: boolean,
 ): SelectionRange {
   assert(ranges.length > 0, 'SelectionRange must have at least one range.', {
     cause: { ranges, anchorRangeId, focusRangeId, id },
   });
   if (regenerateTimestamp || !(SelectionRangeDataCreatedAtKey in data)) {
-    data = { ...data, [SelectionRangeDataCreatedAtKey]: performance.now() + (regenerateTimestampAddEpsilon ? 1 : 0) };
+    data = { ...data, [SelectionRangeDataCreatedAtKey]: timestamp++ };
   }
   return {
     ranges,
@@ -2120,7 +2120,7 @@ function makeSelectionRange(
     id,
   };
 }
-function regenerateSelectionRangeCreatedAtTimestamp(selectionRange: SelectionRange, addEpsilon: boolean): SelectionRange {
+function regenerateSelectionRangeCreatedAtTimestamp(selectionRange: SelectionRange): SelectionRange {
   return makeSelectionRange(
     selectionRange.ranges,
     selectionRange.anchorRangeId,
@@ -2129,7 +2129,6 @@ function regenerateSelectionRangeCreatedAtTimestamp(selectionRange: SelectionRan
     selectionRange.data,
     selectionRange.id,
     true,
-    addEpsilon,
   );
 }
 function getAnchorPointFromRange(anchorRange: Range): StartOfContentPoint | BlockPoint | ParagraphPoint {
@@ -7673,6 +7672,31 @@ function* iterEmbedSubBlocks(
     yield* iterContentSubBlocks(document, contentReference);
   }
 }
+function* iterContentSubBlocksBackwards(
+  document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
+  contentReference: ContentReference,
+): IterableIterator<BlockReference> {
+  const numBlocks = getNumberOfBlocksInContentAtContentReference(document, contentReference);
+  for (let j = numBlocks - 1; j >= 0; j--) {
+    const subBlock = accessBlockAtIndexInContentAtContentReference(document, contentReference, j);
+    const subBlockReference = makeBlockReferenceFromBlock(subBlock);
+    yield subBlockReference;
+    if (isEmbed(subBlock)) {
+      yield* iterEmbedSubBlocksBackwards(document, subBlockReference);
+    }
+  }
+}
+function* iterEmbedSubBlocksBackwards(
+  document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
+  embedReference: BlockReference,
+): IterableIterator<BlockReference> {
+  const numContents = getNumberOfEmbedContentsInEmbedAtBlockReference(document, embedReference);
+  for (let i = numContents - 1; i >= 0; i--) {
+    const content = accessContentAtIndexInEmbedAtBlockReference(document, embedReference, i);
+    const contentReference = makeContentReferenceFromContent(content);
+    yield* iterContentSubBlocksBackwards(document, contentReference);
+  }
+}
 function* iterContentSubParagraphs(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
   contentReference: ContentReference,
@@ -8084,4 +8108,6 @@ export {
   iterContentSubBlocks,
   iterEmbedSubBlocks,
   regenerateSelectionRangeCreatedAtTimestamp,
+  iterContentSubBlocksBackwards,
+  iterEmbedSubBlocksBackwards,
 };

@@ -24,7 +24,7 @@ class CountedIndexableUniqueStringList {
     }
   }
   remove(fromIndex: number, toIndexInclusive: number): void {
-    assert(0 < fromIndex && fromIndex <= toIndexInclusive && toIndexInclusive < this.#root.size);
+    assert(0 <= fromIndex && fromIndex <= toIndexInclusive && toIndexInclusive < this.#root.size);
     for (let i = fromIndex; i <= toIndexInclusive; i++) {
       this.#root = (this.#root as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(fromIndex);
     }

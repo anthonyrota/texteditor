@@ -35,19 +35,19 @@ interface ParagraphMatch {
 interface ParagraphMatches {
   matches: ParagraphMatch[];
 }
-enum WrapCurrentOrFindNextMatchStrategy {
-  WrapCurrentOrFindNext = 'WrapCurrentOrFindNext',
-  WrapCurrentIfNotExactOrFindNext = 'WrapCurrentIfNotExactOrFindNext',
+enum WrapCurrentOrSearchFurtherMatchStrategy {
+  WrapCurrentOrSearchFurther = 'WrapCurrentOrSearchFurther',
+  WrapCurrentIfNotExactOrSearchFurther = 'WrapCurrentIfNotExactOrSearchFurther',
 }
-interface WrapCurrentOrFindNextMatchResult {
+interface WrapCurrentOrSearchFurtherMatchResult {
   match: ParagraphMatch;
   matchIndex: number;
 }
 interface TrackAllControlBase {
-  wrapCurrentOrFindNextMatchSync(
-    selectionRange: matita.SelectionRange,
-    strategy: WrapCurrentOrFindNextMatchStrategy,
-  ): CurrentValueSource<WrapCurrentOrFindNextMatchResult> | null;
+  trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange: (
+    paragraphReference: matita.BlockReference,
+    disposable: Disposable,
+  ) => CurrentValueSource<number>;
   totalMatches$: CurrentValueSource<number>;
 }
 interface TrackAllControl extends TrackAllControlBase, Disposable {}
@@ -115,66 +115,6 @@ function normalizeQuery(query: string, config: SingleParagraphPlainTextSearchCon
   return normalizeTextPart({ text: query, startOffset: 0, endOffset: query.length }, config, graphemeSegmenter)
     .map((textPart) => textPart.text)
     .join('');
-}
-function* iterParagraphsInRange(
-  document: matita.Document<matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig>,
-  range: matita.Range,
-): IterableIterator<{
-  paragraphReference: matita.BlockReference;
-  startOffset: number;
-  endOffset: number;
-  firstParagraphIndex: number;
-  lastParagraphIndex: number;
-  paragraphIndex: number;
-}> {
-  const { contentReference, startPoint, endPoint } = range;
-  const direction = matita.getRangeDirection(document, range);
-  if (direction === matita.RangeDirection.NeutralEmptyContent) {
-    return;
-  }
-  const firstPoint = direction === matita.RangeDirection.Backwards ? endPoint : startPoint;
-  const lastPoint = direction === matita.RangeDirection.Backwards ? startPoint : endPoint;
-  const firstParagraphIndex = matita.isStartOfContentPoint(firstPoint)
-    ? 0
-    : matita.isEndOfContentPoint(firstPoint)
-    ? matita.getNumberOfBlocksInContentAtContentReference(document, contentReference)
-    : matita.getIndexOfBlockInContentFromBlockReference(
-        document,
-        matita.isParagraphPoint(firstPoint) ? matita.makeBlockReferenceFromParagraphPoint(firstPoint) : matita.makeBlockReferenceFromBlockPoint(firstPoint),
-      );
-  const lastParagraphIndex = matita.isStartOfContentPoint(lastPoint)
-    ? 0
-    : matita.isEndOfContentPoint(lastPoint)
-    ? matita.getNumberOfBlocksInContentAtContentReference(document, contentReference)
-    : matita.getIndexOfBlockInContentFromBlockReference(
-        document,
-        matita.isParagraphPoint(lastPoint) ? matita.makeBlockReferenceFromParagraphPoint(lastPoint) : matita.makeBlockReferenceFromBlockPoint(lastPoint),
-      );
-  for (let paragraphIndex = firstParagraphIndex; paragraphIndex <= lastParagraphIndex; paragraphIndex++) {
-    const block = matita.accessBlockAtIndexInContentAtContentReference(document, contentReference, paragraphIndex);
-    if (matita.isEmbed(block)) {
-      continue;
-    }
-    const paragraphReference = matita.makeBlockReferenceFromBlock(block);
-    if (paragraphIndex === firstParagraphIndex) {
-      if (matita.isParagraphPoint(firstPoint)) {
-        if (paragraphIndex === lastParagraphIndex && matita.isParagraphPoint(lastPoint)) {
-          yield { paragraphReference, startOffset: firstPoint.offset, endOffset: lastPoint.offset, firstParagraphIndex, lastParagraphIndex, paragraphIndex };
-        }
-        yield {
-          paragraphReference,
-          startOffset: firstPoint.offset,
-          endOffset: matita.getParagraphLength(block),
-          firstParagraphIndex,
-          lastParagraphIndex,
-          paragraphIndex,
-        };
-      }
-    } else if (paragraphIndex === lastParagraphIndex && matita.isParagraphPoint(lastPoint)) {
-      yield { paragraphReference, startOffset: 0, endOffset: lastPoint.offset, firstParagraphIndex, lastParagraphIndex, paragraphIndex };
-    }
-    yield { paragraphReference, startOffset: 0, endOffset: matita.getParagraphLength(block), firstParagraphIndex, lastParagraphIndex, paragraphIndex };
-  }
 }
 class AlreadyTrackingAllError extends Error {
   name = 'AlreadyTrackingAllError';
@@ -288,9 +228,9 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         if (event.type !== PushType) {
           throwUnreachable();
         }
+        this.#endPendingQueries(Push(undefined));
         assertIsNotNullish(this.#pendingParagraphIds);
         assertIsNotNullish(this.#paragraphMatchCounts);
-        this.#endPendingQueries(Push(undefined));
         const message = event.value;
         for (let i = 0; i < message.viewDelta.changes.length; i++) {
           const change = message.viewDelta.changes[i];
@@ -844,64 +784,65 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         (startPoint.offset === match.endOffset && endPoint.offset === match.startOffset))
     );
   }
-  #wrapCurrentOrFindNextMatchWithIndexInParagraphSync(
-    selectionRange: matita.SelectionRange,
-    strategy: WrapCurrentOrFindNextMatchStrategy,
-  ): WrapCurrentOrFindNextMatchResult | null {
+  #wrapCurrentOrFindNextMatchSync(
+    selectionRange: matita.SelectionRange | null,
+    strategy: WrapCurrentOrSearchFurtherMatchStrategy,
+  ): WrapCurrentOrSearchFurtherMatchResult | null {
     if (this.#searchPatterns.length === 0) {
       return null;
     }
-    let foundExactMatchInPreviousParagraph = false;
-    const firstRange = selectionRange.ranges[0];
-    const firstRangeDirection = matita.getRangeDirection(this.#stateControl.stateView.document, firstRange);
     let blockReference: matita.BlockReference | null = null;
-    if (firstRangeDirection === matita.RangeDirection.NeutralEmptyContent) {
-      const previousBlockPoint = matita.accessLastPreviousPointToContentAtContentReference(
-        this.#stateControl.stateView.document,
-        firstRange.contentReference,
-        matita.SelectionRangeIntention.Block,
-      ) as matita.BlockPoint | null;
-      assert(previousBlockPoint === null || matita.isBlockPoint(previousBlockPoint));
-      if (previousBlockPoint !== null) {
-        blockReference = matita.makeBlockReferenceFromBlockPoint(previousBlockPoint);
-      }
-    } else {
-      const firstPoint = firstRangeDirection === matita.RangeDirection.Backwards ? firstRange.endPoint : firstRange.startPoint;
-      const firstPointIndex = matita.isStartOfContentPoint(firstPoint)
-        ? 0
-        : matita.isEndOfContentPoint(firstPoint)
-        ? matita.getNumberOfBlocksInContentAtContentReference(this.#stateControl.stateView.document, firstRange.contentReference) - 1
-        : matita.getIndexOfBlockInContentFromBlockReference(
-            this.#stateControl.stateView.document,
-            matita.isParagraphPoint(firstPoint) ? matita.makeBlockReferenceFromParagraphPoint(firstPoint) : matita.makeBlockReferenceFromBlockPoint(firstPoint),
-          );
-      const firstBlock = matita.accessBlockAtIndexInContentAtContentReference(
-        this.#stateControl.stateView.document,
-        firstRange.contentReference,
-        firstPointIndex,
-      );
-      blockReference = matita.makeBlockReferenceFromBlock(firstBlock);
-      if (matita.isParagraph(firstBlock)) {
-        const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
-        const startOffset = matita.isParagraphPoint(firstPoint) ? firstPoint.offset : 0;
-        const matchIndex = matches.findIndex((match) => startOffset <= match.endOffset);
-        if (matchIndex !== -1) {
-          const match = matches[matchIndex];
-          if (strategy === WrapCurrentOrFindNextMatchStrategy.WrapCurrentOrFindNext) {
-            return { match, matchIndex };
-          }
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          if (strategy !== WrapCurrentOrFindNextMatchStrategy.WrapCurrentIfNotExactOrFindNext) {
-            assertUnreachable(strategy);
-          }
-          const isExactMatch = this.getIsExactMatch(selectionRange, match);
-          if (!isExactMatch) {
-            return { match, matchIndex };
-          }
-          if (matchIndex === matches.length - 1) {
-            foundExactMatchInPreviousParagraph = true;
-          } else {
-            return { match, matchIndex };
+    if (selectionRange) {
+      const firstRange = selectionRange.ranges[0];
+      const firstRangeDirection = matita.getRangeDirection(this.#stateControl.stateView.document, firstRange);
+      if (firstRangeDirection === matita.RangeDirection.NeutralEmptyContent) {
+        const previousBlockPoint = matita.accessLastPreviousPointToContentAtContentReference(
+          this.#stateControl.stateView.document,
+          firstRange.contentReference,
+          matita.SelectionRangeIntention.Block,
+        ) as matita.BlockPoint | null;
+        assert(previousBlockPoint === null || matita.isBlockPoint(previousBlockPoint));
+        if (previousBlockPoint !== null) {
+          blockReference = matita.makeBlockReferenceFromBlockPoint(previousBlockPoint);
+        }
+      } else {
+        const firstPoint = firstRangeDirection === matita.RangeDirection.Backwards ? firstRange.endPoint : firstRange.startPoint;
+        const firstPointIndex = matita.isStartOfContentPoint(firstPoint)
+          ? 0
+          : matita.isEndOfContentPoint(firstPoint)
+          ? matita.getNumberOfBlocksInContentAtContentReference(this.#stateControl.stateView.document, firstRange.contentReference) - 1
+          : matita.getIndexOfBlockInContentFromBlockReference(
+              this.#stateControl.stateView.document,
+              matita.isParagraphPoint(firstPoint)
+                ? matita.makeBlockReferenceFromParagraphPoint(firstPoint)
+                : matita.makeBlockReferenceFromBlockPoint(firstPoint),
+            );
+        const firstBlock = matita.accessBlockAtIndexInContentAtContentReference(
+          this.#stateControl.stateView.document,
+          firstRange.contentReference,
+          firstPointIndex,
+        );
+        blockReference = matita.makeBlockReferenceFromBlock(firstBlock);
+        if (matita.isParagraph(firstBlock)) {
+          const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+          const startOffset = matita.isParagraphPoint(firstPoint) ? firstPoint.offset : 0;
+          const matchIndex = matches.findIndex((match) => startOffset <= match.endOffset);
+          if (matchIndex !== -1) {
+            const match = matches[matchIndex];
+            if (strategy === WrapCurrentOrSearchFurtherMatchStrategy.WrapCurrentOrSearchFurther) {
+              return { match, matchIndex };
+            }
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            if (strategy !== WrapCurrentOrSearchFurtherMatchStrategy.WrapCurrentIfNotExactOrSearchFurther) {
+              assertUnreachable(strategy);
+            }
+            const isExactMatch = this.getIsExactMatch(selectionRange, match);
+            if (!isExactMatch) {
+              return { match, matchIndex };
+            }
+            if (matchIndex < matches.length - 1) {
+              return { match: matches[matchIndex + 1], matchIndex: matchIndex + 1 };
+            }
           }
         }
       }
@@ -927,22 +868,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         if (matches.length === 0) {
           continue;
         }
-        if (foundExactMatchInPreviousParagraph || strategy === WrapCurrentOrFindNextMatchStrategy.WrapCurrentOrFindNext) {
-          return { match: matches[0], matchIndex: 0 };
-        }
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (strategy !== WrapCurrentOrFindNextMatchStrategy.WrapCurrentIfNotExactOrFindNext) {
-          assertUnreachable(strategy);
-        }
-        const isExactMatch = this.getIsExactMatch(selectionRange, matches[0]);
-        if (!isExactMatch) {
-          return { match: matches[0], matchIndex: 0 };
-        }
-        if (matches.length === 1) {
-          foundExactMatchInPreviousParagraph = true;
-        } else {
-          return { match: matches[1], matchIndex: 1 };
-        }
+        return { match: matches[0], matchIndex: 0 };
       }
     }
     for (const blockReference of matita.iterContentSubBlocks(this.#stateControl.stateView.document, this.#topLevelContentReference)) {
@@ -961,30 +887,131 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
         continue;
       }
-      if (foundExactMatchInPreviousParagraph || strategy === WrapCurrentOrFindNextMatchStrategy.WrapCurrentOrFindNext) {
-        return { match: matches[0], matchIndex: 0 };
-      }
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (strategy !== WrapCurrentOrFindNextMatchStrategy.WrapCurrentIfNotExactOrFindNext) {
-        assertUnreachable(strategy);
-      }
-      const isExactMatch = this.getIsExactMatch(selectionRange, matches[0]);
-      if (!isExactMatch) {
-        return { match: matches[0], matchIndex: 0 };
-      }
-      if (matches.length === 1) {
-        if (isLast) {
-          return { match: matches[0], matchIndex: 0 };
-        }
-        foundExactMatchInPreviousParagraph = true;
-      } else {
-        return { match: matches[1], matchIndex: 1 };
-      }
+      return { match: matches[0], matchIndex: 0 };
     }
     return null;
   }
-  wrapCurrentOrFindNextMatchSync(selectionRange: matita.SelectionRange, strategy: WrapCurrentOrFindNextMatchStrategy): ParagraphMatch | null {
-    const result = this.#wrapCurrentOrFindNextMatchWithIndexInParagraphSync(selectionRange, strategy);
+  #wrapCurrentOrFindPreviousMatchSync(
+    selectionRange: matita.SelectionRange | null,
+    strategy: WrapCurrentOrSearchFurtherMatchStrategy,
+  ): WrapCurrentOrSearchFurtherMatchResult | null {
+    if (this.#searchPatterns.length === 0) {
+      return null;
+    }
+    let blockReference: matita.BlockReference | null = null;
+    if (selectionRange) {
+      const firstRange = selectionRange.ranges[0];
+      const firstRangeDirection = matita.getRangeDirection(this.#stateControl.stateView.document, firstRange);
+      if (firstRangeDirection === matita.RangeDirection.NeutralEmptyContent) {
+        const nextBlockPoint = matita.accessFirstNextPointToContentAtContentReference(
+          this.#stateControl.stateView.document,
+          firstRange.contentReference,
+          matita.SelectionRangeIntention.Block,
+        ) as matita.BlockPoint | null;
+        assert(nextBlockPoint === null || matita.isBlockPoint(nextBlockPoint));
+        if (nextBlockPoint !== null) {
+          blockReference = matita.makeBlockReferenceFromBlockPoint(nextBlockPoint);
+        }
+      } else {
+        const lastPoint = firstRangeDirection === matita.RangeDirection.Backwards ? firstRange.startPoint : firstRange.endPoint;
+        const lastPointIndex = matita.isStartOfContentPoint(lastPoint)
+          ? 0
+          : matita.isEndOfContentPoint(lastPoint)
+          ? matita.getNumberOfBlocksInContentAtContentReference(this.#stateControl.stateView.document, firstRange.contentReference) - 1
+          : matita.getIndexOfBlockInContentFromBlockReference(
+              this.#stateControl.stateView.document,
+              matita.isParagraphPoint(lastPoint) ? matita.makeBlockReferenceFromParagraphPoint(lastPoint) : matita.makeBlockReferenceFromBlockPoint(lastPoint),
+            );
+        const lastBlock = matita.accessBlockAtIndexInContentAtContentReference(
+          this.#stateControl.stateView.document,
+          firstRange.contentReference,
+          lastPointIndex,
+        );
+        blockReference = matita.makeBlockReferenceFromBlock(lastBlock);
+        if (matita.isParagraph(lastBlock)) {
+          const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+          const endOffset = matita.isParagraphPoint(lastPoint) ? lastPoint.offset : matita.getParagraphLength(lastBlock);
+          let matchIndex = -1;
+          for (let i = matches.length - 1; i >= 0; i--) {
+            const match = matches[i];
+            if (endOffset >= match.startOffset) {
+              matchIndex = i;
+              break;
+            }
+          }
+          if (matchIndex !== -1) {
+            const match = matches[matchIndex];
+            if (strategy === WrapCurrentOrSearchFurtherMatchStrategy.WrapCurrentOrSearchFurther) {
+              return { match, matchIndex };
+            }
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            if (strategy !== WrapCurrentOrSearchFurtherMatchStrategy.WrapCurrentIfNotExactOrSearchFurther) {
+              assertUnreachable(strategy);
+            }
+            const isExactMatch = this.getIsExactMatch(selectionRange, match);
+            if (!isExactMatch) {
+              return { match, matchIndex };
+            }
+            if (matchIndex > 0) {
+              return { match: matches[matchIndex - 1], matchIndex: matchIndex - 1 };
+            }
+          }
+        }
+      }
+    }
+    const lastBlockReferenceOnSecondIteration = blockReference;
+    if (blockReference !== null) {
+      while (true) {
+        const previousBlockPoint = matita.accessLastPreviousPointToBlockAtBlockReference(
+          this.#stateControl.stateView.document,
+          blockReference,
+          matita.SelectionRangeIntention.Block,
+        ) as matita.BlockPoint | null;
+        assert(previousBlockPoint === null || matita.isBlockPoint(previousBlockPoint));
+        if (previousBlockPoint === null) {
+          break;
+        }
+        blockReference = matita.makeBlockReferenceFromBlockPoint(previousBlockPoint);
+        const block = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, blockReference);
+        if (matita.isEmbed(block)) {
+          continue;
+        }
+        const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+        if (matches.length === 0) {
+          continue;
+        }
+        return { match: matches[matches.length - 1], matchIndex: matches.length - 1 };
+      }
+    }
+    for (const blockReference of matita.iterContentSubBlocksBackwards(this.#stateControl.stateView.document, this.#topLevelContentReference)) {
+      const isLast = lastBlockReferenceOnSecondIteration !== null && matita.areBlockReferencesAtSameBlock(blockReference, lastBlockReferenceOnSecondIteration);
+      const block = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, blockReference);
+      if (matita.isEmbed(block)) {
+        if (isLast) {
+          break;
+        }
+        continue;
+      }
+      const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+      if (matches.length === 0) {
+        if (isLast) {
+          break;
+        }
+        continue;
+      }
+      return { match: matches[matches.length - 1], matchIndex: matches.length - 1 };
+    }
+    return null;
+  }
+  wrapCurrentOrFindNextMatchSync(selectionRange: matita.SelectionRange | null, strategy: WrapCurrentOrSearchFurtherMatchStrategy): ParagraphMatch | null {
+    const result = this.#wrapCurrentOrFindNextMatchSync(selectionRange, strategy);
+    if (result === null) {
+      return null;
+    }
+    return result.match;
+  }
+  wrapCurrentOrFindPreviousMatchSync(selectionRange: matita.SelectionRange | null, strategy: WrapCurrentOrSearchFurtherMatchStrategy): ParagraphMatch | null {
+    const result = this.#wrapCurrentOrFindPreviousMatchSync(selectionRange, strategy);
     if (result === null) {
       return null;
     }
@@ -1099,19 +1126,12 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     );
     const totalMatches$ = CurrentValueDistributor(this.#paragraphMatchCounts.getTotalCount());
     const trackAllControlBase: TrackAllControlBase = {
-      wrapCurrentOrFindNextMatchSync: (selectionRange, strategy) => {
+      trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange: (paragraphReference, matchDisposable) => {
         assertIsNotNullish(this.#paragraphMatchCounts);
-        const matchWithIndexInParagraph = this.#wrapCurrentOrFindNextMatchWithIndexInParagraphSync(selectionRange, strategy);
-        if (matchWithIndexInParagraph === null) {
-          return null;
-        }
-        const { match, matchIndex: matchIndexInParagraph } = matchWithIndexInParagraph;
-        const { paragraphReference } = match;
         const paragraphId = matita.getBlockIdFromBlockReference(paragraphReference);
-        const matchWithIndex$ = CurrentValueDistributor<WrapCurrentOrFindNextMatchResult>({
-          match,
-          matchIndex: this.#paragraphMatchCounts.calculatePrefixSumBefore(paragraphId) + matchIndexInParagraph,
-        });
+        const totalMatchesBeforeParagraph$ = CurrentValueDistributor<number>(this.#paragraphMatchCounts.calculatePrefixSumBefore(paragraphId));
+        matchDisposable.add(totalMatchesBeforeParagraph$);
+        disposable.add(totalMatchesBeforeParagraph$);
         pipe(
           recalculateIndex$,
           takeUntil(this.#endPendingQueries),
@@ -1120,23 +1140,17 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
               throwUnreachable();
             }
             assertIsNotNullish(this.#paragraphMatchCounts);
-            matchWithIndex$(
-              Push({
-                match,
-                matchIndex: this.#paragraphMatchCounts.calculatePrefixSumBefore(paragraphId) + matchIndexInParagraph,
-              }),
-            );
-          }, disposable),
+            totalMatchesBeforeParagraph$(Push(this.#paragraphMatchCounts.calculatePrefixSumBefore(paragraphId)));
+          }, totalMatchesBeforeParagraph$),
         );
         pipe(
           this.#endPendingQueries,
           subscribe((event) => {
             assert(event.type === PushType);
-            matchWithIndex$(End);
-          }, matchWithIndex$),
+            totalMatchesBeforeParagraph$(End);
+          }, totalMatchesBeforeParagraph$),
         );
-        disposable.add(matchWithIndex$);
-        return matchWithIndex$;
+        return totalMatchesBeforeParagraph$;
       },
       totalMatches$,
     };
@@ -1168,7 +1182,7 @@ export {
   type SingleParagraphPlainTextSearchControlConfig,
   type ParagraphMatch,
   type ParagraphMatches,
-  WrapCurrentOrFindNextMatchStrategy,
-  type WrapCurrentOrFindNextMatchResult,
+  WrapCurrentOrSearchFurtherMatchStrategy,
+  type WrapCurrentOrSearchFurtherMatchResult,
   type TrackAllControl,
 };
