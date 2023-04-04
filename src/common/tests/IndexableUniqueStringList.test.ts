@@ -44,9 +44,7 @@ describe('IndexableUniqueStringList', () => {
   const checkSame = (array: string[], impl: IndexableUniqueStringList) => {
     expect(impl.getLength()).toBe(array.length);
     expect(impl.toArray()).toEqual(array);
-    if (impl instanceof IndexableUniqueStringList) {
-      impl.assertStructure();
-    }
+    impl.assertStructure();
     for (let i = 0; i < array.length; i++) {
       const value = array[i];
       expect(impl.access(i)).toBe(value);

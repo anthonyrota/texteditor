@@ -12,7 +12,7 @@ class UniqueStringQueue {
   #firstNode: LinkedListNode | null = null;
   #valueToNode = Object.create(null) as Record<string, LinkedListNode | undefined>;
   #queueLength: number;
-  constructor(values: IterableIterator<string>) {
+  constructor(values: Iterable<string>) {
     let lastNode: LinkedListNode | null = null;
     this.#queueLength = 0;
     for (const value of values) {
@@ -50,8 +50,8 @@ class UniqueStringQueue {
       if (nextNode === null) {
         this.#firstNode = null;
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.#firstNode = this.#firstNode!.nextNode;
+        nextNode.previousNode = null;
+        this.#firstNode = nextNode;
       }
     } else {
       if (nextNode === null) {
@@ -70,11 +70,23 @@ class UniqueStringQueue {
     this.#queueLength--;
     const { value, nextNode } = this.#firstNode;
     delete this.#valueToNode[value];
+    if (nextNode !== null) {
+      nextNode.previousNode = null;
+    }
     this.#firstNode = nextNode;
     return value;
   }
   getQueueLength(): number {
     return this.#queueLength;
+  }
+  toArray(): string[] {
+    const values: string[] = [];
+    let node = this.#firstNode;
+    while (node !== null) {
+      values.push(node.value);
+      node = node.nextNode;
+    }
+    return values;
   }
 }
 export { UniqueStringQueue };

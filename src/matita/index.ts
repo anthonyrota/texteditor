@@ -2256,13 +2256,13 @@ interface BaseRenderControl<MyDocumentRenderControl extends DocumentRenderContro
   makeDocumentRenderControl(rootHtmlElement: HTMLElement): MyDocumentRenderControl;
 }
 enum ViewDeltaChangeType {
-  BlocksInserted = 'BlockInserted',
-  BlocksMoved = 'BlockMoved',
+  BlocksInserted = 'BlocksInserted',
+  BlocksMoved = 'BlocksMoved',
   BlockConfigOrParagraphChildrenUpdated = 'BlockConfigOrParagraphChildrenUpdated',
-  BlocksRemoved = 'BlockRemoved',
-  ContentsInserted = 'ContentInserted',
+  BlocksRemoved = 'BlocksRemoved',
+  ContentsInserted = 'ContentsInserted',
   ContentConfigUpdated = 'ContentConfigUpdated',
-  ContentsRemoved = 'ContentRemoved',
+  ContentsRemoved = 'ContentsRemoved',
   DocumentConfigUpdated = 'DocumentConfigUpdated',
 }
 // TODO.
