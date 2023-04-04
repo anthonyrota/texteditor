@@ -6,6 +6,7 @@ import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } fr
 import { LruCache } from './common/LruCache';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
+import { accessContentFromContentReference } from './matita';
 import {
   SingleParagraphPlainTextSearchControl,
   SingleParagraphPlainTextSearchControlConfig,
@@ -13,7 +14,7 @@ import {
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
-import { CurrentAndPreviousValueDistributor, CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
+import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
 import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
 import {
@@ -81,14 +82,19 @@ interface TextElementInfo {
 class VirtualizedParagraphRenderControl extends DisposableClass implements matita.ParagraphRenderControl {
   paragraphReference: matita.BlockReference;
   #viewControl: VirtualizedViewControl;
-  containerHtmlElement$: CurrentAndPreviousValueDistributor<HTMLElement>;
+  containerHtmlElement: HTMLElement;
   textNodeInfos: TextElementInfo[] = [];
-  constructor(paragraphReference: matita.BlockReference, viewControl: VirtualizedViewControl) {
+  #onContainerHtmlElementChange: (previousContainerHtmlElement: HTMLElement) => void;
+  constructor(
+    paragraphReference: matita.BlockReference,
+    viewControl: VirtualizedViewControl,
+    onContainerHtmlElementChange: (previousContainerHtmlElement: HTMLElement) => void,
+  ) {
     super(() => this.#dispose());
     this.paragraphReference = paragraphReference;
     this.#viewControl = viewControl;
-    this.containerHtmlElement$ = CurrentAndPreviousValueDistributor(this.#makeContainerHtmlElement());
-    this.add(this.containerHtmlElement$);
+    this.containerHtmlElement = this.#makeContainerHtmlElement();
+    this.#onContainerHtmlElementChange = onContainerHtmlElementChange;
     this.#render();
   }
   #makeContainerHtmlElement(): HTMLElement {
@@ -102,13 +108,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     containerHtmlElement.style.lineHeight = '21px';
     return containerHtmlElement;
   }
-  get containerHtmlElement(): HTMLElement {
-    return this.containerHtmlElement$.currentValue;
-  }
   #render(): void {
     const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
-    const { stateControl } = documentRenderControl;
-    const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, this.paragraphReference);
+    const paragraph = matita.accessBlockFromBlockReference(documentRenderControl.stateControl.stateView.document, this.paragraphReference);
     matita.assertIsParagraph(paragraph);
     this.textNodeInfos = [];
     const text = paragraph.children
@@ -139,7 +141,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       });
       textStart = textEnd + 1;
     });
-    this.containerHtmlElement$.currentValue.replaceChildren(...newChildren);
+    this.containerHtmlElement.replaceChildren(...newChildren);
   }
   onConfigOrChildrenChanged(): void {
     this.#render();
@@ -147,68 +149,45 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   #dispose(): void {}
 }
-interface VirtualizedContentRenderControlParagraphBlockInfo {
-  paragraphRenderControl: VirtualizedParagraphRenderControl;
-  containerHtmlElement: HTMLElement;
-}
 class VirtualizedContentRenderControl extends DisposableClass implements matita.ContentRenderControl {
   contentReference: matita.ContentReference;
   #viewControl: VirtualizedViewControl;
-  containerHtmlElement$: CurrentAndPreviousValueDistributor<HTMLElement>;
-  #blockInfos: VirtualizedContentRenderControlParagraphBlockInfo[];
+  containerHtmlElement: HTMLElement;
+  #children: VirtualizedParagraphRenderControl[];
   constructor(contentReference: matita.ContentReference, viewControl: VirtualizedViewControl) {
     super(() => this.#dispose());
     this.contentReference = contentReference;
     this.#viewControl = viewControl;
-    this.containerHtmlElement$ = CurrentAndPreviousValueDistributor(this.#makeContainerHtmlElement());
-    this.add(this.containerHtmlElement$);
-    this.#blockInfos = [];
+    this.containerHtmlElement = this.#makeContainerHtmlElement();
+    this.#children = [];
     this.#init();
   }
   #makeContainerHtmlElement(): HTMLElement {
     const containerHtmlElement = document.createElement('div');
     return containerHtmlElement;
   }
-  get containerHtmlElement(): HTMLElement {
-    return this.containerHtmlElement$.currentValue;
-  }
   #init(): void {
     const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
-    const { stateControl, htmlElementToNodeRenderControlMap } = documentRenderControl;
-    htmlElementToNodeRenderControlMap.set(this.containerHtmlElement$.currentValue, this);
-    this.#blockInfos = [];
-    const numberOfBlocks = matita.getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, this.contentReference);
+    documentRenderControl.htmlElementToNodeRenderControlMap.set(this.containerHtmlElement, this);
+    const numberOfBlocks = matita.getNumberOfBlocksInContentAtContentReference(documentRenderControl.stateControl.stateView.document, this.contentReference);
+    const documentFragment = document.createDocumentFragment();
     for (let i = 0; i < numberOfBlocks; i++) {
-      const block = matita.accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, this.contentReference, i);
+      const block = matita.accessBlockAtIndexInContentAtContentReference(documentRenderControl.stateControl.stateView.document, this.contentReference, i);
       matita.assertIsParagraph(block);
       const paragraphReference = matita.makeBlockReferenceFromBlock(block);
       const paragraphRenderControl = this.#makeParagraphRenderControl(paragraphReference);
-      this.#blockInfos.push({
-        paragraphRenderControl,
-        containerHtmlElement: paragraphRenderControl.containerHtmlElement,
-      });
-      this.containerHtmlElement$.currentValue.append(paragraphRenderControl.containerHtmlElement);
+      this.#children.push(paragraphRenderControl);
+      documentFragment.appendChild(paragraphRenderControl.containerHtmlElement);
     }
+    this.containerHtmlElement.appendChild(documentFragment);
   }
   #makeParagraphRenderControl(paragraphReference: matita.BlockReference): VirtualizedParagraphRenderControl {
     const { htmlElementToNodeRenderControlMap } = this.#viewControl.accessDocumentRenderControl();
-    const paragraphRenderControl = new VirtualizedParagraphRenderControl(paragraphReference, this.#viewControl);
+    const paragraphRenderControl = new VirtualizedParagraphRenderControl(paragraphReference, this.#viewControl, (previousContainerHtmlElement) => {
+      htmlElementToNodeRenderControlMap.set(paragraphRenderControl.containerHtmlElement, paragraphRenderControl);
+      previousContainerHtmlElement.replaceWith(paragraphRenderControl.containerHtmlElement);
+    });
     this.add(paragraphRenderControl);
-    pipe(
-      paragraphRenderControl.containerHtmlElement$,
-      skip(1)<HTMLElement>,
-      subscribe((event) => {
-        if (event.type !== PushType) {
-          throwUnreachable();
-        }
-        const blockInfo = this.#blockInfos.find((blockInfo) => {
-          return matita.areBlockReferencesAtSameBlock(blockInfo.paragraphRenderControl.paragraphReference, paragraphReference);
-        });
-        assertIsNotNullish(blockInfo);
-        htmlElementToNodeRenderControlMap.set(paragraphRenderControl.containerHtmlElement, paragraphRenderControl);
-        blockInfo.containerHtmlElement.replaceWith(paragraphRenderControl.containerHtmlElement);
-      }, this),
-    );
     this.#viewControl.renderControlRegister.registerParagraphRenderControl(paragraphRenderControl);
     htmlElementToNodeRenderControlMap.set(paragraphRenderControl.containerHtmlElement, paragraphRenderControl);
     return paragraphRenderControl;
@@ -216,43 +195,54 @@ class VirtualizedContentRenderControl extends DisposableClass implements matita.
   onConfigChanged(): void {
     throwNotImplemented();
   }
-  onBlockRemoved(blockReference: matita.BlockReference): void {
-    const blockInfoIndex = this.#blockInfos.findIndex((blockInfo) =>
-      matita.areBlockReferencesAtSameBlock(blockInfo.paragraphRenderControl.paragraphReference, blockReference),
-    );
-    assert(blockInfoIndex !== -1);
-    const blockInfo = this.#blockInfos[blockInfoIndex];
-    this.#blockInfos.splice(blockInfoIndex, 1);
-    const { htmlElementToNodeRenderControlMap } = this.#viewControl.accessDocumentRenderControl();
-    htmlElementToNodeRenderControlMap.delete(blockInfo.containerHtmlElement);
-    this.#viewControl.renderControlRegister.unregisterParagraphRenderControl(blockInfo.paragraphRenderControl);
-    blockInfo.containerHtmlElement.remove();
-    blockInfo.paragraphRenderControl.dispose();
-  }
-  onParagraphInsertedAfter(paragraphReference: matita.BlockReference, insertAfterBlockReference: matita.BlockReference | null): void {
-    const paragraphRenderControl = this.#makeParagraphRenderControl(paragraphReference);
-    if (insertAfterBlockReference === null) {
-      this.containerHtmlElement$.currentValue.prepend(paragraphRenderControl.containerHtmlElement);
-      this.#blockInfos.unshift({
-        paragraphRenderControl,
-        containerHtmlElement: paragraphRenderControl.containerHtmlElement,
-      });
-      return;
-    }
-    const insertAfterBlockInfoIndex = this.#blockInfos.findIndex((blockInfo) =>
-      matita.areBlockReferencesAtSameBlock(blockInfo.paragraphRenderControl.paragraphReference, insertAfterBlockReference),
-    );
-    assert(insertAfterBlockInfoIndex !== -1);
-    this.#blockInfos.splice(insertAfterBlockInfoIndex + 1, 0, {
-      paragraphRenderControl,
-      containerHtmlElement: paragraphRenderControl.containerHtmlElement,
+  onBlocksRemoved(blockReferences: matita.BlockReference[]): void {
+    const firstBlockReference = blockReferences[0];
+    const firstChildIndex = this.#children.findIndex((paragraphRenderControl) => {
+      return matita.areBlockReferencesAtSameBlock(paragraphRenderControl.paragraphReference, firstBlockReference);
     });
-    const insertAfterBlockInfo = this.#blockInfos[insertAfterBlockInfoIndex];
-    assertIsNotNullish(insertAfterBlockInfo);
-    insertAfterBlockInfo.containerHtmlElement.insertAdjacentElement('afterend', paragraphRenderControl.containerHtmlElement);
+    assert(firstChildIndex !== -1);
+    const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
+    for (let i = 0; i < blockReferences.length; i++) {
+      const childIndex = firstChildIndex + i;
+      const childRenderControl = this.#children[childIndex];
+      documentRenderControl.htmlElementToNodeRenderControlMap.delete(childRenderControl.containerHtmlElement);
+      if (childRenderControl instanceof VirtualizedParagraphRenderControl) {
+        this.#viewControl.renderControlRegister.unregisterParagraphRenderControl(childRenderControl);
+      } else {
+        throwNotImplemented();
+      }
+      childRenderControl.containerHtmlElement.remove();
+      childRenderControl.dispose();
+    }
+    this.#children.splice(firstChildIndex, blockReferences.length);
   }
-  onEmbedInsertedAfter(embedReference: matita.BlockReference, insertAfterBlockReference: matita.BlockReference | null): void {
-    throwNotImplemented();
+  onBlocksInsertedAfter(blockReferences: matita.BlockReference[], insertAfterBlockReference: matita.BlockReference | null): void {
+    const insertionIndex =
+      insertAfterBlockReference === null
+        ? 0
+        : this.#children.findIndex((paragraphRenderControl) => {
+            return matita.areBlockReferencesAtSameBlock(paragraphRenderControl.paragraphReference, insertAfterBlockReference);
+          }) + 1;
+    const childRenderControls: VirtualizedParagraphRenderControl[] = [];
+    const documentFragment = document.createDocumentFragment();
+    const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
+    for (let i = 0; i < blockReferences.length; i++) {
+      const blockReference = blockReferences[i];
+      const block = matita.accessBlockFromBlockReference(documentRenderControl.stateControl.stateView.document, blockReference);
+      let childRenderControl: VirtualizedParagraphRenderControl;
+      if (matita.isParagraph(block)) {
+        childRenderControl = this.#makeParagraphRenderControl(blockReference);
+      } else {
+        throwNotImplemented();
+      }
+      childRenderControls.push(childRenderControl);
+      documentFragment.appendChild(childRenderControl.containerHtmlElement);
+    }
+    this.containerHtmlElement.insertBefore(
+      documentFragment,
+      insertionIndex === this.#children.length ? null : this.#children[insertionIndex].containerHtmlElement,
+    );
+    this.#children.splice(insertionIndex, 0, ...childRenderControls);
   }
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   #dispose(): void {}

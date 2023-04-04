@@ -254,38 +254,6 @@ function CurrentValueDistributor<T>(initialValue: T, pushCurrentValue = true): C
   distributor.add(base);
   return distributor;
 }
-interface CurrentAndPreviousValueDistributor<T> extends Distributor<T> {
-  previousValue: Maybe<T>;
-  currentValue: T;
-}
-function CurrentAndPreviousValueDistributor<T>(initialValue: T, pushCurrentValue = true, pushPreviousValue = false): CurrentAndPreviousValueDistributor<T> {
-  const base = Distributor<T>();
-  const distributor = markAsDistributor(
-    implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
-      if (typeof eventOrSink === 'function') {
-        if (eventOrSink.active) {
-          base(eventOrSink);
-          if (pushPreviousValue && isSome(distributor.previousValue)) {
-            eventOrSink(Push(distributor.previousValue.value));
-          }
-          if (pushCurrentValue) {
-            eventOrSink(Push(distributor.currentValue));
-          }
-        }
-      } else {
-        if (eventOrSink.type === PushType) {
-          distributor.previousValue = Some(distributor.currentValue);
-          distributor.currentValue = eventOrSink.value;
-        }
-        base(eventOrSink);
-      }
-    }, base),
-  ) as CurrentAndPreviousValueDistributor<T>;
-  distributor.previousValue = None;
-  distributor.currentValue = initialValue;
-  distributor.add(base);
-  return distributor;
-}
 interface LastValueSource<T> extends Source<T> {
   ended: boolean;
   lastValue: Maybe<T>;
@@ -323,7 +291,6 @@ export {
   Distributor,
   type CurrentValueSource,
   CurrentValueDistributor,
-  CurrentAndPreviousValueDistributor,
   type LastValueSource,
   LastValueDistributor,
 };

@@ -2,6 +2,7 @@
 // TODO: Collaboration.
 // TODO: Don't allow accessing nodes directly?
 // TODO: Make config immutable and out its update operations.
+// TODO: Go back to using indices to detect first/last as it's now O(logn).
 import { v4 as makeUuidV4 } from 'uuid';
 import { IndexableUniqueStringList } from '../common/IndexableUniqueStringList';
 import {
@@ -2234,19 +2235,18 @@ function areRangesEqual(range1: Range, range2: Range): boolean {
 interface EmbedRenderControl {
   embedReference: BlockReference;
   onConfigChanged(): void;
-  onContentRemoved(contentReference: ContentReference): void;
-  onContentInsertedAfter(contentReference: ContentReference, insertAfterContentReference: ContentReference | null): void;
+  onContentsRemoved(contentReferences: ContentReference[]): void;
+  onContentsInsertedAfter(contentReferences: ContentReference[], insertAfterContentReference: ContentReference | null): void;
 }
 interface ParagraphRenderControl {
   paragraphReference: BlockReference;
-  onConfigOrChildrenChanged(): void;
+  onConfigOrChildrenChanged(isParagraphChildrenUpdated: boolean, isParagraphTextUpdated: boolean): void;
 }
 interface ContentRenderControl {
   contentReference: ContentReference;
   onConfigChanged(): void;
-  onBlockRemoved(blockReference: BlockReference): void;
-  onParagraphInsertedAfter(paragraphReference: BlockReference, insertAfterBlockReference: BlockReference | null): void;
-  onEmbedInsertedAfter(embedReference: BlockReference, insertAfterBlockReference: BlockReference | null): void;
+  onBlocksRemoved(blockReferences: BlockReference[]): void;
+  onBlocksInsertedAfter(blockReferences: BlockReference[], insertAfterBlockReference: BlockReference | null): void;
 }
 interface DocumentRenderControl extends Disposable {
   onConfigChanged(): void;
@@ -2256,28 +2256,29 @@ interface BaseRenderControl<MyDocumentRenderControl extends DocumentRenderContro
   makeDocumentRenderControl(rootHtmlElement: HTMLElement): MyDocumentRenderControl;
 }
 enum ViewDeltaChangeType {
-  BlockInserted = 'BlockInserted',
-  BlockMoved = 'BlockMoved',
+  BlocksInserted = 'BlockInserted',
+  BlocksMoved = 'BlockMoved',
   BlockConfigOrParagraphChildrenUpdated = 'BlockConfigOrParagraphChildrenUpdated',
-  BlockRemoved = 'BlockRemoved',
-  ContentInserted = 'ContentInserted',
+  BlocksRemoved = 'BlockRemoved',
+  ContentsInserted = 'ContentInserted',
   ContentConfigUpdated = 'ContentConfigUpdated',
-  ContentRemoved = 'ContentRemoved',
+  ContentsRemoved = 'ContentRemoved',
   DocumentConfigUpdated = 'DocumentConfigUpdated',
 }
 // TODO.
 type ViewDeltaChange =
   | {
-      type: ViewDeltaChangeType.BlockInserted;
-      blockReference: BlockReference;
+      type: ViewDeltaChangeType.BlocksInserted;
+      blockReferences: BlockReference[];
       insertAfterBlockReference: BlockReference | null;
       contentReference: ContentReference;
     }
   | {
-      type: ViewDeltaChangeType.BlockMoved;
-      blockReference: BlockReference;
+      type: ViewDeltaChangeType.BlocksMoved;
+      blockReferences: BlockReference[];
       moveAfterBlockReference: BlockReference | null;
-      contentReference: ContentReference;
+      moveFromContentReference: ContentReference;
+      moveIntoContentReference: ContentReference;
     }
   | {
       type: ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated;
@@ -2286,13 +2287,13 @@ type ViewDeltaChange =
       blockReference: BlockReference;
     }
   | {
-      type: ViewDeltaChangeType.BlockRemoved;
-      blockReference: BlockReference;
+      type: ViewDeltaChangeType.BlocksRemoved;
+      blockReferences: BlockReference[];
       contentReference: ContentReference;
     }
   | {
-      type: ViewDeltaChangeType.ContentInserted;
-      contentReference: ContentReference;
+      type: ViewDeltaChangeType.ContentsInserted;
+      contentReferences: ContentReference[];
       insertAfterContentReference: ContentReference | null;
       embedReference: BlockReference;
     }
@@ -2301,8 +2302,8 @@ type ViewDeltaChange =
       contentReference: ContentReference;
     }
   | {
-      type: ViewDeltaChangeType.ContentRemoved;
-      contentReference: ContentReference;
+      type: ViewDeltaChangeType.ContentsRemoved;
+      contentReferences: ContentReference[];
       embedReference: BlockReference;
     }
   | {
@@ -2313,88 +2314,79 @@ type ViewDelta = {
 };
 interface ViewDeltaControl {
   // Null means at start.
-  markBlockAtBlockReferenceInsertedAfterBlockReferenceInContentAtContentReference: (
-    blockReference: BlockReference,
+  markBlocksAtBlockReferencesInsertedAfterBlockReferenceInContentAtContentReference: (
+    blockReferences: BlockReference[],
     insertAfterBlockReference: BlockReference | null,
     contentReference: ContentReference,
   ) => void;
-  markBlockAtBlockReferenceMovedAfterBlockReferenceInContentAtContentReference: (
-    blockReference: BlockReference,
+  markBlocksAtBlockReferencesMovedAfterBlockReferenceInContentAtContentReference: (
+    blockReferences: BlockReference[],
     moveAfterBlockReference: BlockReference | null,
-    contentReference: ContentReference,
+    moveFromContentReference: ContentReference,
+    moveIntoContentReference: ContentReference,
   ) => void;
   markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated: (
     blockReference: BlockReference,
     isParagraphChildrenUpdated: boolean,
     isParagraphTextUpdated: boolean,
   ) => void;
-  markBlockAtBlockReferenceRemovedInContentAtContentReference: (blockReference: BlockReference, contentReference: ContentReference) => void;
-  markContentAtContentReferenceInsertedAfterContentReferenceInEmbedAtBlockReference: (
-    contentReference: ContentReference,
+  markBlocksAtBlockReferencesRemovedInContentAtContentReference: (blockReferences: BlockReference[], contentReference: ContentReference) => void;
+  markContentsAtContentReferencesInsertedAfterContentReferenceInEmbedAtBlockReference: (
+    contentReferences: ContentReference[],
     insertAfterContentReference: ContentReference | null,
     embedReference: BlockReference,
   ) => void;
   markContentAtContentReferenceConfigUpdated: (contentReference: ContentReference) => void;
-  markContentAtContentReferenceRemovedInEmbedAtBlockReference: (contentReference: ContentReference, embedReference: BlockReference) => void;
+  markContentsAtContentReferencesRemovedInEmbedAtBlockReference: (contentReferences: ContentReference[], embedReference: BlockReference) => void;
   markDocumentConfigUpdated: () => void;
   onViewDeltasMarkedBeforeMutationCommitted: () => void;
 }
 function makeViewDeltaAndViewDeltaControl(onViewDeltasMarkedBeforeMutationCommitted: () => void) {
   const viewDeltaChanges: ViewDeltaChange[] = [];
   const viewDeltaControl: ViewDeltaControl = {
-    markBlockAtBlockReferenceInsertedAfterBlockReferenceInContentAtContentReference(blockReference, insertAfterBlockReference, contentReference) {
-      viewDeltaChanges.push({
-        type: ViewDeltaChangeType.BlockInserted,
-        blockReference,
-        insertAfterBlockReference,
-        contentReference,
-      });
+    markBlocksAtBlockReferencesInsertedAfterBlockReferenceInContentAtContentReference: (blockReferences, insertAfterBlockReference, contentReference) => {
+      viewDeltaChanges.push({ type: ViewDeltaChangeType.BlocksInserted, blockReferences, insertAfterBlockReference, contentReference });
     },
-    markBlockAtBlockReferenceMovedAfterBlockReferenceInContentAtContentReference(blockReference, moveAfterBlockReference, contentReference) {
+    markBlocksAtBlockReferencesMovedAfterBlockReferenceInContentAtContentReference: (
+      blockReferences,
+      moveAfterBlockReference,
+      moveFromContentReference,
+      moveIntoContentReference,
+    ) => {
       viewDeltaChanges.push({
-        type: ViewDeltaChangeType.BlockMoved,
-        blockReference,
+        type: ViewDeltaChangeType.BlocksMoved,
+        blockReferences,
         moveAfterBlockReference,
-        contentReference,
+        moveFromContentReference,
+        moveIntoContentReference,
       });
     },
-    markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(blockReference, isParagraphChildrenUpdated, isParagraphTextUpdated) {
+    markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated: (blockReference, isParagraphChildrenUpdated, isParagraphTextUpdated) => {
       viewDeltaChanges.push({
         type: ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated,
+        blockReference,
         isParagraphChildrenUpdated,
         isParagraphTextUpdated,
-        blockReference,
       });
     },
-    markBlockAtBlockReferenceRemovedInContentAtContentReference(blockReference, contentReference) {
-      viewDeltaChanges.push({
-        type: ViewDeltaChangeType.BlockRemoved,
-        blockReference,
-        contentReference,
-      });
+    markBlocksAtBlockReferencesRemovedInContentAtContentReference: (blockReferences, contentReference) => {
+      viewDeltaChanges.push({ type: ViewDeltaChangeType.BlocksRemoved, blockReferences, contentReference });
     },
-    markContentAtContentReferenceInsertedAfterContentReferenceInEmbedAtBlockReference(contentReference, insertAfterContentReference, embedReference) {
+    markContentsAtContentReferencesInsertedAfterContentReferenceInEmbedAtBlockReference: (contentReferences, insertAfterContentReference, embedReference) => {
       viewDeltaChanges.push({
-        type: ViewDeltaChangeType.ContentInserted,
-        contentReference,
+        type: ViewDeltaChangeType.ContentsInserted,
+        contentReferences,
         insertAfterContentReference,
         embedReference,
       });
     },
-    markContentAtContentReferenceConfigUpdated(contentReference) {
-      viewDeltaChanges.push({
-        type: ViewDeltaChangeType.ContentConfigUpdated,
-        contentReference,
-      });
+    markContentAtContentReferenceConfigUpdated: (contentReference) => {
+      viewDeltaChanges.push({ type: ViewDeltaChangeType.ContentConfigUpdated, contentReference });
     },
-    markContentAtContentReferenceRemovedInEmbedAtBlockReference(contentReference, embedReference: BlockReference) {
-      viewDeltaChanges.push({
-        type: ViewDeltaChangeType.ContentRemoved,
-        contentReference,
-        embedReference,
-      });
+    markContentsAtContentReferencesRemovedInEmbedAtBlockReference: (contentReferences, embedReference) => {
+      viewDeltaChanges.push({ type: ViewDeltaChangeType.ContentsRemoved, contentReferences, embedReference });
     },
-    markDocumentConfigUpdated() {
+    markDocumentConfigUpdated: () => {
       viewDeltaChanges.push({
         type: ViewDeltaChangeType.DocumentConfigUpdated,
       });
@@ -2521,76 +2513,61 @@ function makeViewControl<
   };
   function applyViewDeltaChange(viewDeltaChange: ViewDeltaChange): void {
     assertIsNotNullish(stateControl);
-    assertIsNotNullish(documentRenderControl);
     switch (viewDeltaChange.type) {
-      case ViewDeltaChangeType.BlockInserted: {
-        const { blockReference, contentReference, insertAfterBlockReference } = viewDeltaChange;
-        const contentRenderControl = renderControlMap.contents[contentReference.contentId];
-        assertIsNotNullish(contentRenderControl);
-        const block = accessBlockFromBlockReference(stateControl.stateView.document, blockReference);
-        if (isEmbed(block)) {
-          contentRenderControl.onEmbedInsertedAfter(blockReference, insertAfterBlockReference);
-        } else {
-          contentRenderControl.onParagraphInsertedAfter(blockReference, insertAfterBlockReference);
-        }
+      case ViewDeltaChangeType.BlocksInserted: {
+        const { blockReferences, contentReference, insertAfterBlockReference } = viewDeltaChange;
+        const contentRenderControl = accessContentRenderControlAtContentReference(contentReference);
+        contentRenderControl.onBlocksInsertedAfter(blockReferences, insertAfterBlockReference);
         break;
       }
-      case ViewDeltaChangeType.BlockMoved: {
-        const { blockReference, contentReference, moveAfterBlockReference } = viewDeltaChange;
-        const contentRenderControl = renderControlMap.contents[contentReference.contentId];
-        assertIsNotNullish(contentRenderControl);
-        contentRenderControl.onBlockRemoved(blockReference);
-        const block = accessBlockFromBlockReference(stateControl.stateView.document, blockReference);
-        if (isEmbed(block)) {
-          contentRenderControl.onEmbedInsertedAfter(blockReference, moveAfterBlockReference);
-        } else {
-          contentRenderControl.onParagraphInsertedAfter(blockReference, moveAfterBlockReference);
-        }
+      case ViewDeltaChangeType.BlocksMoved: {
+        const { blockReferences, moveAfterBlockReference, moveFromContentReference, moveIntoContentReference } = viewDeltaChange;
+        const oldContentRenderControl = accessContentRenderControlAtContentReference(moveFromContentReference);
+        const newContentRenderControl = accessContentRenderControlAtContentReference(moveIntoContentReference);
+        oldContentRenderControl.onBlocksRemoved(blockReferences);
+        newContentRenderControl.onBlocksInsertedAfter(blockReferences, moveAfterBlockReference);
         break;
       }
       case ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated: {
-        const { blockReference } = viewDeltaChange;
+        const { blockReference, isParagraphChildrenUpdated, isParagraphTextUpdated } = viewDeltaChange;
         const block = accessBlockFromBlockReference(stateControl.stateView.document, blockReference);
         if (isEmbed(block)) {
-          const embedRenderControl = renderControlMap.embeds[blockReference.blockId];
-          assertIsNotNullish(embedRenderControl);
+          const embedRenderControl = accessEmbedRenderControlAtBlockReference(blockReference);
           embedRenderControl.onConfigChanged();
         } else {
-          const paragraphRenderControl = renderControlMap.paragraphs[blockReference.blockId];
-          assertIsNotNullish(paragraphRenderControl);
-          paragraphRenderControl.onConfigOrChildrenChanged();
+          const paragraphRenderControl = accessParagraphRenderControlAtBlockReference(blockReference);
+          paragraphRenderControl.onConfigOrChildrenChanged(isParagraphChildrenUpdated, isParagraphTextUpdated);
         }
         break;
       }
-      case ViewDeltaChangeType.BlockRemoved: {
-        const { blockReference, contentReference } = viewDeltaChange;
-        const contentRenderControl = renderControlMap.contents[contentReference.contentId];
-        assertIsNotNullish(contentRenderControl);
-        contentRenderControl.onBlockRemoved(blockReference);
+      case ViewDeltaChangeType.BlocksRemoved: {
+        const { blockReferences, contentReference } = viewDeltaChange;
+        const contentRenderControl = accessContentRenderControlAtContentReference(contentReference);
+        contentRenderControl.onBlocksRemoved(blockReferences);
         break;
       }
-      case ViewDeltaChangeType.ContentInserted: {
-        const { contentReference, embedReference, insertAfterContentReference } = viewDeltaChange;
-        const embedRenderControl = renderControlMap.embeds[embedReference.blockId];
+      case ViewDeltaChangeType.ContentsInserted: {
+        const { contentReferences, embedReference, insertAfterContentReference } = viewDeltaChange;
+        const embedRenderControl = accessEmbedRenderControlAtBlockReference(embedReference);
         assertIsNotNullish(embedRenderControl);
-        embedRenderControl.onContentInsertedAfter(contentReference, insertAfterContentReference);
+        embedRenderControl.onContentsInsertedAfter(contentReferences, insertAfterContentReference);
         break;
       }
       case ViewDeltaChangeType.ContentConfigUpdated: {
         const { contentReference } = viewDeltaChange;
-        const contentRenderControl = renderControlMap.contents[contentReference.contentId];
-        assertIsNotNullish(contentRenderControl);
+        const contentRenderControl = accessContentRenderControlAtContentReference(contentReference);
         contentRenderControl.onConfigChanged();
         break;
       }
-      case ViewDeltaChangeType.ContentRemoved: {
-        const { contentReference, embedReference } = viewDeltaChange;
-        const embedRenderControl = renderControlMap.embeds[embedReference.blockId];
+      case ViewDeltaChangeType.ContentsRemoved: {
+        const { contentReferences, embedReference } = viewDeltaChange;
+        const embedRenderControl = accessEmbedRenderControlAtBlockReference(embedReference);
         assertIsNotNullish(embedRenderControl);
-        embedRenderControl.onContentRemoved(contentReference);
+        embedRenderControl.onContentsRemoved(contentReferences);
         break;
       }
       case ViewDeltaChangeType.DocumentConfigUpdated: {
+        const documentRenderControl = accessDocumentRenderControl();
         documentRenderControl.onConfigChanged();
         break;
       }
@@ -4929,11 +4906,13 @@ function removeContentsFromEmbedAtBlockReferenceBetweenContentReferences<
     unregisterContentAtContentReferenceInDocument(document, contentReference);
   };
   if (viewDeltaControl) {
+    const contentReferences: ContentReference[] = [];
     for (let i = startContentIndex; i <= endContentIndex; i++) {
       const content = accessContentAtIndexInEmbedAtBlockReference(document, embedReference, i);
       const contentReference = makeContentReferenceFromContent(content);
-      viewDeltaControl.markContentAtContentReferenceRemovedInEmbedAtBlockReference(contentReference, embedReference);
+      contentReferences.push(contentReference);
     }
+    viewDeltaControl.markContentsAtContentReferencesRemovedInEmbedAtBlockReference(contentReferences, embedReference);
     viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
   }
   for (let i = startContentIndex; i <= endContentIndex; i++) {
@@ -4948,6 +4927,10 @@ function removeContentsFromEmbedAtBlockReferenceBetweenContentReferences<
   embed.contentIds.remove(startContentIndex, endContentIndex);
   return makeContentListFragment(contentListFragmentContents);
 }
+interface ViewDeltaBlocksMoveAfterInfo {
+  blockReference: BlockReference | null;
+  contentReference: ContentReference;
+}
 function removeBlocksFromContentAtContentReferenceBetweenBlockPoints<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -4961,10 +4944,7 @@ function removeBlocksFromContentAtContentReferenceBetweenBlockPoints<
   startBlockIndex: number,
   endBlockIndex: number,
   viewDeltaControl: ViewDeltaControl | null,
-  moveAfter: {
-    blockReference: BlockReference | null;
-    contentReference: ContentReference;
-  } | null,
+  moveAfter: ViewDeltaBlocksMoveAfterInfo | null,
 ): ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   if (endBlockIndex < startBlockIndex) {
     throw new MutationNodeEndBeforeStartError({
@@ -5007,18 +4987,21 @@ function removeBlocksFromContentAtContentReferenceBetweenBlockPoints<
     unregisterContentAtContentReferenceInDocument(document, contentReference);
   };
   if (viewDeltaControl) {
+    const blockReferences: BlockReference[] = [];
     for (let i = startBlockIndex; i <= endBlockIndex; i++) {
       const block = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
       const blockReference = makeBlockReferenceFromBlock(block);
-      if (moveAfter) {
-        viewDeltaControl.markBlockAtBlockReferenceMovedAfterBlockReferenceInContentAtContentReference(
-          blockReference,
-          moveAfter.blockReference,
-          moveAfter.contentReference,
-        );
-      } else {
-        viewDeltaControl.markBlockAtBlockReferenceRemovedInContentAtContentReference(blockReference, contentReference);
-      }
+      blockReferences.push(blockReference);
+    }
+    if (moveAfter) {
+      viewDeltaControl.markBlocksAtBlockReferencesMovedAfterBlockReferenceInContentAtContentReference(
+        blockReferences,
+        moveAfter.blockReference,
+        contentReference,
+        moveAfter.contentReference,
+      );
+    } else {
+      viewDeltaControl.markBlocksAtBlockReferencesRemovedInContentAtContentReference(blockReferences, contentReference);
     }
     viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
   }
@@ -5335,21 +5318,24 @@ function applyMutation<
       const embedReference = makeBlockReferenceFromBlock(embed);
       const contentIndex = getIndexOfEmbedContentFromContentReference(document, insertionContentReference);
       if (viewDeltaControl) {
-        let previousContentReference =
+        const previousContentReference =
           mutation.type === MutationType.InsertContentsBefore
             ? contentIndex === 0
               ? null
               : makeContentReferenceFromContent(accessPreviousContentToContentInEmbedAtContentReference(document, insertionContentReference))
             : insertionContentReference;
-        contentListFragmentContents.map(({ content }) => {
+        const contentReferences: ContentReference[] = [];
+        for (let i = 0; i < contentListFragmentContents.length; i++) {
+          const contentListFragmentContent = contentListFragmentContents[i];
+          const { content } = contentListFragmentContent;
           const contentReference = makeContentReferenceFromContent(content);
-          viewDeltaControl.markContentAtContentReferenceInsertedAfterContentReferenceInEmbedAtBlockReference(
-            contentReference,
-            previousContentReference,
-            embedReference,
-          );
-          previousContentReference = contentReference;
-        });
+          contentReferences.push(contentReference);
+        }
+        viewDeltaControl.markContentsAtContentReferencesInsertedAfterContentReferenceInEmbedAtBlockReference(
+          contentReferences,
+          previousContentReference,
+          embedReference,
+        );
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       registerContentListFragmentContents(document, embedReference, contentListFragment);
@@ -5373,19 +5359,22 @@ function applyMutation<
       const { contentListFragmentContents } = contentListFragment;
       const embedReference = makeBlockReferenceFromBlockPoint(embedPoint);
       if (viewDeltaControl) {
-        let previousContentReference =
+        const previousContentReference =
           getNumberOfEmbedContentsInEmbedAtBlockReference(document, embedReference) === 0
             ? null
             : makeContentReferenceFromContent(accessLastContentInEmbedAtBlockReference(document, embedReference));
-        contentListFragmentContents.map(({ content }) => {
+        const contentReferences: ContentReference[] = [];
+        for (let i = 0; i < contentListFragmentContents.length; i++) {
+          const contentListFragmentContent = contentListFragmentContents[i];
+          const { content } = contentListFragmentContent;
           const contentReference = makeContentReferenceFromContent(content);
-          viewDeltaControl.markContentAtContentReferenceInsertedAfterContentReferenceInEmbedAtBlockReference(
-            contentReference,
-            previousContentReference,
-            embedReference,
-          );
-          previousContentReference = contentReference;
-        });
+          contentReferences.push(contentReference);
+        }
+        viewDeltaControl.markContentsAtContentReferencesInsertedAfterContentReferenceInEmbedAtBlockReference(
+          contentReferences,
+          previousContentReference,
+          embedReference,
+        );
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       registerContentListFragmentContents(document, makeBlockReferenceFromBlockPoint(embedPoint), contentListFragment);
@@ -5414,21 +5403,24 @@ function applyMutation<
       const contentReference = makeContentReferenceFromContent(content);
       const blockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(insertionBlockPoint));
       if (viewDeltaControl) {
-        let previousBlockReference =
+        const previousBlockReference =
           mutation.type === MutationType.InsertBlocksBefore
             ? blockIndex === 0
               ? null
               : makeBlockReferenceFromBlock(accessPreviousBlockToBlockAtBlockReference(document, makeBlockReferenceFromBlockPoint(insertionBlockPoint)))
             : makeBlockReferenceFromBlockPoint(insertionBlockPoint);
-        contentFragmentBlocks.forEach((contentFragmentBlock) => {
-          const blockReference = makeBlockReferenceFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock));
-          viewDeltaControl.markBlockAtBlockReferenceInsertedAfterBlockReferenceInContentAtContentReference(
-            blockReference,
-            previousBlockReference,
-            contentReference,
-          );
-          previousBlockReference = blockReference;
-        });
+        const blockReferences: BlockReference[] = [];
+        for (let i = 0; i < contentFragmentBlocks.length; i++) {
+          const contentFragmentBlock = contentFragmentBlocks[i];
+          const block = getBlockFromContentFragmentBlock(contentFragmentBlock);
+          const blockReference = makeBlockReferenceFromBlock(block);
+          blockReferences.push(blockReference);
+        }
+        viewDeltaControl.markBlocksAtBlockReferencesInsertedAfterBlockReferenceInContentAtContentReference(
+          blockReferences,
+          previousBlockReference,
+          contentReference,
+        );
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       registerContentFragmentBlocks(document, contentReference, contentFragment);
@@ -5453,19 +5445,22 @@ function applyMutation<
       const { contentFragment } = mutation;
       const { contentFragmentBlocks } = contentFragment;
       if (viewDeltaControl) {
-        let previousBlockReference =
+        const previousBlockReference =
           getNumberOfBlocksInContentAtContentReference(document, contentReference) === 0
             ? null
             : makeBlockReferenceFromBlock(accessLastBlockInContentAtContentReference(document, contentReference));
-        contentFragmentBlocks.forEach((contentFragmentBlock) => {
-          const blockReference = makeBlockReferenceFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock));
-          viewDeltaControl.markBlockAtBlockReferenceInsertedAfterBlockReferenceInContentAtContentReference(
-            blockReference,
-            previousBlockReference,
-            contentReference,
-          );
-          previousBlockReference = blockReference;
-        });
+        const blockReferences: BlockReference[] = [];
+        for (let i = 0; i < contentFragmentBlocks.length; i++) {
+          const contentFragmentBlock = contentFragmentBlocks[i];
+          const block = getBlockFromContentFragmentBlock(contentFragmentBlock);
+          const blockReference = makeBlockReferenceFromBlock(block);
+          blockReferences.push(blockReference);
+        }
+        viewDeltaControl.markBlocksAtBlockReferencesInsertedAfterBlockReferenceInContentAtContentReference(
+          blockReferences,
+          previousBlockReference,
+          contentReference,
+        );
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       registerContentFragmentBlocks(document, contentReference, contentFragment);
@@ -5497,30 +5492,30 @@ function applyMutation<
       const transformSelectionRange =
         stateViewAfterMutation &&
         makeRemoveBlocksSelectionTransformFn(document, startBlockPoint, contentReference, () => contentFragment, stateViewAfterMutation);
+      const moveAfterBlockReference =
+        mutation.type === MutationType.MoveBlocksAfter
+          ? makeBlockReferenceFromBlockPoint(mutation.moveAfterBlockPoint)
+          : mutation.type === MutationType.MoveBlocksBefore
+          ? areBlockReferencesAtSameBlock(
+              makeBlockReferenceFromBlockPoint(mutation.moveBeforeBlockPoint),
+              makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, 0)),
+            )
+            ? null
+            : makeBlockReferenceFromBlock(accessPreviousBlockToBlockAtBlockReference(document, makeBlockReferenceFromBlockPoint(mutation.moveBeforeBlockPoint)))
+          : getNumberOfBlocksInContentAtContentReference(document, contentReference) === 0
+          ? null
+          : makeBlockReferenceFromBlock(accessLastBlockInContentAtContentReference(document, contentReference));
+      const moveAfter: ViewDeltaBlocksMoveAfterInfo = {
+        blockReference: moveAfterBlockReference,
+        contentReference,
+      };
       const contentFragment = removeBlocksFromContentAtContentReferenceBetweenBlockPoints(
         document,
         contentReference,
         startBlockIndex,
         endBlockIndex,
         viewDeltaControl,
-        {
-          blockReference:
-            mutation.type === MutationType.MoveBlocksAfter
-              ? makeBlockReferenceFromBlockPoint(mutation.moveAfterBlockPoint)
-              : mutation.type === MutationType.MoveBlocksBefore
-              ? areBlockReferencesAtSameBlock(
-                  makeBlockReferenceFromBlockPoint(mutation.moveBeforeBlockPoint),
-                  makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, 0)),
-                )
-                ? null
-                : makeBlockReferenceFromBlock(
-                    accessPreviousBlockToBlockAtBlockReference(document, makeBlockReferenceFromBlockPoint(mutation.moveBeforeBlockPoint)),
-                  )
-              : getNumberOfBlocksInContentAtContentReference(document, contentReference) === 0
-              ? null
-              : makeBlockReferenceFromBlock(accessLastBlockInContentAtContentReference(document, contentReference)),
-          contentReference,
-        },
+        moveAfter,
       );
       if (mutation.type !== MutationType.MoveBlocksAtEnd) {
         const insertionBlockPoint = mutation.type === MutationType.MoveBlocksBefore ? mutation.moveBeforeBlockPoint : mutation.moveAfterBlockPoint;
@@ -5573,21 +5568,21 @@ function applyMutation<
       const contentReference = makeContentReferenceFromContent(content);
       if (viewDeltaControl) {
         const paragraphReference = makeBlockReferenceFromBlock(paragraph);
-        if (splitAtParagraphPoint.offset > 0) {
-          viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(paragraphReference, true, true);
-        }
         const newParagraphReference = makeBlockReferenceFromBlock(newParagraph);
         const previousParagraphReference = areBlockReferencesAtSameBlock(
-          newParagraphReference,
+          paragraphReference,
           makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, 0)),
         )
           ? null
-          : makeBlockReferenceFromBlock(accessPreviousBlockToBlockAtBlockReference(document, newParagraphReference));
-        viewDeltaControl.markBlockAtBlockReferenceInsertedAfterBlockReferenceInContentAtContentReference(
-          newParagraphReference,
+          : makeBlockReferenceFromBlock(accessPreviousBlockToBlockAtBlockReference(document, paragraphReference));
+        viewDeltaControl.markBlocksAtBlockReferencesInsertedAfterBlockReferenceInContentAtContentReference(
+          [newParagraphReference],
           previousParagraphReference,
           contentReference,
         );
+        if (splitAtParagraphPoint.offset > 0) {
+          viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(paragraphReference, true, true);
+        }
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       spliceParagraphChildren(paragraph, 0, splitAtParagraphPoint.offset, []);
@@ -5667,8 +5662,8 @@ function applyMutation<
           viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(paragraphReference, true, true);
         }
         const newParagraphReference = makeBlockReferenceFromBlock(newParagraph);
-        viewDeltaControl.markBlockAtBlockReferenceInsertedAfterBlockReferenceInContentAtContentReference(
-          newParagraphReference,
+        viewDeltaControl.markBlocksAtBlockReferencesInsertedAfterBlockReferenceInContentAtContentReference(
+          [newParagraphReference],
           paragraphReference,
           contentReference,
         );
@@ -5752,7 +5747,7 @@ function applyMutation<
         if (getLengthOfParagraphInlineNodes(secondParagraph.children) > 0) {
           viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(makeBlockReferenceFromBlock(firstParagraph), true, true);
         }
-        viewDeltaControl.markBlockAtBlockReferenceRemovedInContentAtContentReference(makeBlockReferenceFromBlock(secondParagraph), contentReference);
+        viewDeltaControl.markBlocksAtBlockReferencesRemovedInContentAtContentReference([makeBlockReferenceFromBlock(secondParagraph)], contentReference);
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       spliceParagraphChildren(firstParagraph, firstParagraphLength, 0, secondParagraph.children);
@@ -5822,7 +5817,7 @@ function applyMutation<
         if (getLengthOfParagraphInlineNodes(firstParagraph.children) > 0) {
           viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(makeBlockReferenceFromBlock(secondParagraph), true, true);
         }
-        viewDeltaControl.markBlockAtBlockReferenceRemovedInContentAtContentReference(makeBlockReferenceFromBlock(firstParagraph), contentReference);
+        viewDeltaControl.markBlocksAtBlockReferencesRemovedInContentAtContentReference([makeBlockReferenceFromBlock(firstParagraph)], contentReference);
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       spliceParagraphChildren(secondParagraph, 0, 0, firstParagraph.children);
