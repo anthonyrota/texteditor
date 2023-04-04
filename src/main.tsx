@@ -940,19 +940,20 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       </div>
     </div>,
   );
-  const options: [keyof SingleParagraphPlainTextSearchControlConfig, string][] = [
-    ['ignoreCase', 'Ignore Case'],
-    ['ignoreDiacritics', 'Ignore Diacritics'],
-    ['ignorePunctuation', 'Ignore Punctuation'],
-    ['wholeWords', 'Whole Words'],
-    ['searchQueryWordsIndividually', 'Search Query Words Individually'],
+  const options: [key: keyof SingleParagraphPlainTextSearchControlConfig, name: string, isInverted: boolean][] = [
+    ['ignoreCase', 'Match Case', true],
+    ['ignoreDiacritics', 'Match Diacritics', true],
+    ['ignorePunctuation', 'Ignore Punctuation', false],
+    ['wholeWords', 'Whole Words', false],
+    ['searchQueryWordsIndividually', 'Search Query Words Individually', false],
   ];
   const optionsIds = options.map(() => useId());
   if (isOptionsShown) {
     searchBoxChildren.push(
       <div className="search-box__line-container search-box__line-container--options" key="options">
-        {options.map(([configKey, readableName], i) => {
+        {options.map(([configKey, readableName, isInverted], i) => {
           const optionsId = optionsIds[i];
+          const getIsChecked = (value: boolean) => (isInverted ? !value : value);
           return (
             <div className="search-box__checkbox-container" key={configKey}>
               <input
@@ -960,13 +961,13 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
                 type="checkbox"
                 id={optionsId}
                 onChange={(event) => {
-                  const isChecked = event.target.checked;
+                  const isChecked = getIsChecked(event.target.checked);
                   setConfig((config) => ({
                     ...config,
                     [configKey]: isChecked,
                   }));
                 }}
-                checked={config[configKey]}
+                checked={getIsChecked(config[configKey])}
               />
               <label className="search-box__checkbox-label" htmlFor={optionsId}>
                 {readableName}
