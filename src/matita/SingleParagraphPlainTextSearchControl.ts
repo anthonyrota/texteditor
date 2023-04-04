@@ -13,7 +13,6 @@ interface SingleParagraphPlainTextSearchControlConfig {
   ignoreCase: boolean;
   ignoreDiacritics: boolean;
   ignorePunctuation: boolean;
-  ignoreVoids: boolean;
   wholeWords: boolean;
   searchQueryWordsIndividually: boolean;
 }
@@ -22,7 +21,6 @@ function areConfigsEqual(config1: SingleParagraphPlainTextSearchControlConfig, c
     config1.ignoreCase === config2.ignoreCase &&
     config1.ignoreDiacritics === config2.ignoreDiacritics &&
     config1.ignorePunctuation === config2.ignorePunctuation &&
-    config1.ignoreVoids === config2.ignoreVoids &&
     config1.wholeWords === config2.wholeWords &&
     config1.searchQueryWordsIndividually === config2.searchQueryWordsIndividually
   );
@@ -538,58 +536,24 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     this.#setConfig(config);
   }
   #splitParagraphAtParagraphReferenceIntoTextPartGroups(paragraphReference: matita.BlockReference): TextPartGroup[] {
-    const { ignoreVoids } = this.#config;
     const paragraph = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, paragraphReference);
     matita.assertIsParagraph(paragraph);
     const textPartGroups: TextPartGroup[] = [];
-    if (ignoreVoids) {
-      const normalizedTextParts: TextPart[] = [];
-      const inlineGroups = groupConsecutiveItemsInArray(
-        paragraph.children,
-        (inline) => inline.type,
-        (t1, t2) => t1 === t2,
-      );
-      let startOffset = 0;
-      for (let i = 0; i < inlineGroups.length; i++) {
-        const inlineGroup = inlineGroups[i];
-        if (inlineGroup.groupInfos[0] === matita.NodeType.Void) {
-          startOffset += inlineGroup.items.length;
-          continue;
-        }
-        const textNodes = inlineGroup.items as matita.Text<matita.NodeConfig>[];
-        let groupText = '';
-        for (let j = 0; j < textNodes.length; j++) {
-          const textNode = textNodes[j];
-          groupText += textNode.text;
-        }
-        const endOffset = startOffset + groupText.length;
-        const textPart = new TextPart(groupText, startOffset, endOffset);
-        const subNormalizedTextParts = normalizeTextPart(textPart, this.#config, this.#graphemeSegmenter);
-        for (let j = 0; j < subNormalizedTextParts.length; j++) {
-          normalizedTextParts.push(subNormalizedTextParts[j]);
-        }
-        startOffset = endOffset;
+    let startOffset = 0;
+    for (let i = 0; i < paragraph.children.length; i++) {
+      const inline = paragraph.children[i];
+      if (matita.isVoid(inline)) {
+        startOffset += 1;
+        continue;
       }
+      const { text } = inline;
+      const endOffset = startOffset + text.length;
+      const textPart = new TextPart(text, startOffset, endOffset);
+      const normalizedTextParts = normalizeTextPart(textPart, this.#config, this.#graphemeSegmenter);
       if (normalizedTextParts.length > 0) {
         textPartGroups.push(new TextPartGroup(normalizedTextParts));
       }
-    } else {
-      let startOffset = 0;
-      for (let i = 0; i < paragraph.children.length; i++) {
-        const inline = paragraph.children[i];
-        if (matita.isVoid(inline)) {
-          startOffset += 1;
-          continue;
-        }
-        const { text } = inline;
-        const endOffset = startOffset + text.length;
-        const textPart = new TextPart(text, startOffset, endOffset);
-        const normalizedTextParts = normalizeTextPart(textPart, this.#config, this.#graphemeSegmenter);
-        if (normalizedTextParts.length > 0) {
-          textPartGroups.push(new TextPartGroup(normalizedTextParts));
-        }
-        startOffset = endOffset;
-      }
+      startOffset = endOffset;
     }
     return textPartGroups;
   }

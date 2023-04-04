@@ -1,4 +1,4 @@
-import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createRef, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isSafari } from './common/browserDetection';
@@ -6,7 +6,6 @@ import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } fr
 import { LruCache } from './common/LruCache';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
-import { accessContentFromContentReference } from './matita';
 import {
   SingleParagraphPlainTextSearchControl,
   SingleParagraphPlainTextSearchControlConfig,
@@ -747,22 +746,42 @@ interface SearchBoxProps {
   containerStaticViewRectangle$: CurrentValueSource<ViewRectangle>;
   query$: Sink<string>;
   config$: Sink<SearchBoxControlConfig>;
+  goToPreviousMatch$: Sink<undefined>;
+  goToNextMatch$: Sink<undefined>;
+  close$: Sink<undefined>;
   isInComposition$: Sink<boolean>;
   matchNumberMaybe$: CurrentValueSource<Maybe<number>>;
   totalMatchesMaybe$: CurrentValueSource<Maybe<number>>;
   initialConfig: SearchBoxControlConfig;
   inputRef: React.Ref<HTMLInputElement>;
 }
+function useToggle(initialValue = false): [value: boolean, toggleValue: () => void] {
+  const [value, setValue] = useState<boolean>(initialValue);
+  const toggleValue = useCallback(() => setValue((value) => !value), []);
+  return [value, toggleValue];
+}
 function SearchBox(props: SearchBoxProps): JSX.Element | null {
-  const { isVisible$, containerStaticViewRectangle$, query$, config$, isInComposition$, matchNumberMaybe$, totalMatchesMaybe$, initialConfig, inputRef } =
-    props;
+  const {
+    isVisible$,
+    containerStaticViewRectangle$,
+    query$,
+    config$,
+    close$,
+    goToPreviousMatch$,
+    goToNextMatch$,
+    isInComposition$,
+    matchNumberMaybe$,
+    totalMatchesMaybe$,
+    initialConfig,
+    inputRef,
+  } = props;
   const margin = 8;
   type Position = {
     width: number;
     dropDownPercent: number;
   };
   const calculateWidthFromContainerStaticViewRectangle = (rectangle: ViewRectangle): number => {
-    return Math.min(rectangle.width - margin * 2, 400);
+    return rectangle.width - margin * 2;
   };
   const { value: position } = use$<Position>(
     useCallback((sink: Sink<Position>) => {
@@ -813,48 +832,164 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       [],
     ),
   );
-  const matchNumberMaybe = use$(matchNumberMaybe$, Some(matchNumberMaybe$.currentValue)).value;
-  const totalMatchesMaybe = use$(totalMatchesMaybe$, Some(totalMatchesMaybe$.currentValue)).value;
+  const matchNumberMaybe = use$(matchNumberMaybe$, Some(matchNumberMaybe$.currentValue), true).value;
+  const totalMatchesMaybe = use$(totalMatchesMaybe$, Some(totalMatchesMaybe$.currentValue), true).value;
+  const [isOptionsShown, toggleIsOptionsShown] = useToggle();
+  const tabIndex = position.dropDownPercent < 1 ? -1 : undefined;
+  const [config, setConfig] = useState(initialConfig.config);
+  useEffect(() => {
+    if (config === initialConfig.config) {
+      return;
+    }
+    config$(
+      Push({
+        type: SearchBoxConfigType.SingleParagraphPlainText,
+        config,
+      }),
+    );
+  }, [config]);
+  const searchBoxChildren: React.ReactNode[] = [];
+  searchBoxChildren.push(
+    <div className="search-box__line-container search-box__line-container--search" key="search">
+      <div className="search-box__line-container--search__sub-container search-box__line-container--search__sub-container--search-input">
+        <input
+          type="search"
+          className="search-box__search-input"
+          onCompositionStart={() => isInComposition$(Push(true))}
+          onCompositionEnd={() => isInComposition$(Push(false))}
+          onChange={(event) => {
+            query$(Push(event.target.value));
+          }}
+          placeholder="Find in document"
+          tabIndex={tabIndex}
+          ref={inputRef}
+        />
+      </div>
+      <div className="search-box__line-container--search__sub-container">
+        <div className="search-box__line-container--search__sub-container">
+          <span className="search-box__search-results-info">
+            {isSome(totalMatchesMaybe)
+              ? isSome(matchNumberMaybe)
+                ? `${matchNumberMaybe.value} of ${totalMatchesMaybe.value}`
+                : totalMatchesMaybe.value === 0
+                ? 'No results'
+                : totalMatchesMaybe.value === 1
+                ? '1 result'
+                : `${totalMatchesMaybe.value} results`
+              : ' '.repeat(15)}
+          </span>
+        </div>
+        <div className="search-box__line-container--search__sub-container">
+          <div className="search-box__line-container--search__sub-container">
+            <button
+              className="search-box__button search-box__button--text"
+              onClick={() => {
+                toggleIsOptionsShown();
+              }}
+              tabIndex={tabIndex}
+              aria-pressed={isOptionsShown ? true : false}
+            >
+              {isOptionsShown ? 'Hide Options' : 'Show Options'}
+            </button>
+          </div>
+          <div className="search-box__line-container--search__sub-container">
+            <button
+              className="search-box__button search-box__button--icon"
+              onClick={() => {
+                goToPreviousMatch$(Push(undefined));
+              }}
+              tabIndex={tabIndex}
+            >
+              <svg className="search-box__button--icon__svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512">
+                <path
+                  className="search-box__button--icon__path"
+                  d="M201.4 137.4c12.5-12.5 32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L224 205.3 86.6 342.6c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3l160-160z"
+                />
+              </svg>
+            </button>
+            <button
+              className="search-box__button search-box__button--icon"
+              onClick={() => {
+                goToNextMatch$(Push(undefined));
+              }}
+              tabIndex={tabIndex}
+            >
+              <svg className="search-box__button--icon__svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512">
+                <path
+                  className="search-box__button--icon__path"
+                  d="M201.4 342.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 274.7 86.6 137.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"
+                />
+              </svg>
+            </button>
+            <button
+              className="search-box__button search-box__button--icon"
+              onClick={() => {
+                close$(Push(undefined));
+              }}
+              tabIndex={tabIndex}
+            >
+              <svg className="search-box__button--icon__svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512">
+                <path
+                  className="search-box__button--icon__path"
+                  d="M342.6 150.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L192 210.7 86.6 105.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L146.7 256 41.4 361.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L192 301.3 297.4 406.6c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L237.3 256 342.6 150.6z"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+  );
+  const options: [keyof SingleParagraphPlainTextSearchControlConfig, string][] = [
+    ['ignoreCase', 'Ignore Case'],
+    ['ignoreDiacritics', 'Ignore Diacritics'],
+    ['ignorePunctuation', 'Ignore Punctuation'],
+    ['wholeWords', 'Whole Words'],
+    ['searchQueryWordsIndividually', 'Search Query Words Individually'],
+  ];
+  const optionsIds = options.map(() => useId());
+  if (isOptionsShown) {
+    searchBoxChildren.push(
+      <div className="search-box__line-container search-box__line-container--options" key="options">
+        {options.map(([configKey, readableName], i) => {
+          const optionsId = optionsIds[i];
+          return (
+            <div className="search-box__checkbox-container" key={configKey}>
+              <input
+                className="search-box__checkbox-input"
+                type="checkbox"
+                id={optionsId}
+                onChange={(event) => {
+                  const isChecked = event.target.checked;
+                  setConfig((config) => ({
+                    ...config,
+                    [configKey]: isChecked,
+                  }));
+                }}
+                checked={config[configKey]}
+              />
+              <label className="search-box__checkbox-label" htmlFor={optionsId}>
+                {readableName}
+              </label>
+            </div>
+          );
+        })}
+      </div>,
+    );
+  }
   return (
     <div
-      style={{
-        position: 'fixed',
-        display: 'flex',
-        top: 0,
-        transform: `translateY(${margin * (position.dropDownPercent === 0 ? -100000 : 1.5 * Math.sqrt(position.dropDownPercent) - 0.5)}px)`,
-        filter: `opacity(${isVisible$.currentValue ? 1 - (1 - position.dropDownPercent) ** 2 : position.dropDownPercent ** 2})`,
-        right: margin,
-        width: position.width,
-        backgroundColor: '#000',
-        padding: '0.5em',
-        boxShadow: 'rgba(149, 157, 165, 0.1) 0px 8px 24px',
-        contain: 'content',
-        fontFamily: "'IBM Plex Sans', sans-serif",
-      }}
+      className="search-box"
+      style={
+        {
+          '--search-box_translate-y': `${margin * (position.dropDownPercent === 0 ? -100000 : 1.5 * Math.sqrt(position.dropDownPercent) - 0.5)}px`,
+          '--search-box_opacity': isVisible$.currentValue ? 1 - (1 - position.dropDownPercent) ** 2 : position.dropDownPercent ** 2,
+          '--search-box_margin': `${margin}px`,
+          '--search-box_max-width': `${position.width}px`,
+        } as React.CSSProperties
+      }
     >
-      <input
-        type="search"
-        style={{
-          padding: '2px 0.25em',
-          outline: '0',
-          backgroundColor: '#000',
-          color: '#fff',
-          flexGrow: 1,
-          marginRight: '0.25em',
-          minWidth: 0,
-        }}
-        onCompositionStart={() => isInComposition$(Push(true))}
-        onCompositionEnd={() => isInComposition$(Push(false))}
-        tabIndex={position.dropDownPercent === 0 ? -1 : undefined}
-        onChange={(event) => {
-          query$(Push(event.target.value));
-        }}
-        placeholder="Find in document"
-        ref={inputRef}
-      />
-      <span style={{ marginRight: '0.25em', color: '#aaa', whiteSpace: 'pre' }}>
-        {isSome(totalMatchesMaybe) ? `${isSome(matchNumberMaybe) ? matchNumberMaybe.value : '?'} of ${totalMatchesMaybe.value}` : ' '.repeat(10)}
-      </span>
+      {searchBoxChildren}
     </div>
   );
 }
@@ -4114,8 +4249,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }, this),
     );
     this.#topLevelContentViewContainerElement.appendChild(topLevelContentRenderControl.containerHtmlElement);
-    const renderReactNodeIntoHtmlContainerElement = (element: React.ReactNode, containerElement: HTMLElement): void => {
-      const root = createRoot(containerElement);
+    const renderReactNodeIntoHtmlContainerElement = (element: React.ReactNode, containerElement: HTMLElement, identifierPrefix: string): void => {
+      const root = createRoot(containerElement, {
+        identifierPrefix,
+      });
       root.render(element);
       this.add(
         Disposable(() => {
@@ -4126,8 +4263,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     renderReactNodeIntoHtmlContainerElement(
       <SelectionView selectionView$={this.#selectionView$} hideSelectionIds$={this.#hideSelectionIds$} />,
       this.#selectionViewContainerElement,
+      'selection-view-',
     );
-    renderReactNodeIntoHtmlContainerElement(<SearchOverlay searchOverlay$={this.#searchOverlay$} />, this.#searchOverlayContainerElement);
+    renderReactNodeIntoHtmlContainerElement(<SearchOverlay searchOverlay$={this.#searchOverlay$} />, this.#searchOverlayContainerElement, 'search-overlay-');
     this.#searchElementContainerElement = document.createElement('div');
     this.#containerHtmlElement.style.position = 'relative';
     this.#containerHtmlElement.append(
@@ -4207,22 +4345,44 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           // TODO: This is a hack to queue onFinishedUpdating.
         });
       });
+      const closeSearch$ = Sink<undefined>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        this.stateControl.queueUpdate(this.closeSearch());
+      });
+      const goToPreviousMatch$ = Sink<undefined>((event) => {
+        this.runCommand({
+          commandName: StandardCommand.SelectPreviousSearchMatch,
+          data: null,
+        });
+      });
+      const goToNextMatch$ = Sink<undefined>((event) => {
+        this.runCommand({
+          commandName: StandardCommand.SelectNextSearchMatch,
+          data: null,
+        });
+      });
       renderReactNodeIntoHtmlContainerElement(
         <SearchBox
-          config$={searchConfigSink}
+          isVisible$={this.#isSearchElementContainerVisible$}
           containerStaticViewRectangle$={searchContainerStaticViewRectangle$}
+          query$={searchQuery$}
+          config$={searchConfigSink}
+          goToPreviousMatch$={goToPreviousMatch$}
+          goToNextMatch$={goToNextMatch$}
+          close$={closeSearch$}
+          isInComposition$={this.#isSearchInComposition$}
+          matchNumberMaybe$={this.#matchNumberMaybe$}
+          totalMatchesMaybe$={this.#totalMatchesMaybe$}
           initialConfig={{
             type: SearchBoxConfigType.SingleParagraphPlainText,
             config: initialSearchControlConfig,
           }}
-          isVisible$={this.#isSearchElementContainerVisible$}
-          isInComposition$={this.#isSearchInComposition$}
-          query$={searchQuery$}
-          matchNumberMaybe$={this.#matchNumberMaybe$}
-          totalMatchesMaybe$={this.#totalMatchesMaybe$}
           inputRef={this.#searchInputRef}
         />,
         this.#searchElementContainerElement,
+        'search-box-',
       );
     }, this);
     pipe(
@@ -4859,7 +5019,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.#inputTextElement.blur();
       }
     } else {
-      if (!this.#hasFocusIncludingNotActiveWindow() && !this.#isSearchFocused()) {
+      if (!this.#hasFocusIncludingNotActiveWindow() && !(document.activeElement && this.#searchElementContainerElement.contains(document.activeElement))) {
         this.#inputTextElement.focus({
           preventScroll: true,
         });

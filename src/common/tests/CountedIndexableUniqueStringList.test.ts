@@ -50,9 +50,7 @@ describe('CountedIndexableUniqueStringList', () => {
   const checkSame = (array: (readonly [string, number])[], impl: CountedIndexableUniqueStringList) => {
     expect(impl.getLength()).toBe(array.length);
     expect(impl.toArray()).toEqual(array);
-    if (impl instanceof CountedIndexableUniqueStringList) {
-      impl.assertStructure();
-    }
+    impl.assertStructure();
     let prefixSumBefore = 0;
     for (let i = 0; i < array.length; i++) {
       const [value, count] = array[i];
