@@ -82,7 +82,16 @@ button {
   align-items: center;
   flex-wrap: wrap;
 }
-.search-box__line-container--search__sub-container--search-input {
+.search-box__line-container--search__sub-container--justify-between {
+  justify-content: space-between;
+}
+.search-box__line-container--search__sub-container--justify-end {
+  justify-content: end;
+}
+.search-box__line-container--search__grow-dominate {
+  flex-grow: 9999;
+}
+.search-box__line-container--search__grow {
   flex-grow: 1;
 }
 .search-box__search-input {

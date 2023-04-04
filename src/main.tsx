@@ -851,7 +851,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const searchBoxChildren: React.ReactNode[] = [];
   searchBoxChildren.push(
     <div className="search-box__line-container search-box__line-container--search" key="search">
-      <div className="search-box__line-container--search__sub-container search-box__line-container--search__sub-container--search-input">
+      <div className="search-box__line-container--search__sub-container search-box__line-container--search__grow-dominate">
         <input
           type="search"
           className="search-box__search-input"
@@ -865,7 +865,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
           ref={inputRef}
         />
       </div>
-      <div className="search-box__line-container--search__sub-container">
+      <div className="search-box__line-container--search__sub-container search-box__line-container--search__grow">
         <div className="search-box__line-container--search__sub-container">
           <span className="search-box__search-results-info">
             {isSome(totalMatchesMaybe)
@@ -879,7 +879,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
               : ' '.repeat(15)}
           </span>
         </div>
-        <div className="search-box__line-container--search__sub-container">
+        <div className="search-box__line-container--search__sub-container search-box__line-container--search__sub-container--justify-end search-box__line-container--search__grow">
           <div className="search-box__line-container--search__sub-container">
             <button
               className="search-box__button search-box__button--text"
