@@ -759,6 +759,7 @@ interface SearchBoxProps {
   isInComposition$: Sink<boolean>;
   matchNumberMaybe$: CurrentValueSource<Maybe<number>>;
   totalMatchesMaybe$: CurrentValueSource<Maybe<TotalMatchesMessage>>;
+  initialQuery: string;
   initialConfig: SearchBoxControlConfig;
   inputRef: React.Ref<HTMLInputElement>;
 }
@@ -766,6 +767,13 @@ function useToggle(initialValue = false): [value: boolean, toggleValue: () => vo
   const [value, setValue] = useState<boolean>(initialValue);
   const toggleValue = useCallback(() => setValue((value) => !value), []);
   return [value, toggleValue];
+}
+function useIsFirstRender(): boolean {
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    isFirstRender.current = false;
+  }, []);
+  return isFirstRender.current;
 }
 function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
@@ -779,6 +787,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     isInComposition$,
     matchNumberMaybe$,
     totalMatchesMaybe$,
+    initialQuery,
     initialConfig,
     inputRef,
   } = props;
@@ -844,8 +853,9 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const [isOptionsShown, toggleIsOptionsShown] = useToggle();
   const tabIndex = position.dropDownPercent < 1 ? -1 : undefined;
   const [config, setConfig] = useState(initialConfig.config);
+  const isFirstRender = useIsFirstRender();
   useEffect(() => {
-    if (config === initialConfig.config) {
+    if (isFirstRender) {
       return;
     }
     config$(
@@ -855,6 +865,13 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       }),
     );
   }, [config]);
+  const [query, setQuery] = useState(initialQuery);
+  useEffect(() => {
+    if (isFirstRender) {
+      return;
+    }
+    query$(Push(query));
+  }, [query]);
   const [loadingIndicatorState, setLoadingIndicatorState] = useState<number | null>(0);
   const isLoading = isSome(totalMatchesMaybe) && !totalMatchesMaybe.value.isComplete;
   useEffect(() => {
@@ -873,7 +890,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     return () => {
       disposable.dispose();
     };
-  }, [isLoading]);
+  }, [isLoading, query]);
   let resultInfoText: string;
   if (isSome(totalMatchesMaybe)) {
     if (isSome(matchNumberMaybe)) {
@@ -901,10 +918,11 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
           onCompositionStart={() => isInComposition$(Push(true))}
           onCompositionEnd={() => isInComposition$(Push(false))}
           onChange={(event) => {
-            query$(Push(event.target.value));
+            setQuery(event.target.value);
           }}
           placeholder="Find in document"
           tabIndex={tabIndex}
+          value={query}
           ref={inputRef}
         />
       </div>
@@ -4316,6 +4334,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const { visibleLeft, visibleRight } = this.#getVisibleLeftAndRight();
       return makeViewRectangle(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
     };
+    const initialQuery = '';
     const initialSearchControlConfig = {
       ignoreCase: true,
       ignoreDiacritics: true,
@@ -4324,7 +4343,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       searchQueryWordsIndividually: false,
       wholeWords: false,
     };
-    this.#searchControl = new SingleParagraphPlainTextSearchControl(this.stateControl, '', initialSearchControlConfig, this.topLevelContentReference);
+    this.#searchControl = new SingleParagraphPlainTextSearchControl(this.stateControl, initialQuery, initialSearchControlConfig, this.topLevelContentReference);
     this.add(this.#searchControl);
     pipe(
       this.#isSearchElementContainerVisible$,
@@ -4409,6 +4428,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           isInComposition$={this.#isSearchInComposition$}
           matchNumberMaybe$={this.#matchNumberMaybe$}
           totalMatchesMaybe$={this.#totalMatchesMaybe$}
+          initialQuery={initialQuery}
           initialConfig={{
             type: SearchBoxConfigType.SingleParagraphPlainText,
             config: initialSearchControlConfig,
