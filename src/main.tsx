@@ -1,4 +1,4 @@
-import { createRef, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createRef, startTransition, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isSafari } from './common/browserDetection';
@@ -452,17 +452,17 @@ interface ViewCursorAndRangeInfos {
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Some<T> | (() => Some<T>),
-  updateSync?: boolean | ((value: Maybe<T>) => boolean),
+  updateSync?: boolean | 'transition' | ((value: Maybe<T>) => boolean | 'transition'),
 ): Some<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
-  updateSync?: boolean | ((value: Maybe<T>) => boolean),
+  updateSync?: boolean | 'transition' | ((value: Maybe<T>) => boolean | 'transition'),
 ): Maybe<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
-  updateSync?: boolean | ((value: Maybe<T>) => boolean),
+  updateSync?: boolean | 'transition' | ((value: Maybe<T>) => boolean | 'transition'),
 ): Maybe<T> {
   const [value, setValue] = useState<Maybe<T>>(initialMaybe ?? None);
   const isFirstUpdateRef = useRef(true);
@@ -480,8 +480,13 @@ function use$<T>(
         syncFirstMaybe = maybe;
         return;
       }
-      if (typeof updateSync === 'function' ? updateSync(maybe) : updateSync) {
+      const updateSyncResult = typeof updateSync === 'function' ? updateSync(maybe) : updateSync;
+      if (updateSyncResult === true) {
         flushSync(() => {
+          setValue(maybe);
+        });
+      } else if (updateSyncResult === 'transition') {
+        startTransition(() => {
           setValue(maybe);
         });
       } else {
@@ -679,13 +684,13 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
     />
   );
 }
-interface SelectionOverlayMatchInfo {
+interface SearchOverlayMatchInfo {
   viewRangeInfos: ViewRangeInfo[];
   isSelected: boolean;
   hasFocus: boolean;
 }
 interface SearchOverlayMessage {
-  matchInfos: SelectionOverlayMatchInfo[];
+  calculateMatchInfos: () => SearchOverlayMatchInfo[];
   renderSync: boolean;
 }
 interface SearchOverlayProps {
@@ -708,7 +713,8 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
   if (isNone(searchOverlayMaybe)) {
     return null;
   }
-  const { matchInfos } = searchOverlayMaybe.value;
+  const { calculateMatchInfos } = searchOverlayMaybe.value;
+  const matchInfos = calculateMatchInfos();
   const uniqueKeyControl = new UniqueKeyControl();
   return (
     <>
@@ -3520,7 +3526,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     });
     this.#hideSelectionIds$ = CurrentValueDistributor<string[]>([]);
     this.#searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
-      matchInfos: [],
+      calculateMatchInfos: () => [],
       renderSync: false,
     });
     this.#relativeParagraphMeasurementCache = new LruCache(250);
@@ -3597,10 +3603,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addEventListener(this.#inputTextElement, 'cut', this.#onCut.bind(this), this);
     addEventListener(this.#inputTextElement, 'focus', this.#onInputElementFocus.bind(this), this);
     // TODO.
-    addEventListener(this.#inputTextElement, 'blur', this.#replaceViewSelectionRanges.bind(this), this);
+    addEventListener(this.#inputTextElement, 'blur', () => this.#replaceViewSelectionRanges(), this);
     addEventListener(this.#inputTextElement, 'compositionstart', this.#onCompositionStart.bind(this), this);
     addEventListener(this.#inputTextElement, 'compositionend', this.#onCompositionEnd.bind(this), this);
-    addWindowEventListener('focus', this.#replaceViewSelectionRanges.bind(this), this);
+    addWindowEventListener('focus', () => this.#replaceViewSelectionRanges(), this);
     addWindowEventListener(
       'blur',
       () => {
@@ -6055,6 +6061,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       throwUnreachable();
     }
     const message = event.value;
+    const { didApplyMutation } = message;
     if (isSafari) {
       this.#syncInputElement();
       if (this.#isSearchElementContainerVisible$.currentValue) {
@@ -6073,7 +6080,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (this.#isSearchElementContainerVisible$.currentValue) {
         this.#replaceVisibleSearchResults();
       }
-      this.#replaceViewSelectionRanges();
+      this.#replaceViewSelectionRanges(didApplyMutation);
       this.#syncInputElement();
     }
   }
@@ -6168,21 +6175,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
     }
   }
-  #trackMatchIndexDisposable: Disposable | null = null;
-  #replaceVisibleSearchResults(): void {
-    const renderSync = !this.#renderSearchOverlayAsync;
-    this.#renderSearchOverlayAsync = false;
-    this.#trackMatchIndexDisposable?.dispose();
-    this.#matchNumberMaybe$(Push(None));
+  #trackMatchesDisposable: Disposable | null = null;
+  #calculateVisibleSearchResultsMatchInfos = (): SearchOverlayMatchInfo[] => {
+    this.#trackMatchesDisposable?.dispose();
+    this.#trackMatchesDisposable = Disposable();
+    this.add(this.#trackMatchesDisposable);
+    queueMicrotaskDisposable(() => {
+      this.#matchNumberMaybe$(Push(None));
+    }, this.#trackMatchesDisposable);
     if (!this.#isSearchElementContainerVisible$.currentValue) {
-      this.#hideSelectionIds$(Push([]));
-      this.#searchOverlay$(
-        Push({
-          matchInfos: [],
-          renderSync,
-        }),
-      );
-      return;
+      queueMicrotaskDisposable(() => {
+        this.#hideSelectionIds$(Push([]));
+      }, this.#trackMatchesDisposable);
+      return [];
     }
     // TODO: Lag when dragging selection with lots of results.
     const { visibleTop, visibleBottom } = this.#getVisibleTopAndBottom();
@@ -6213,7 +6218,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         startIndex,
       ) + 1,
     );
-    const matchInfos: SelectionOverlayMatchInfo[] = [];
+    const matchInfos: SearchOverlayMatchInfo[] = [];
     let hideSelectionRangeIds: string[] = [];
     const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
     if (
@@ -6232,11 +6237,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         (otherMatch) => otherMatch.startOffset === focusStartOffset && otherMatch.endOffset === focusEndOffset,
       );
       if (matchIndexInParagraph !== -1) {
-        this.#trackMatchIndexDisposable = Disposable();
-        this.add(this.#trackMatchIndexDisposable);
         const totalMatchesBeforeParagraph$ = this.#searchElementTrackAllControl.trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange(
           paragraphReference,
-          this.#trackMatchIndexDisposable,
+          this.#trackMatchesDisposable,
         );
         pipe(
           totalMatchesBeforeParagraph$,
@@ -6248,8 +6251,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               return;
             }
             const totalMatchesBeforeParagraph = event.value;
-            this.#matchNumberMaybe$(Push(Some(totalMatchesBeforeParagraph + matchIndexInParagraph + 1)));
-          }, this.#trackMatchIndexDisposable),
+            assertIsNotNullish(this.#trackMatchesDisposable);
+            queueMicrotaskDisposable(() => {
+              this.#matchNumberMaybe$(Push(Some(totalMatchesBeforeParagraph + matchIndexInParagraph + 1)));
+            }, this.#trackMatchesDisposable);
+          }, this.#trackMatchesDisposable),
         );
       }
     }
@@ -6301,17 +6307,28 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         });
       }
     }
-    this.#hideSelectionIds$(Push(hideSelectionRangeIds));
+    queueMicrotaskDisposable(() => {
+      this.#hideSelectionIds$(Push(hideSelectionRangeIds));
+    }, this.#trackMatchesDisposable);
+    return matchInfos;
+  };
+  #replaceVisibleSearchResults(): void {
+    const renderSync = !this.#renderSearchOverlayAsync;
+    this.#renderSearchOverlayAsync = false;
     this.#searchOverlay$(
       Push({
-        matchInfos,
+        calculateMatchInfos: this.#calculateVisibleSearchResultsMatchInfos.bind(this),
         renderSync,
       }),
     );
   }
   #virtualSelectionDisposable: Disposable | null = null;
-  // TODO: Deduplicate calling this method.
-  #replaceViewSelectionRanges(): void {
+  #lastRenderedSelection: matita.Selection | null = null;
+  #replaceViewSelectionRanges(didApplyMutation?: boolean): void {
+    if (didApplyMutation === false && this.#lastRenderedSelection === this.stateControl.stateView.selection) {
+      return;
+    }
+    this.#lastRenderedSelection = this.stateControl.stateView.selection;
     this.#virtualSelectionDisposable?.dispose();
     const virtualSelectionDisposable = Disposable();
     this.#virtualSelectionDisposable = virtualSelectionDisposable;
