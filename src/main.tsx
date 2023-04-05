@@ -2992,7 +2992,7 @@ function indexOfNearestLessThanDynamic<V, N>(
       target = mid;
       low = mid + 1;
     } else {
-      return low;
+      return mid;
     }
   }
   return target;
@@ -3017,7 +3017,7 @@ function indexOfNearestLessThan<V, N>(array: V[], needle: N, compare: (value: V,
       target = mid;
       low = mid + 1;
     } else {
-      return low;
+      return mid;
     }
   }
   return target;
