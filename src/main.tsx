@@ -9,6 +9,7 @@ import * as matita from './matita';
 import {
   SingleParagraphPlainTextSearchControl,
   SingleParagraphPlainTextSearchControlConfig,
+  TotalMatchesMessage,
   TrackAllControl,
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
@@ -52,7 +53,7 @@ import {
   timer,
   windowScheduledBySource,
 } from './ruscel/source';
-import { pipe, queueMicrotaskDisposable, requestAnimationFrameDisposable, setTimeoutDisposable } from './ruscel/util';
+import { pipe, queueMicrotaskDisposable, requestAnimationFrameDisposable, setTimeoutDisposable, setIntervalDisposable } from './ruscel/util';
 import './index.css';
 interface DocumentConfig extends matita.NodeConfig {}
 interface ContentConfig extends matita.NodeConfig {}
@@ -757,7 +758,7 @@ interface SearchBoxProps {
   close$: Sink<undefined>;
   isInComposition$: Sink<boolean>;
   matchNumberMaybe$: CurrentValueSource<Maybe<number>>;
-  totalMatchesMaybe$: CurrentValueSource<Maybe<number>>;
+  totalMatchesMaybe$: CurrentValueSource<Maybe<TotalMatchesMessage>>;
   initialConfig: SearchBoxControlConfig;
   inputRef: React.Ref<HTMLInputElement>;
 }
@@ -854,6 +855,42 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       }),
     );
   }, [config]);
+  const [loadingIndicatorState, setLoadingIndicatorState] = useState<number | null>(0);
+  const isLoading = isSome(totalMatchesMaybe) && !totalMatchesMaybe.value.isComplete;
+  useEffect(() => {
+    setLoadingIndicatorState(null);
+    if (!isLoading) {
+      return;
+    }
+    const disposable = Disposable();
+    setIntervalDisposable(
+      () => {
+        setLoadingIndicatorState((loadingIndicatorState) => (loadingIndicatorState === null ? 0 : loadingIndicatorState + 1) % 3);
+      },
+      300,
+      disposable,
+    );
+    return () => {
+      disposable.dispose();
+    };
+  }, [isLoading]);
+  let resultInfoText: string;
+  if (isSome(totalMatchesMaybe)) {
+    if (isSome(matchNumberMaybe)) {
+      resultInfoText = `${matchNumberMaybe.value} of ${totalMatchesMaybe.value.totalMatches}`;
+    } else if (totalMatchesMaybe.value.totalMatches === 0) {
+      resultInfoText = 'No results';
+    } else if (totalMatchesMaybe.value.totalMatches === 1) {
+      resultInfoText = '1 result';
+    } else {
+      resultInfoText = `${totalMatchesMaybe.value.totalMatches} results`;
+    }
+    if (!totalMatchesMaybe.value.isComplete && loadingIndicatorState !== null) {
+      resultInfoText += '.'.repeat(loadingIndicatorState + 1);
+    }
+  } else {
+    resultInfoText = ' '.repeat(15);
+  }
   const searchBoxChildren: React.ReactNode[] = [];
   searchBoxChildren.push(
     <div className="search-box__line-container search-box__line-container--search" key="search">
@@ -873,17 +910,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       </div>
       <div className="search-box__line-container--search__sub-container search-box__line-container--search__grow">
         <div className="search-box__line-container--search__sub-container">
-          <span className="search-box__search-results-info">
-            {isSome(totalMatchesMaybe)
-              ? isSome(matchNumberMaybe)
-                ? `${matchNumberMaybe.value} of ${totalMatchesMaybe.value}`
-                : totalMatchesMaybe.value === 0
-                ? 'No results'
-                : totalMatchesMaybe.value === 1
-                ? '1 result'
-                : `${totalMatchesMaybe.value} results`
-              : ' '.repeat(15)}
-          </span>
+          <span className="search-box__search-results-info">{resultInfoText}</span>
         </div>
         <div className="search-box__line-container--search__sub-container search-box__line-container--search__sub-container--justify-end search-box__line-container--search__grow">
           <div className="search-box__line-container--search__sub-container">
@@ -3556,7 +3583,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #isSearchElementContainerVisible$ = CurrentValueDistributor<boolean>(false);
   #searchElementTrackAllControl: TrackAllControl | null = null;
   #matchNumberMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
-  #totalMatchesMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
+  #totalMatchesMaybe$ = CurrentValueDistributor<Maybe<TotalMatchesMessage>>(None);
   #isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
   #renderSearchOverlayAsync = false;
   init(): void {

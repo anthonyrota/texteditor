@@ -41,12 +41,16 @@ interface WrapCurrentOrSearchFurtherMatchResult {
   match: ParagraphMatch;
   matchIndex: number;
 }
+interface TotalMatchesMessage {
+  totalMatches: number;
+  isComplete: boolean;
+}
 interface TrackAllControlBase {
   trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange: (
     paragraphReference: matita.BlockReference,
     disposable: Disposable,
   ) => CurrentValueSource<number>;
-  totalMatches$: CurrentValueSource<number>;
+  totalMatches$: CurrentValueSource<TotalMatchesMessage>;
 }
 interface TrackAllControl extends TrackAllControlBase, Disposable {}
 class TextPart {
@@ -973,8 +977,13 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       assertIsNotNullish(this.#paragraphMatchCounts);
       if (this.#searchPatterns.length === 0) {
         if (!isFirstTime) {
-          if (totalMatches$.currentValue !== 0) {
-            totalMatches$(Push(0));
+          if (!totalMatches$.currentValue.isComplete || totalMatches$.currentValue.totalMatches !== 0) {
+            totalMatches$(
+              Push({
+                isComplete: true,
+                totalMatches: 0,
+              }),
+            );
           }
         }
         return;
@@ -990,9 +999,12 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       }
       recalculateIndex$(Push(undefined));
       if (!isFirstTime) {
-        const newTotalMatches = this.#paragraphMatchCounts.getTotalCount();
-        if (totalMatches$.currentValue !== newTotalMatches) {
-          totalMatches$(Push(newTotalMatches));
+        const totalMatchesMessage = makeTotalMatchesMessage();
+        if (
+          totalMatches$.currentValue.totalMatches !== totalMatchesMessage.totalMatches ||
+          totalMatches$.currentValue.isComplete !== totalMatchesMessage.isComplete
+        ) {
+          totalMatches$(Push(totalMatchesMessage));
         }
       }
       ensureWorkQueuedIfNeeded();
@@ -1016,7 +1028,22 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         ensureWorkQueuedIfNeeded();
       }, disposable),
     );
-    const totalMatches$ = CurrentValueDistributor(this.#paragraphMatchCounts.getTotalCount());
+    const makeTotalMatchesMessage = (): TotalMatchesMessage => {
+      assertIsNotNullish(this.#pendingParagraphIds);
+      assertIsNotNullish(this.#paragraphMatchCounts);
+      if (this.#searchPatterns.length === 0) {
+        return {
+          isComplete: true,
+          totalMatches: 0,
+        };
+      }
+      const totalMatches = this.#paragraphMatchCounts.getTotalCount();
+      return {
+        isComplete: this.#pendingParagraphIds.getQueueLength() === 0,
+        totalMatches,
+      };
+    };
+    const totalMatches$ = CurrentValueDistributor<TotalMatchesMessage>(makeTotalMatchesMessage());
     const trackAllControlBase: TrackAllControlBase = {
       trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange: (paragraphReference, matchDisposable) => {
         assertIsNotNullish(this.#paragraphMatchCounts);
@@ -1079,5 +1106,6 @@ export {
   type ParagraphMatches,
   WrapCurrentOrSearchFurtherMatchStrategy,
   type WrapCurrentOrSearchFurtherMatchResult,
+  type TotalMatchesMessage,
   type TrackAllControl,
 };
