@@ -896,11 +896,11 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     if (isSome(matchNumberMaybe)) {
       resultInfoText = `${matchNumberMaybe.value} of ${totalMatchesMaybe.value.totalMatches}`;
     } else if (totalMatchesMaybe.value.totalMatches === 0) {
-      resultInfoText = 'No results';
+      resultInfoText = 'No matches';
     } else if (totalMatchesMaybe.value.totalMatches === 1) {
-      resultInfoText = '1 result';
+      resultInfoText = '1 match';
     } else {
-      resultInfoText = `${totalMatchesMaybe.value.totalMatches} results`;
+      resultInfoText = `${totalMatchesMaybe.value.totalMatches} matches`;
     }
     if (!totalMatchesMaybe.value.isComplete && loadingIndicatorState !== null) {
       resultInfoText += '.'.repeat(loadingIndicatorState + 1);
@@ -1168,6 +1168,7 @@ enum Platform {
 enum Context {
   Editing = 'Editing',
   Searching = 'Searching',
+  InSearchBox = 'InSearchBox',
   DraggingSelection = 'DraggingSelection',
 }
 type Selector<T extends string> = T | { not: Selector<T> } | { all: Selector<T>[] } | { any: Selector<T>[] };
@@ -1369,7 +1370,7 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     key: 'Escape',
     command: StandardCommand.CloseSearch,
     platform: Platform.Apple,
-    context: Context.Searching,
+    context: Context.InSearchBox,
     cancelKeyEvent: true,
   },
   {
@@ -5048,6 +5049,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #isSearchFocused(): boolean {
     return !!this.#searchInputRef.current && document.activeElement === this.#searchInputRef.current;
   }
+  #isInSearchBox(): boolean {
+    return !!document.activeElement && this.#searchElementContainerElement.contains(document.activeElement);
+  }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
     // TODO: Can't do this with multiple selectionChange$ listeners.
     if (event.type !== PushType) {
@@ -5073,7 +5077,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.#inputTextElement.blur();
       }
     } else {
-      if (!this.#hasFocusIncludingNotActiveWindow() && !(document.activeElement && this.#searchElementContainerElement.contains(document.activeElement))) {
+      if (!this.#hasFocusIncludingNotActiveWindow() && !this.#isInSearchBox()) {
         this.#inputTextElement.focus({
           preventScroll: true,
         });
@@ -5396,6 +5400,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     if (this.#isSearchFocused() && !this.#isSearchInComposition$.currentValue) {
       activeContexts.push(Context.Searching);
+    }
+    if (this.#isInSearchBox() && !this.#isSearchInComposition$.currentValue) {
+      activeContexts.push(Context.InSearchBox);
     }
     for (let i = 0; i < this.#keyCommands.length; i++) {
       const keyCommand = this.#keyCommands[i];
