@@ -233,16 +233,17 @@ interface CurrentValueSource<T> extends Source<T> {
 interface CurrentValueDistributor<T> extends Distributor<T> {
   currentValue: T;
 }
-function CurrentValueDistributor<T>(initialValue: T, pushCurrentValue = true): CurrentValueDistributor<T> {
+function CurrentValueDistributor<T>(initialValue: T): CurrentValueDistributor<T> {
   const base = Distributor<T>();
   const distributor = markAsDistributor(
     implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
       if (typeof eventOrSink === 'function') {
         base(eventOrSink);
-        if (pushCurrentValue && eventOrSink.active) {
-          eventOrSink(Push(distributor.currentValue));
-        }
+        eventOrSink(Push(distributor.currentValue));
       } else {
+        if (!base.active) {
+          return;
+        }
         if (eventOrSink.type === PushType) {
           distributor.currentValue = eventOrSink.value;
         }
@@ -262,18 +263,29 @@ interface LastValueDistributor<T> extends Distributor<T> {
   ended: boolean;
   lastValue: Maybe<T>;
 }
-function LastValueDistributor<T>(initialValue: Maybe<T> = None, pushLastValue = true): LastValueDistributor<T> {
-  const base = Distributor<T>();
+function LastValueDistributor<T>(initialValue: Maybe<T> = None): LastValueDistributor<T> {
+  const base = DistributorBase<T>();
+  let finalEvent: Throw | End | undefined;
   const distributor = markAsDistributor(
     implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
       if (typeof eventOrSink === 'function') {
-        if (pushLastValue && eventOrSink.active && isSome(distributor.lastValue)) {
+        if ((!finalEvent || finalEvent.type === EndType) && isSome(distributor.lastValue)) {
           eventOrSink(Push(distributor.lastValue.value));
         }
-        base(eventOrSink);
+        if (finalEvent) {
+          eventOrSink(finalEvent);
+        } else {
+          base(eventOrSink);
+        }
       } else {
+        if (!base.active) {
+          return;
+        }
         if (eventOrSink.type === PushType) {
           distributor.lastValue = Some(eventOrSink.value);
+        }
+        if (eventOrSink.type !== PushType) {
+          finalEvent = eventOrSink;
         }
         base(eventOrSink);
       }

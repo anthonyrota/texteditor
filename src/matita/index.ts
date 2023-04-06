@@ -3753,7 +3753,7 @@ function makeStateControl<
   };
   type CommittedMutationInfoForReversingBase = {
     mutationReferenceWeakRef: WeakRef<MutationReference>;
-    currentSelection: Selection;
+    currentSelection: Selection; // FIXME.
     currentCustomCollapsedSelectionTextConfig: TextConfig | null;
   };
   type CommittedMutationInfoForReversingDummyFirst = CommittedMutationInfoForReversingBase & {

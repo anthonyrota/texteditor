@@ -132,7 +132,7 @@ function fromArray<T>(array: ArrayLike<T>): Source<T> {
     sink(End);
   });
 }
-function ofEvent<T>(event: End, schedule?: ScheduleFunction): Source<never>;
+function ofEvent(event: End, schedule?: ScheduleFunction): Source<never>;
 function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T>;
 function ofEvent<T>(event: Event<T>, schedule?: ScheduleFunction): Source<T> {
   if (schedule) {

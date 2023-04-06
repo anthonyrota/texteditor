@@ -1,4 +1,4 @@
-import { createRef, startTransition, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createRef, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isSafari } from './common/browserDetection';
@@ -53,7 +53,15 @@ import {
   timer,
   windowScheduledBySource,
 } from './ruscel/source';
-import { pipe, queueMicrotaskDisposable, requestAnimationFrameDisposable, setTimeoutDisposable, setIntervalDisposable } from './ruscel/util';
+import {
+  pipe,
+  queueMicrotaskDisposable,
+  requestAnimationFrameDisposable,
+  setTimeoutDisposable,
+  setIntervalDisposable,
+  addWindowEventListener,
+  addEventListener,
+} from './ruscel/util';
 import './index.css';
 interface DocumentConfig extends matita.NodeConfig {}
 interface ContentConfig extends matita.NodeConfig {}
@@ -264,95 +272,6 @@ function findScrollContainer(node: Node, isScrollable: (element: Element) => boo
     return document.documentElement;
   }
   return scrollElement;
-}
-function addEventListener<K extends keyof HTMLElementEventMap>(
-  element: HTMLElement,
-  type: K,
-  listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => unknown,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void;
-function addEventListener(
-  element: HTMLElement,
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void;
-function addEventListener(
-  element: HTMLElement,
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void {
-  if (!disposable.active) {
-    return;
-  }
-  element.addEventListener(type, listener, options);
-  disposable.add(
-    Disposable(() => {
-      element.removeEventListener(type, listener, options);
-    }),
-  );
-}
-function addDocumentEventListener<K extends keyof DocumentEventMap>(
-  type: K,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  listener: (this: Document, ev: DocumentEventMap[K]) => any,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void;
-function addDocumentEventListener(
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void;
-function addDocumentEventListener(
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void {
-  if (!disposable.active) {
-    return;
-  }
-  document.addEventListener(type, listener, options);
-  disposable.add(
-    Disposable(() => {
-      document.removeEventListener(type, listener, options);
-    }),
-  );
-}
-function addWindowEventListener<K extends keyof WindowEventMap>(
-  type: K,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  listener: (this: Window, ev: WindowEventMap[K]) => any,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void;
-function addWindowEventListener(
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void;
-function addWindowEventListener(
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  disposable: Disposable,
-  options?: boolean | AddEventListenerOptions,
-): void {
-  if (!disposable.active) {
-    return;
-  }
-  window.addEventListener(type, listener, options);
-  disposable.add(
-    Disposable(() => {
-      window.removeEventListener(type, listener, options);
-    }),
-  );
 }
 function findClosestNodeRenderControl(
   viewControl: VirtualizedViewControl,
@@ -751,6 +670,7 @@ interface SearchBoxControlConfig {
 interface SearchBoxProps {
   isVisible$: CurrentValueSource<boolean>;
   containerStaticViewRectangle$: CurrentValueSource<ViewRectangle>;
+  goToSearchResultImmediatelySink: Sink<boolean>;
   querySink: Sink<string>;
   configSink: Sink<SearchBoxControlConfig>;
   goToPreviousMatchSink: Sink<undefined>;
@@ -760,6 +680,7 @@ interface SearchBoxProps {
   changeQuery$: Source<string>;
   matchNumberMaybe$: CurrentValueSource<Maybe<number>>;
   totalMatchesMaybe$: CurrentValueSource<Maybe<TotalMatchesMessage>>;
+  initialGoToSearchResultImmediately: boolean;
   initialQuery: string;
   initialConfig: SearchBoxControlConfig;
   inputRef: React.Ref<HTMLInputElement>;
@@ -780,6 +701,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
     isVisible$,
     containerStaticViewRectangle$,
+    goToSearchResultImmediatelySink,
     querySink,
     configSink,
     closeSink,
@@ -789,6 +711,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     changeQuery$,
     matchNumberMaybe$,
     totalMatchesMaybe$,
+    initialGoToSearchResultImmediately,
     initialQuery,
     initialConfig,
     inputRef,
@@ -1016,6 +939,13 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     ['wholeWords', 'Whole Words', false],
     ['searchQueryWordsIndividually', 'Search Query Words Individually', false],
   ];
+  const [goToSearchResultImmediately, setGoToSearchResultsImmediately] = useState<boolean>(initialGoToSearchResultImmediately);
+  useEffect(() => {
+    if (isFirstRender) {
+      return;
+    }
+    goToSearchResultImmediatelySink(Push(goToSearchResultImmediately));
+  }, [goToSearchResultImmediately]);
   if (isOptionsShown) {
     searchBoxChildren.push(
       <div className="search-box__line-container search-box__line-container--options" key="options">
@@ -1039,6 +969,18 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
             </label>
           );
         })}
+        <label className="search-box__checkbox-container">
+          <input
+            className="search-box__checkbox-input"
+            type="checkbox"
+            onChange={(event) => {
+              const isChecked = event.target.checked;
+              setGoToSearchResultsImmediately(isChecked);
+            }}
+            checked={goToSearchResultImmediately}
+          />
+          <span className="search-box__checkbox-label">Go To Search Result Immediately</span>
+        </label>
       </div>,
     );
   }
@@ -3491,6 +3433,7 @@ class ReactiveResizeObserver extends DisposableClass {
   }
 }
 const SeparateSelectionIdKey = 'virtualized.separateSelectionId';
+const SearchQueryGoToSearchResultImmediatelyKey = 'virtualized.searchQueryGoToSearchResultImmediately';
 class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
   rootHtmlElement: HTMLElement;
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -4297,6 +4240,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const { visibleLeft, visibleRight } = this.#getVisibleLeftAndRight();
       return makeViewRectangle(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
     };
+    const initialGoToSearchResultImmediately = true;
     const initialQuery = '';
     const initialSearchControlConfig: SingleParagraphPlainTextSearchControlConfig = {
       ignoreCase: true,
@@ -4334,6 +4278,25 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     );
     requestAnimationFrameDisposable(() => {
       searchContainerStaticViewRectangle$ = CurrentValueDistributor(calculateCurrentSearchContainerStaticViewRectangle());
+      let goToSearchResultImmediately = initialGoToSearchResultImmediately as boolean;
+      let goToSearchResultImmediatelyCancelDisposable: Disposable | null;
+      if (goToSearchResultImmediately) {
+        goToSearchResultImmediatelyCancelDisposable = Disposable();
+        this.add(goToSearchResultImmediatelyCancelDisposable);
+      }
+      const goToSearchResultImmediatelySink = Sink<boolean>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        goToSearchResultImmediately = event.value;
+        if (goToSearchResultImmediately) {
+          goToSearchResultImmediatelyCancelDisposable = Disposable();
+          this.add(goToSearchResultImmediatelyCancelDisposable);
+        } else {
+          assertIsNotNullish(goToSearchResultImmediatelyCancelDisposable);
+          goToSearchResultImmediatelyCancelDisposable.dispose();
+        }
+      });
       const searchConfigSink = Sink<SearchBoxControlConfig>((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
@@ -4349,6 +4312,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           // TODO: This is a hack to queue onFinishedUpdating.
         });
       });
+      let anchoredStateView: [matita.Selection, matita.StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>] | null =
+        null;
       const searchQuerySink = Sink<string>((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
@@ -4359,6 +4324,100 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.stateControl.queueUpdate(() => {
           // TODO: This is a hack to queue onFinishedUpdating.
         });
+        if (!goToSearchResultImmediately || !this.#searchElementTrackAllControl) {
+          return;
+        }
+        assertIsNotNullish(goToSearchResultImmediatelyCancelDisposable);
+        if (anchoredStateView === null) {
+          const searchInputElement = this.#searchInputRef.current;
+          if (!searchInputElement || document.activeElement !== searchInputElement) {
+            return;
+          }
+          anchoredStateView = [this.stateControl.stateView.selection, this.stateControl.snapshotStateThroughStateView()];
+          const resetAnchoredStateViewDisposable = Disposable(() => {
+            anchoredStateView = null;
+          });
+          this.add(resetAnchoredStateViewDisposable);
+          goToSearchResultImmediatelyCancelDisposable.add(resetAnchoredStateViewDisposable);
+          pipe(
+            this.stateControl.selectionChange$,
+            subscribe((event) => {
+              if (event.type !== PushType) {
+                return;
+              }
+              const message = event.value;
+              const { updateDataStack, data } = message;
+              if (
+                !updateDataStack.some((data) => !!data[SearchQueryGoToSearchResultImmediatelyKey]) &&
+                !(data && !!data[SearchQueryGoToSearchResultImmediatelyKey])
+              ) {
+                resetAnchoredStateViewDisposable.dispose();
+              }
+            }, resetAnchoredStateViewDisposable),
+          );
+          pipe(
+            fromReactiveValue<[FocusEvent]>((callback, disposable) => addEventListener(searchInputElement, 'blur', callback, disposable)),
+            map((args) => args[0]),
+            subscribe((event) => {
+              if (event.type === ThrowType) {
+                throw event.error;
+              }
+              if (event.type === PushType) {
+                resetAnchoredStateViewDisposable.dispose();
+              }
+            }, resetAnchoredStateViewDisposable),
+          );
+        }
+        const matchDisposable = Disposable();
+        goToSearchResultImmediatelyCancelDisposable.add(matchDisposable);
+        pipe(
+          this.stateControl.selectionChange$,
+          subscribe((event) => {
+            assert(event.type === PushType);
+            matchDisposable.dispose();
+          }, matchDisposable),
+        );
+        assertIsNotNullish(anchoredStateView);
+        const findFromSelection = this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
+          {
+            selection: anchoredStateView[0],
+            fixWhen: matita.MutationSelectionTransformFixWhen.NoFix,
+            shouldTransformAsSelection: true,
+          },
+          anchoredStateView[1],
+          this.stateControl.stateView,
+        );
+        const findFromSelectionRange = matita.getFocusSelectionRangeFromSelection(findFromSelection);
+        const match$ = this.#searchElementTrackAllControl.wrapCurrentAlwaysOrFindNextMatch(findFromSelectionRange, matchDisposable);
+        pipe(
+          match$,
+          subscribe((event) => {
+            if (event.type === ThrowType) {
+              throw event.error;
+            }
+            if (event.type === EndType) {
+              return;
+            }
+            const paragraphMatch = event.value;
+            if (paragraphMatch === null) {
+              return;
+            }
+            this.stateControl.queueUpdate(() => {
+              const contentReference = matita.makeContentReferenceFromContent(
+                matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphMatch.paragraphReference),
+              );
+              const range = matita.makeRange(
+                contentReference,
+                matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphMatch.paragraphReference, paragraphMatch.startOffset),
+                matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphMatch.paragraphReference, paragraphMatch.endOffset),
+                matita.generateId(),
+              );
+              const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+              const selection = matita.makeSelection([selectionRange]);
+              this.stateControl.delta.setSelection(selection, undefined, { [SearchQueryGoToSearchResultImmediatelyKey]: true });
+            });
+          }, matchDisposable),
+        );
       });
       const closeSearchSink = Sink<undefined>((event) => {
         if (event.type !== PushType) {
@@ -4367,12 +4426,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.stateControl.queueUpdate(this.closeSearch());
       });
       const goToPreviousMatchSink = Sink<undefined>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
         this.runCommand({
           commandName: StandardCommand.SelectPreviousSearchMatch,
           data: null,
         });
       });
       const goToNextMatchSink = Sink<undefined>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
         this.runCommand({
           commandName: StandardCommand.SelectNextSearchMatch,
           data: null,
@@ -4382,6 +4447,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         <SearchBox
           isVisible$={this.#isSearchElementContainerVisible$}
           containerStaticViewRectangle$={searchContainerStaticViewRectangle$}
+          goToSearchResultImmediatelySink={goToSearchResultImmediatelySink}
           querySink={searchQuerySink}
           configSink={searchConfigSink}
           goToPreviousMatchSink={goToPreviousMatchSink}
@@ -4391,6 +4457,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           changeQuery$={this.#changeQuery$}
           matchNumberMaybe$={this.#matchNumberMaybe$}
           totalMatchesMaybe$={this.#totalMatchesMaybe$}
+          initialGoToSearchResultImmediately={initialGoToSearchResultImmediately}
           initialQuery={initialQuery}
           initialConfig={{
             type: SearchBoxConfigType.SingleParagraphPlainText,
@@ -5027,9 +5094,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
-    const { previousSelection, data } = event.value;
+    const { previousSelection, updateDataStack, data } = event.value;
     if (
       !this.#isDraggingSelection &&
+      !updateDataStack.some((data) => !!data[doNotScrollToSelectionAfterChangeDataKey]) &&
       !(data && !!data[doNotScrollToSelectionAfterChangeDataKey]) &&
       (!matita.areSelectionsCoveringSameContent(previousSelection, this.stateControl.stateView.selection) ||
         (previousSelection.selectionRanges.length > 0 &&
@@ -6376,12 +6444,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     return matchInfos;
   };
   #replaceVisibleSearchResults(): void {
-    const renderSync = !this.#renderSearchOverlayAsync;
+    const renderSearchOverlayAsync = this.#renderSearchOverlayAsync;
     this.#renderSearchOverlayAsync = false;
     this.#searchOverlay$(
       Push({
         calculateMatchInfos: this.#calculateVisibleSearchResultsMatchInfos.bind(this),
-        renderSync,
+        renderSync: !renderSearchOverlayAsync,
       }),
     );
   }

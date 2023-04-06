@@ -130,6 +130,95 @@ function requestIdleCallbackDisposable(callback: IdleRequestCallback, disposable
     callback(deadline);
   }, options);
 }
+function addEventListener<K extends keyof HTMLElementEventMap>(
+  element: HTMLElement,
+  type: K,
+  listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => unknown,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void;
+function addEventListener(
+  element: HTMLElement,
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void;
+function addEventListener(
+  element: HTMLElement,
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void {
+  if (!disposable.active) {
+    return;
+  }
+  element.addEventListener(type, listener, options);
+  disposable.add(
+    Disposable(() => {
+      element.removeEventListener(type, listener, options);
+    }),
+  );
+}
+function addDocumentEventListener<K extends keyof DocumentEventMap>(
+  type: K,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  listener: (this: Document, ev: DocumentEventMap[K]) => any,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void;
+function addDocumentEventListener(
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void;
+function addDocumentEventListener(
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void {
+  if (!disposable.active) {
+    return;
+  }
+  document.addEventListener(type, listener, options);
+  disposable.add(
+    Disposable(() => {
+      document.removeEventListener(type, listener, options);
+    }),
+  );
+}
+function addWindowEventListener<K extends keyof WindowEventMap>(
+  type: K,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  listener: (this: Window, ev: WindowEventMap[K]) => any,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void;
+function addWindowEventListener(
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void;
+function addWindowEventListener(
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  disposable: Disposable,
+  options?: boolean | AddEventListenerOptions,
+): void {
+  if (!disposable.active) {
+    return;
+  }
+  window.addEventListener(type, listener, options);
+  disposable.add(
+    Disposable(() => {
+      window.removeEventListener(type, listener, options);
+    }),
+  );
+}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyMapFunction = (a: any) => any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -284,5 +373,8 @@ export {
   setIntervalDisposable,
   queueMicrotaskDisposable,
   requestIdleCallbackDisposable,
+  addEventListener,
+  addDocumentEventListener,
+  addWindowEventListener,
   pipe,
 };
