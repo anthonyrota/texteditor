@@ -1056,6 +1056,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       };
     };
     const totalMatches$ = CurrentValueDistributor<TotalMatchesMessage>(makeTotalMatchesMessage());
+    let isFindingNextMatch = false;
     const trackAllControlBase: TrackAllControlBase = {
       trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange: (paragraphReference, matchDisposable) => {
         assertIsNotNullish(this.#paragraphMatchCounts);
@@ -1088,6 +1089,9 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       },
       // TODO: Don't stop when collaborating.
       wrapCurrentAlwaysOrFindNextMatch: (selectionRange, matchDisposable) => {
+        if (isFindingNextMatch) {
+          throw new Error('Can only asynchronously compute one match at a time.');
+        }
         const match$ = LastValueDistributor<ParagraphMatch | null>();
         if (this.#searchPatterns.length === 0) {
           match$(Push(null));
@@ -1096,6 +1100,11 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
         matchDisposable.add(match$);
         disposable.add(match$);
+        match$.add(
+          Disposable(() => {
+            isFindingNextMatch = false;
+          }),
+        );
         let blockReference: matita.BlockReference | null = null;
         if (selectionRange) {
           const firstRange = selectionRange.ranges[0];

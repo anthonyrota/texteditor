@@ -4314,6 +4314,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       });
       let anchoredStateView: [matita.Selection, matita.StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>] | null =
         null;
+      let matchDisposable: Disposable | null = null;
       const searchQuerySink = Sink<string>((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
@@ -4368,12 +4369,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             }, resetAnchoredStateViewDisposable),
           );
         }
-        const matchDisposable = Disposable();
+        matchDisposable?.dispose();
+        matchDisposable = Disposable();
         goToSearchResultImmediatelyCancelDisposable.add(matchDisposable);
         pipe(
           this.stateControl.selectionChange$,
           subscribe((event) => {
             assert(event.type === PushType);
+            assertIsNotNullish(matchDisposable);
             matchDisposable.dispose();
           }, matchDisposable),
         );
