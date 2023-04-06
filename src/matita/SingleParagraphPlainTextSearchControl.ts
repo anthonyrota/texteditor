@@ -2,7 +2,7 @@ import { CountedIndexableUniqueStringList } from '../common/CountedIndexableUniq
 import { IntlSegmenter } from '../common/IntlSegmenter';
 import { LpsArray, computeLpsArray, searchKmp } from '../common/Kmp';
 import { UniqueStringQueue } from '../common/UniqueStringQueue';
-import { assert, assertIsNotNullish, assertUnreachable, groupConsecutiveItemsInArray, throwNotImplemented, throwUnreachable } from '../common/util';
+import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from '../common/util';
 import { Disposable, DisposableClass, implDisposableMethods } from '../ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor } from '../ruscel/distributor';
 import { Maybe, None, Some } from '../ruscel/maybe';
@@ -12,7 +12,7 @@ import * as matita from '.';
 interface SingleParagraphPlainTextSearchControlConfig {
   ignoreCase: boolean;
   ignoreDiacritics: boolean;
-  ignorePunctuation: boolean;
+  stripNonLettersAndNumbers: boolean;
   wholeWords: boolean;
   searchQueryWordsIndividually: boolean;
 }
@@ -20,7 +20,7 @@ function areConfigsEqual(config1: SingleParagraphPlainTextSearchControlConfig, c
   return (
     config1.ignoreCase === config2.ignoreCase &&
     config1.ignoreDiacritics === config2.ignoreDiacritics &&
-    config1.ignorePunctuation === config2.ignorePunctuation &&
+    config1.stripNonLettersAndNumbers === config2.stripNonLettersAndNumbers &&
     config1.wholeWords === config2.wholeWords &&
     config1.searchQueryWordsIndividually === config2.searchQueryWordsIndividually
   );
@@ -70,7 +70,7 @@ class TextPartGroup {
   }
 }
 function normalizePunctuation(char: string): string {
-  return char.replace(/[^\p{L}\p{N}\s]/gu, '');
+  return char.replace(/[^\p{L}\p{N}]/gu, '');
 }
 function normalizeDiacritics(char: string): string {
   return char.normalize('NFD').replace(/\p{Diacritic}/gu, '');
@@ -79,8 +79,8 @@ function normalizeCase(char: string): string {
   return char.toLocaleLowerCase();
 }
 function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextSearchControlConfig, graphemeSegmenter: IntlSegmenter): TextPart[] {
-  const { ignorePunctuation, ignoreDiacritics, ignoreCase } = config;
-  if (!ignorePunctuation && !ignoreDiacritics && !ignoreCase) {
+  const { stripNonLettersAndNumbers, ignoreDiacritics, ignoreCase } = config;
+  if (!stripNonLettersAndNumbers && !ignoreDiacritics && !ignoreCase) {
     return [textPart];
   }
   const segments = graphemeSegmenter.segment(textPart.text);
@@ -96,7 +96,7 @@ function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextS
     if (ignoreDiacritics) {
       normalizedChar = normalizeDiacritics(normalizedChar);
     }
-    if (ignorePunctuation) {
+    if (stripNonLettersAndNumbers) {
       normalizedChar = normalizePunctuation(normalizedChar);
     }
     if (normalizedChar.length === 0) {
@@ -129,6 +129,14 @@ interface SearchPatternData {
   pattern: string;
   kmpLpsArray: LpsArray;
 }
+class ProcessedParagraph {
+  textPartGroups: TextPartGroup[];
+  wordBoundaryIndices: number[] | null;
+  constructor(textPartGroups: TextPartGroup[], wordBoundaryIndices: number[] | null) {
+    this.textPartGroups = textPartGroups;
+    this.wordBoundaryIndices = wordBoundaryIndices;
+  }
+}
 // TODO: Match return selection range instead of range, e.g. to exclude voids in middle of match.
 // TODO: Simplify with previous and next paragraph iterator.
 class SingleParagraphPlainTextSearchControl extends DisposableClass {
@@ -137,7 +145,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
   #config: SingleParagraphPlainTextSearchControlConfig;
   #topLevelContentReference: matita.ContentReference;
   #searchPatterns!: SearchPatternData[];
-  #paragraphTextPartGroupCache = new Map<string, TextPartGroup[]>();
+  #processedParagraphCache = new Map<string, ProcessedParagraph>();
   #paragraphMatchesCache = new Map<string, ParagraphMatches>();
   #graphemeSegmenter: IntlSegmenter;
   #wordSegmenter: IntlSegmenter;
@@ -187,7 +195,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
               const { blockReference } = change;
               if (change.isParagraphTextUpdated) {
                 const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
-                this.#paragraphTextPartGroupCache.delete(paragraphId);
+                this.#processedParagraphCache.delete(paragraphId);
                 this.#paragraphMatchesCache.delete(paragraphId);
               }
               break;
@@ -199,12 +207,12 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
                 const block = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, blockReference);
                 if (matita.isParagraph(block)) {
                   const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
-                  this.#paragraphTextPartGroupCache.delete(paragraphId);
+                  this.#processedParagraphCache.delete(paragraphId);
                   this.#paragraphMatchesCache.delete(paragraphId);
                 } else {
                   for (const subParagraphReference of matita.iterEmbedSubParagraphs(this.#stateControl.stateView.document, blockReference)) {
                     const paragraphId = matita.getBlockIdFromBlockReference(subParagraphReference);
-                    this.#paragraphTextPartGroupCache.delete(paragraphId);
+                    this.#processedParagraphCache.delete(paragraphId);
                     this.#paragraphMatchesCache.delete(paragraphId);
                   }
                 }
@@ -217,7 +225,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
                 const contentReference = contentReferences[j];
                 for (const subParagraphReference of matita.iterContentSubParagraphs(this.#stateControl.stateView.document, contentReference)) {
                   const paragraphId = matita.getBlockIdFromBlockReference(subParagraphReference);
-                  this.#paragraphTextPartGroupCache.delete(paragraphId);
+                  this.#processedParagraphCache.delete(paragraphId);
                   this.#paragraphMatchesCache.delete(paragraphId);
                 }
               }
@@ -297,7 +305,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
               if (change.isParagraphTextUpdated) {
                 const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
                 this.#pendingParagraphIds.queue(paragraphId);
-                this.#paragraphTextPartGroupCache.delete(paragraphId);
+                this.#processedParagraphCache.delete(paragraphId);
                 this.#paragraphMatchesCache.delete(paragraphId);
                 this.#pendingParagraphIdsQueued(Push(undefined));
               }
@@ -313,7 +321,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
                   this.#pendingParagraphIds.dequeue(paragraphId);
                   const paragraphIndex = this.#paragraphMatchCounts.indexOf(paragraphId);
                   this.#paragraphMatchCounts.remove(paragraphIndex, paragraphIndex);
-                  this.#paragraphTextPartGroupCache.delete(paragraphId);
+                  this.#processedParagraphCache.delete(paragraphId);
                   this.#paragraphMatchesCache.delete(paragraphId);
                 } else {
                   for (const subParagraphReference of matita.iterEmbedSubParagraphs(this.#stateControl.stateView.document, blockReference)) {
@@ -321,7 +329,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
                     this.#pendingParagraphIds.dequeue(paragraphId);
                     const paragraphIndex = this.#paragraphMatchCounts.indexOf(paragraphId);
                     this.#paragraphMatchCounts.remove(paragraphIndex, paragraphIndex);
-                    this.#paragraphTextPartGroupCache.delete(paragraphId);
+                    this.#processedParagraphCache.delete(paragraphId);
                     this.#paragraphMatchesCache.delete(paragraphId);
                   }
                 }
@@ -397,7 +405,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
                   this.#pendingParagraphIds.dequeue(paragraphId);
                   const paragraphIndex = this.#paragraphMatchCounts.indexOf(paragraphId);
                   this.#paragraphMatchCounts.remove(paragraphIndex, paragraphIndex);
-                  this.#paragraphTextPartGroupCache.delete(paragraphId);
+                  this.#processedParagraphCache.delete(paragraphId);
                   this.#paragraphMatchesCache.delete(paragraphId);
                 }
               }
@@ -469,14 +477,15 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     const newSearchPatterns: SearchPatternData[] = [];
     if (this.#config.searchQueryWordsIndividually) {
       const segments = this.#wordSegmenter.segment(this.#query);
+      const queryPatterns = new Set<string>();
       for (const segment of segments) {
         if (!segment.isWordLike) {
           continue;
         }
         const pattern = normalizeQuery(segment.segment, this.#config, this.#graphemeSegmenter);
-        if (pattern.length === 0) {
-          continue;
-        }
+        queryPatterns.add(pattern);
+      }
+      for (const pattern of queryPatterns) {
         const kmpLpsArray = computeLpsArray(pattern);
         newSearchPatterns.push({ pattern, kmpLpsArray });
       }
@@ -503,7 +512,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     }
     this.#searchPatterns = newSearchPatterns;
     if (didConfigChange) {
-      this.#paragraphTextPartGroupCache.clear();
+      this.#processedParagraphCache.clear();
     }
     this.#paragraphMatchesCache.clear();
     if (!this.#isTrackingAll) {
@@ -539,11 +548,12 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
   set config(config: SingleParagraphPlainTextSearchControlConfig) {
     this.#setConfig(config);
   }
-  #splitParagraphAtParagraphReferenceIntoTextPartGroups(paragraphReference: matita.BlockReference): TextPartGroup[] {
+  #processParagraphAtParagraphReference(paragraphReference: matita.BlockReference): ProcessedParagraph {
     const paragraph = matita.accessBlockFromBlockReference(this.#stateControl.stateView.document, paragraphReference);
     matita.assertIsParagraph(paragraph);
     const textPartGroups: TextPartGroup[] = [];
     let startOffset = 0;
+    const wordBoundaryIndices: number[] | null = this.#config.wholeWords ? [] : null;
     for (let i = 0; i < paragraph.children.length; i++) {
       const inline = paragraph.children[i];
       if (matita.isVoid(inline)) {
@@ -557,17 +567,26 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       if (normalizedTextParts.length > 0) {
         textPartGroups.push(new TextPartGroup(normalizedTextParts));
       }
+      if (this.#config.wholeWords) {
+        const segments = this.#wordSegmenter.segment(text);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        wordBoundaryIndices!.push(startOffset);
+        for (const segment of segments) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          wordBoundaryIndices!.push(startOffset + segment.index + segment.segment.length);
+        }
+      }
       startOffset = endOffset;
     }
-    return textPartGroups;
+    return new ProcessedParagraph(textPartGroups, wordBoundaryIndices);
   }
-  #matchTextPartGroupsAtParagraphReference(paragraphReference: matita.BlockReference, textPartGroups: TextPartGroup[]): ParagraphMatch[] {
+  #matchTextPartGroupsAtParagraphReference(paragraphReference: matita.BlockReference, processedParagraph: ProcessedParagraph): ParagraphMatch[] {
+    const { textPartGroups, wordBoundaryIndices } = processedParagraph;
+    if (this.#config.wholeWords) {
+      assertIsNotNullish(wordBoundaryIndices);
+    }
     if (textPartGroups.length === 0) {
       return [];
-    }
-    const { wholeWords } = this.#config;
-    if (wholeWords) {
-      throwNotImplemented();
     }
     const matches: ParagraphMatch[] = [];
     for (let i = 0; i < textPartGroups.length; i++) {
@@ -593,10 +612,10 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
         throwUnreachable();
       };
-      const mapMatchIndexToParagraphOffset = (matchIndex: number): number => {
+      const mapMatchIndexToParagraphOffset = (matchIndex: number, isEnd: boolean): number => {
         for (let j = 0; j < textParts.length; j++) {
           const textPart = textParts[j];
-          if (matchIndex <= textPart.text.length) {
+          if (isEnd || j === textParts.length - 1 ? matchIndex <= textPart.text.length : matchIndex < textPart.text.length) {
             return textPart.startOffset + matchIndex;
           }
           matchIndex -= textPart.text.length;
@@ -610,24 +629,35 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         addMatches: for (let k = 0; k < matchStartIndices.length; k++) {
           const matchStartIndex = matchStartIndices[k];
           const matchEndIndex = matchStartIndex + searchPattern.pattern.length;
-          const matchStartParagraphOffset = mapMatchIndexToParagraphOffset(matchStartIndex);
-          const matchEndParagraphOffset = mapMatchIndexToParagraphOffset(matchEndIndex);
-          for (let l = 0; l < matches.length; l++) {
-            const existingMatch = matches[l];
-            const existingMatchStartOffset = existingMatch.startOffset;
-            const existingMatchEndOffset = existingMatch.endOffset;
-            if (
-              (existingMatchStartOffset < matchStartParagraphOffset && matchStartParagraphOffset < existingMatchEndOffset) ||
-              (existingMatchStartOffset < matchEndParagraphOffset && matchEndParagraphOffset < existingMatchEndOffset)
-            ) {
-              continue addMatches;
-            }
+          const matchStartParagraphOffset = mapMatchIndexToParagraphOffset(matchStartIndex, false);
+          if (wordBoundaryIndices && !wordBoundaryIndices.includes(matchStartParagraphOffset)) {
+            continue;
           }
-          matches.push({
+          const matchEndParagraphOffset = mapMatchIndexToParagraphOffset(matchEndIndex, true);
+          if (wordBoundaryIndices && !wordBoundaryIndices.includes(matchEndParagraphOffset)) {
+            continue;
+          }
+          const newMatch: ParagraphMatch = {
             paragraphReference,
             startOffset: matchStartParagraphOffset,
             endOffset: matchEndParagraphOffset,
-          });
+          };
+          if (j > 0) {
+            for (let l = 0; l < matches.length; l++) {
+              const existingMatch = matches[l];
+              if (
+                (existingMatch.startOffset <= matchStartParagraphOffset && matchStartParagraphOffset < existingMatch.endOffset) ||
+                (existingMatch.startOffset < matchEndParagraphOffset && matchEndParagraphOffset <= existingMatch.endOffset)
+              ) {
+                continue addMatches;
+              }
+              if (existingMatch.startOffset >= matchEndParagraphOffset) {
+                matches.splice(l, 0, newMatch);
+                continue addMatches;
+              }
+            }
+          }
+          matches.push(newMatch);
         }
       }
     }
@@ -646,12 +676,12 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         matches: cachedMatches.matches,
       };
     }
-    let textPartGroups: TextPartGroup[] | undefined = this.#paragraphTextPartGroupCache.get(paragraphId);
-    if (!textPartGroups) {
-      textPartGroups = this.#splitParagraphAtParagraphReferenceIntoTextPartGroups(paragraphReference);
-      this.#paragraphTextPartGroupCache.set(paragraphId, textPartGroups);
+    let processedParagraph: ProcessedParagraph | undefined = this.#processedParagraphCache.get(paragraphId);
+    if (!processedParagraph) {
+      processedParagraph = this.#processParagraphAtParagraphReference(paragraphReference);
+      this.#processedParagraphCache.set(paragraphId, processedParagraph);
     }
-    const matches = this.#matchTextPartGroupsAtParagraphReference(paragraphReference, textPartGroups);
+    const matches = this.#matchTextPartGroupsAtParagraphReference(paragraphReference, processedParagraph);
     this.#paragraphMatchesCache.set(paragraphId, {
       matches,
     });

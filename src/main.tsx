@@ -751,12 +751,13 @@ interface SearchBoxControlConfig {
 interface SearchBoxProps {
   isVisible$: CurrentValueSource<boolean>;
   containerStaticViewRectangle$: CurrentValueSource<ViewRectangle>;
-  query$: Sink<string>;
-  config$: Sink<SearchBoxControlConfig>;
-  goToPreviousMatch$: Sink<undefined>;
-  goToNextMatch$: Sink<undefined>;
-  close$: Sink<undefined>;
-  isInComposition$: Sink<boolean>;
+  querySink: Sink<string>;
+  configSink: Sink<SearchBoxControlConfig>;
+  goToPreviousMatchSink: Sink<undefined>;
+  goToNextMatchSink: Sink<undefined>;
+  closeSink: Sink<undefined>;
+  isInCompositionSink: Sink<boolean>;
+  changeQuery$: Source<string>;
   matchNumberMaybe$: CurrentValueSource<Maybe<number>>;
   totalMatchesMaybe$: CurrentValueSource<Maybe<TotalMatchesMessage>>;
   initialQuery: string;
@@ -779,12 +780,13 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
     isVisible$,
     containerStaticViewRectangle$,
-    query$,
-    config$,
-    close$,
-    goToPreviousMatch$,
-    goToNextMatch$,
-    isInComposition$,
+    querySink,
+    configSink,
+    closeSink,
+    goToPreviousMatchSink,
+    goToNextMatchSink,
+    isInCompositionSink,
+    changeQuery$,
     matchNumberMaybe$,
     totalMatchesMaybe$,
     initialQuery,
@@ -858,7 +860,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     if (isFirstRender) {
       return;
     }
-    config$(
+    configSink(
       Push({
         type: SearchBoxConfigType.SingleParagraphPlainText,
         config,
@@ -867,10 +869,26 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   }, [config]);
   const [query, setQuery] = useState(initialQuery);
   useEffect(() => {
+    const sink = Sink<string>((event) => {
+      if (event.type === ThrowType) {
+        throw event.error;
+      }
+      if (event.type === EndType) {
+        return;
+      }
+      const newQuery = event.value;
+      setQuery(newQuery);
+    });
+    changeQuery$(sink);
+    return () => {
+      sink.dispose();
+    };
+  }, [changeQuery$]);
+  useEffect(() => {
     if (isFirstRender) {
       return;
     }
-    query$(Push(query));
+    querySink(Push(query));
   }, [query]);
   const [loadingIndicatorState, setLoadingIndicatorState] = useState<number | null>(0);
   const isLoading = isSome(totalMatchesMaybe) && !totalMatchesMaybe.value.isComplete;
@@ -915,8 +933,8 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
         <input
           type="search"
           className="search-box__search-input"
-          onCompositionStart={() => isInComposition$(Push(true))}
-          onCompositionEnd={() => isInComposition$(Push(false))}
+          onCompositionStart={() => isInCompositionSink(Push(true))}
+          onCompositionEnd={() => isInCompositionSink(Push(false))}
           onChange={(event) => {
             setQuery(event.target.value);
           }}
@@ -947,7 +965,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
             <button
               className="search-box__button search-box__button--icon"
               onClick={() => {
-                goToPreviousMatch$(Push(undefined));
+                goToPreviousMatchSink(Push(undefined));
               }}
               tabIndex={tabIndex}
             >
@@ -961,7 +979,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
             <button
               className="search-box__button search-box__button--icon"
               onClick={() => {
-                goToNextMatch$(Push(undefined));
+                goToNextMatchSink(Push(undefined));
               }}
               tabIndex={tabIndex}
             >
@@ -975,7 +993,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
             <button
               className="search-box__button search-box__button--icon"
               onClick={() => {
-                close$(Push(undefined));
+                closeSink(Push(undefined));
               }}
               tabIndex={tabIndex}
             >
@@ -994,23 +1012,20 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const options: [key: keyof SingleParagraphPlainTextSearchControlConfig, name: string, isInverted: boolean][] = [
     ['ignoreCase', 'Match Case', true],
     ['ignoreDiacritics', 'Match Diacritics', true],
-    ['ignorePunctuation', 'Ignore Punctuation', false],
+    ['stripNonLettersAndNumbers', 'Strip Non Letters And Numbers', false],
     ['wholeWords', 'Whole Words', false],
     ['searchQueryWordsIndividually', 'Search Query Words Individually', false],
   ];
-  const optionsIds = options.map(() => useId());
   if (isOptionsShown) {
     searchBoxChildren.push(
       <div className="search-box__line-container search-box__line-container--options" key="options">
         {options.map(([configKey, readableName, isInverted], i) => {
-          const optionsId = optionsIds[i];
           const getIsChecked = (value: boolean) => (isInverted ? !value : value);
           return (
-            <div className="search-box__checkbox-container" key={configKey}>
+            <label className="search-box__checkbox-container" key={configKey}>
               <input
                 className="search-box__checkbox-input"
                 type="checkbox"
-                id={optionsId}
                 onChange={(event) => {
                   const isChecked = getIsChecked(event.target.checked);
                   setConfig((config) => ({
@@ -1020,10 +1035,8 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
                 }}
                 checked={getIsChecked(config[configKey])}
               />
-              <label className="search-box__checkbox-label" htmlFor={optionsId}>
-                {readableName}
-              </label>
-            </div>
+              <span className="search-box__checkbox-label">{readableName}</span>
+            </label>
           );
         })}
       </div>,
@@ -1152,9 +1165,15 @@ enum StandardCommand {
   SelectAllInstancesOfWord = 'standard.selectAllInstancesOfWord',
   SelectAllInstancesOfSearchQuery = 'standard.selectAllInstancesOfSearchQuery',
   SelectNextInstanceOfWordAtFocus = 'standard.selectNextInstanceOfWordAtFocus',
-  SelectPreviousInstanceOfWordAtFocus = 'standard.selectPreviousInstanceofWordAtFocus',
+  SelectPreviousInstanceOfWordAtFocus = 'standard.selectPreviousInstanceOfWordAtFocus',
+  SelectNextInstanceOfSearchQuery = 'standard.selectNextInstanceOfSearchQuery',
+  SelectPreviousInstanceOfSearchQuery = 'standard.selectPreviousInstanceOfSearchQuery',
   SelectNextSearchMatch = 'standard.selectNextSearchMatch',
   SelectPreviousSearchMatch = 'standard.selectPreviousSearchMatch',
+  MoveCurrentBlocksAbove = 'standard.switchWithBlockAbove',
+  MoveCurrentBlocksBelow = 'standard.switchWithBlockBelow',
+  CloneCurrentBlocksAbove = 'standard.cloneCurrentBlockToAbove',
+  CloneCurrentBlocksBelow = 'standard.cloneCurrentBlockToBelow',
 }
 enum Platform {
   Apple = 'Apple',
@@ -1391,14 +1410,56 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     key: 'Meta+Alt+Comma',
     command: StandardCommand.SelectPreviousInstanceOfWordAtFocus,
     platform: Platform.Apple,
-    context: { any: [Context.Editing, Context.Searching] },
+    context: Context.Editing,
     cancelKeyEvent: true,
   },
   {
     key: 'Meta+Alt+Period',
     command: StandardCommand.SelectNextInstanceOfWordAtFocus,
     platform: Platform.Apple,
-    context: { any: [Context.Editing, Context.Searching] },
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Alt+Comma',
+    command: StandardCommand.SelectPreviousInstanceOfSearchQuery,
+    platform: Platform.Apple,
+    context: Context.Searching,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Alt+Period',
+    command: StandardCommand.SelectNextInstanceOfSearchQuery,
+    platform: Platform.Apple,
+    context: Context.Searching,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Control+Alt+ArrowUp',
+    command: StandardCommand.MoveCurrentBlocksAbove,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Control+Alt+ArrowDown',
+    command: StandardCommand.MoveCurrentBlocksBelow,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Control+Alt+Shift+ArrowUp',
+    command: StandardCommand.CloneCurrentBlocksBelow,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Control+Alt+Shift+ArrowDown',
+    command: StandardCommand.CloneCurrentBlocksAbove,
+    platform: Platform.Apple,
+    context: Context.Editing,
     cancelKeyEvent: true,
   },
 ];
@@ -1875,144 +1936,12 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   },
   [StandardCommand.InsertParagraphAbove]: {
     execute(stateControl): void {
-      stateControl.queueUpdate(() => {
-        const blockIdCount = new Map<string, number>();
-        const countBlockId = (blockId: string): number => {
-          const count = blockIdCount.get(blockId) ?? 0;
-          blockIdCount.set(blockId, count + 1);
-          return count;
-        };
-        const affectedSelectionRangeInfos: [
-          contentReference: matita.ContentReference,
-          blockId: string,
-          selectionRange: matita.SelectionRange,
-          index: number,
-        ][] = [];
-        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
-          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-          const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-          assertIsNotNullish(focusRange);
-          const focusPoint = matita.getFocusPointFromRange(focusRange);
-          if (matita.isBlockPoint(focusPoint)) {
-            const blockId = matita.getBlockIdFromBlockPoint(focusPoint);
-            const index = countBlockId(blockId);
-            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
-          } else if (matita.isParagraphPoint(focusPoint)) {
-            const blockId = matita.getBlockIdFromParagraphPoint(focusPoint);
-            const index = countBlockId(blockId);
-            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
-          }
-        }
-        const blockIdToInsertedParagraphIds = new Map<string, string[]>();
-        const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-        blockIdCount.forEach((count, blockId) => {
-          const insertedParagraphIds: string[] = [];
-          const contentFragmentBlocks: matita.ContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig>[] = [];
-          for (let i = 0; i < count; i++) {
-            const insertedParagraphId = matita.generateId();
-            insertedParagraphIds.push(insertedParagraphId);
-            // TODO.
-            contentFragmentBlocks.push(matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], insertedParagraphId)));
-          }
-          blockIdToInsertedParagraphIds.set(blockId, insertedParagraphIds);
-          const mutation = matita.makeInsertBlocksBeforeMutation(
-            matita.makeBlockPointFromBlockReference(matita.makeBlockReferenceFromBlockId(blockId)),
-            matita.makeContentFragment(contentFragmentBlocks),
-          );
-          mutations.push(mutation);
-        });
-        const batchMutation = matita.makeBatchMutation(mutations);
-        stateControl.delta.applyMutation(batchMutation, undefined, (selectionRange) => {
-          for (let i = 0; i < affectedSelectionRangeInfos.length; i++) {
-            const affectedSelectionRangeInfo = affectedSelectionRangeInfos[i];
-            const [contentReference, blockId, affectedSelectionRange, index] = affectedSelectionRangeInfo;
-            if (matita.areSelectionRangesCoveringSameContent(selectionRange, affectedSelectionRange)) {
-              const insertedParagraphIds = blockIdToInsertedParagraphIds.get(blockId);
-              assertIsNotNullish(insertedParagraphIds);
-              const insertedParagraphId = insertedParagraphIds[index];
-              assertIsNotNullish(insertedParagraphId);
-              const paragraphPoint = matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(
-                matita.makeBlockReferenceFromBlockId(insertedParagraphId),
-                0,
-              );
-              const range = matita.makeRange(contentReference, paragraphPoint, paragraphPoint, matita.generateId());
-              return matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, selectionRange.id);
-            }
-          }
-          return undefined;
-        });
-      });
+      stateControl.queueUpdate(matita.makeInsertParagraphBelowOrAboveAtSelectionUpdateFn(stateControl, 'above'));
     },
   },
   [StandardCommand.InsertParagraphBelow]: {
     execute(stateControl): void {
-      stateControl.queueUpdate(() => {
-        const blockIdCount = new Map<string, number>();
-        const countBlockId = (blockId: string): number => {
-          const count = blockIdCount.get(blockId) ?? 0;
-          blockIdCount.set(blockId, count + 1);
-          return count;
-        };
-        const affectedSelectionRangeInfos: [
-          contentReference: matita.ContentReference,
-          blockId: string,
-          selectionRange: matita.SelectionRange,
-          index: number,
-        ][] = [];
-        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
-          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-          const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-          assertIsNotNullish(focusRange);
-          const focusPoint = matita.getFocusPointFromRange(focusRange);
-          if (matita.isBlockPoint(focusPoint)) {
-            const blockId = matita.getBlockIdFromBlockPoint(focusPoint);
-            const index = countBlockId(blockId);
-            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
-          } else if (matita.isParagraphPoint(focusPoint)) {
-            const blockId = matita.getBlockIdFromParagraphPoint(focusPoint);
-            const index = countBlockId(blockId);
-            affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
-          }
-        }
-        const blockIdToInsertedParagraphIds = new Map<string, string[]>();
-        const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-        blockIdCount.forEach((count, blockId) => {
-          const insertedParagraphIds: string[] = [];
-          const contentFragmentBlocks: matita.ContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig>[] = [];
-          for (let i = 0; i < count; i++) {
-            const insertedParagraphId = matita.generateId();
-            insertedParagraphIds.push(insertedParagraphId);
-            // TODO.
-            contentFragmentBlocks.push(matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], insertedParagraphId)));
-          }
-          blockIdToInsertedParagraphIds.set(blockId, insertedParagraphIds);
-          const mutation = matita.makeInsertBlocksAfterMutation(
-            matita.makeBlockPointFromBlockReference(matita.makeBlockReferenceFromBlockId(blockId)),
-            matita.makeContentFragment(contentFragmentBlocks),
-          );
-          mutations.push(mutation);
-        });
-        const batchMutation = matita.makeBatchMutation(mutations);
-        stateControl.delta.applyMutation(batchMutation, undefined, (selectionRange) => {
-          for (let i = 0; i < affectedSelectionRangeInfos.length; i++) {
-            const affectedSelectionRangeInfo = affectedSelectionRangeInfos[i];
-            const [contentReference, blockId, affectedSelectionRange, index] = affectedSelectionRangeInfo;
-            if (matita.areSelectionRangesCoveringSameContent(selectionRange, affectedSelectionRange)) {
-              const insertedParagraphIds = blockIdToInsertedParagraphIds.get(blockId);
-              assertIsNotNullish(insertedParagraphIds);
-              const insertedParagraphId = insertedParagraphIds[index];
-              assertIsNotNullish(insertedParagraphId);
-              const paragraphPoint = matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(
-                matita.makeBlockReferenceFromBlockId(insertedParagraphId),
-                0,
-              );
-              const range = matita.makeRange(contentReference, paragraphPoint, paragraphPoint, matita.generateId());
-              return matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, selectionRange.id);
-            }
-          }
-          return undefined;
-        });
-      });
+      stateControl.queueUpdate(matita.makeInsertParagraphBelowOrAboveAtSelectionUpdateFn(stateControl, 'below'));
     },
   },
   [StandardCommand.SelectAll]: {
@@ -2122,6 +2051,26 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         assertIsNotNullish(focusSelectionRange);
         stateControl.delta.setSelection(matita.makeSelection([focusSelectionRange]));
       });
+    },
+  },
+  [StandardCommand.MoveCurrentBlocksAbove]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(matita.makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn(stateControl, 'switch', 'above'));
+    },
+  },
+  [StandardCommand.MoveCurrentBlocksBelow]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(matita.makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn(stateControl, 'switch', 'below'));
+    },
+  },
+  [StandardCommand.CloneCurrentBlocksAbove]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(matita.makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn(stateControl, 'clone', 'above'));
+    },
+  },
+  [StandardCommand.CloneCurrentBlocksBelow]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(matita.makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn(stateControl, 'clone', 'below'));
     },
   },
 };
@@ -2927,6 +2876,18 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       stateControl.queueUpdate(documentRenderControl.selectPreviousInstanceOfWordAtFocus());
     },
   },
+  [StandardCommand.SelectNextInstanceOfSearchQuery]: {
+    execute(stateControl, viewControl) {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(documentRenderControl.selectNextSearchMatch(true));
+    },
+  },
+  [StandardCommand.SelectPreviousInstanceOfSearchQuery]: {
+    execute(stateControl, viewControl) {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(documentRenderControl.selectPreviousSearchMatch(true));
+    },
+  },
   [StandardCommand.SelectNextSearchMatch]: {
     execute(stateControl, viewControl) {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
@@ -3605,6 +3566,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #totalMatchesMaybe$ = CurrentValueDistributor<Maybe<TotalMatchesMessage>>(None);
   #isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
   #renderSearchOverlayAsync = false;
+  #changeQuery$ = Distributor<string>();
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
     this.#topLevelContentViewContainerElement = document.createElement('div');
@@ -4336,11 +4298,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       return makeViewRectangle(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
     };
     const initialQuery = '';
-    const initialSearchControlConfig = {
+    const initialSearchControlConfig: SingleParagraphPlainTextSearchControlConfig = {
       ignoreCase: true,
       ignoreDiacritics: true,
-      ignorePunctuation: false,
-      ignoreVoids: false,
+      stripNonLettersAndNumbers: false,
       searchQueryWordsIndividually: false,
       wholeWords: false,
     };
@@ -4388,7 +4349,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           // TODO: This is a hack to queue onFinishedUpdating.
         });
       });
-      const searchQuery$ = Sink<string>((event) => {
+      const searchQuerySink = Sink<string>((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
         }
@@ -4399,19 +4360,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           // TODO: This is a hack to queue onFinishedUpdating.
         });
       });
-      const closeSearch$ = Sink<undefined>((event) => {
+      const closeSearchSink = Sink<undefined>((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
         }
         this.stateControl.queueUpdate(this.closeSearch());
       });
-      const goToPreviousMatch$ = Sink<undefined>((event) => {
+      const goToPreviousMatchSink = Sink<undefined>((event) => {
         this.runCommand({
           commandName: StandardCommand.SelectPreviousSearchMatch,
           data: null,
         });
       });
-      const goToNextMatch$ = Sink<undefined>((event) => {
+      const goToNextMatchSink = Sink<undefined>((event) => {
         this.runCommand({
           commandName: StandardCommand.SelectNextSearchMatch,
           data: null,
@@ -4421,12 +4382,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         <SearchBox
           isVisible$={this.#isSearchElementContainerVisible$}
           containerStaticViewRectangle$={searchContainerStaticViewRectangle$}
-          query$={searchQuery$}
-          config$={searchConfigSink}
-          goToPreviousMatch$={goToPreviousMatch$}
-          goToNextMatch$={goToNextMatch$}
-          close$={closeSearch$}
-          isInComposition$={this.#isSearchInComposition$}
+          querySink={searchQuerySink}
+          configSink={searchConfigSink}
+          goToPreviousMatchSink={goToPreviousMatchSink}
+          goToNextMatchSink={goToNextMatchSink}
+          closeSink={closeSearchSink}
+          isInCompositionSink={this.#isSearchInComposition$}
+          changeQuery$={this.#changeQuery$}
           matchNumberMaybe$={this.#matchNumberMaybe$}
           totalMatchesMaybe$={this.#totalMatchesMaybe$}
           initialQuery={initialQuery}
@@ -4578,6 +4540,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       });
     };
   }
+  #setSearchQuery(query: string): void {
+    this.#searchControl.query = query;
+    this.#changeQuery$(Push(query));
+  }
   searchCurrentFocusSelectionRange(): matita.RunUpdateFn {
     return () => {
       const result = this.#getNearestWordToFocusSelectionRangeIfCollapsedElseFocusSelectionRangeText();
@@ -4585,10 +4551,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return;
       }
       const { newSelectionRange, word, isAway } = result;
-      if (this.#searchInputRef.current) {
-        this.#searchInputRef.current.value = word;
-      }
-      this.#searchControl.query = word;
+      this.#setSearchQuery(word);
       if (isAway) {
         this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
       }
@@ -4782,10 +4745,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return;
       }
       const { newSelectionRange, word } = result;
-      if (this.#searchInputRef.current) {
-        this.#searchInputRef.current.value = word;
-      }
-      this.#searchControl.query = word;
+      this.#setSearchQuery(word);
       this.stateControl.delta.applyUpdate(this.selectAllInstancesOfSearchQuery(newSelectionRange));
     };
   }
@@ -4840,10 +4800,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return;
       }
       const { newSelectionRange, word, isAway } = result;
-      this.#searchControl.query = word;
-      if (this.#searchInputRef.current) {
-        this.#searchInputRef.current.value = word;
-      }
+      this.#setSearchQuery(word);
       if (isAway) {
         this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
       } else {
@@ -4859,10 +4816,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return;
       }
       const { newSelectionRange, word, isAway } = result;
-      this.#searchControl.query = word;
-      if (this.#searchInputRef.current) {
-        this.#searchInputRef.current.value = word;
+      this.#setSearchQuery(word);
+      if (isAway) {
+        this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
+      } else {
+        this.stateControl.delta.applyUpdate(this.selectPreviousSearchMatch(true));
       }
+      this.stateControl.delta.applyUpdate(this.openSearch());
+    };
+  }
+  selectPreviousInstanceOfSearchQuery(): matita.RunUpdateFn {
+    return () => {
+      const result = this.#getNearestWordToFocusSelectionRangeIfCollapsedElseFocusSelectionRangeText();
+      if (result === null) {
+        return;
+      }
+      const { newSelectionRange, word, isAway } = result;
+      this.#setSearchQuery(word);
       if (isAway) {
         this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
       } else {
@@ -6053,6 +6023,43 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           isWrappedLineStart: false,
         };
       }
+      if (i === 0 && viewPosition.top < possibleLine.measuredParagraphLineRange.boundingRect.top) {
+        const contentReference = matita.makeContentReferenceFromContent(
+          matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+        );
+        if (matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference) === 0) {
+          const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+          matita.assertIsParagraph(paragraph);
+          return {
+            pointWithContentReference: {
+              contentReference,
+              point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, 0),
+            },
+            isPastPreviousCharacterHalfPoint: false,
+            isWrappedLineStart: false,
+          };
+        }
+      }
+      if (i > 0 && i === possibleLines.length - 1 && viewPosition.top > possibleLine.measuredParagraphLineRange.boundingRect.bottom) {
+        const contentReference = matita.makeContentReferenceFromContent(
+          matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+        );
+        if (
+          matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference) ===
+          matita.getNumberOfBlocksInContentAtContentReference(this.stateControl.stateView.document, contentReference) - 1
+        ) {
+          const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+          matita.assertIsParagraph(paragraph);
+          return {
+            pointWithContentReference: {
+              contentReference,
+              point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, matita.getParagraphLength(paragraph)),
+            },
+            isPastPreviousCharacterHalfPoint: true,
+            isWrappedLineStart: false,
+          };
+        }
+      }
       for (let j = 0; j < characterRectangles.length; j++) {
         const characterRectangle = characterRectangles[j];
         const previousCharacterRightWithoutInfinity = j === 0 ? 0 : Math.min(characterRectangles[j - 1].right, characterRectangle.left);
@@ -6288,7 +6295,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const focusEndOffset = focusSelectionRange.ranges[0].endPoint.offset;
       const paragraphMatches = this.#searchControl.getMatchesForParagraphAtBlockReference(paragraphReference);
       const matchIndexInParagraph = paragraphMatches.matches.findIndex(
-        (otherMatch) => otherMatch.startOffset === focusStartOffset && otherMatch.endOffset === focusEndOffset,
+        (otherMatch) =>
+          (otherMatch.startOffset === focusStartOffset && otherMatch.endOffset === focusEndOffset) ||
+          (otherMatch.startOffset === focusEndOffset && otherMatch.endOffset === focusStartOffset),
       );
       if (matchIndexInParagraph !== -1) {
         const totalMatchesBeforeParagraph$ = this.#searchElementTrackAllControl.trackTotalMatchesBeforeParagraphAtParagraphReferenceUntilStateOrSearchChange(

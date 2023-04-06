@@ -1,8 +1,11 @@
 // TODO: Void behavior.
 // TODO: Collaboration.
 // TODO: Don't allow accessing nodes directly?
-// TODO: Make config immutable and out its update operations.
+// TODO: Make config immutable and figure out its update operations.
 // TODO: Go back to using indices to detect first/last as it's now O(logn).
+// TODO: Remove DocumentConfig, etc. generics?
+// TODO: Change mutations to use references instead of points.
+// TODO: Don't necessitate BatchMutation for reverseMutation.
 import { v4 as makeUuidV4 } from 'uuid';
 import { IndexableUniqueStringList } from '../common/IndexableUniqueStringList';
 import {
@@ -5170,6 +5173,7 @@ function makeRemoveBlocksSelectionTransformFn<
   startBlockPoint: BlockPoint,
   contentReference: ContentReference,
   getContentFragment: () => ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  isMovingIntoSameContentReference: boolean,
   stateViewAfterMutation: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, // TODO: Do without time travel?.
 ): TransformSelectionRangeFn {
   const lastPreviousPointText = accessLastPreviousPointToBlockAtBlockReference(
@@ -5240,15 +5244,23 @@ function makeRemoveBlocksSelectionTransformFn<
       let transformedStartPoint = makePointNullIfRemoved(range.startPoint);
       let transformedEndPoint = makePointNullIfRemoved(range.endPoint);
       if (transformedStartPoint === null && transformedEndPoint === null) {
-        return [];
+        if (isMovingIntoSameContentReference) {
+          return [range];
+        }
+        if (lastPreviousPoint === null) {
+          return [];
+        }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        return [makeRange(lastPreviousPointContentReference!, lastPreviousPoint, lastPreviousPoint, range.id)];
       }
       const transformedStartPointContentReference = transformedStartPoint === null ? lastPreviousPointContentReference : range.contentReference;
       const transformedEndPointContentReference = transformedEndPoint === null ? lastPreviousPointContentReference : range.contentReference;
       transformedStartPoint ??= lastPreviousPoint;
       transformedEndPoint ??= lastPreviousPoint;
-      if (transformedStartPoint === null || transformedEndPoint === null) {
+      if (transformedStartPoint === null) {
         return [];
       }
+      assertIsNotNullish(transformedEndPoint);
       assertIsNotNullish(transformedStartPointContentReference);
       assertIsNotNullish(transformedEndPointContentReference);
       return makeRangesConnectingPointsAtContentReferences(
@@ -5485,33 +5497,50 @@ function applyMutation<
     case MutationType.MoveBlocksAfter:
     case MutationType.MoveBlocksAtEnd: {
       const { startBlockPoint, endBlockPoint } = mutation;
-      const content = accessContentFromBlockPoint(document, startBlockPoint);
-      const contentReference = makeContentReferenceFromContent(content);
+      const moveFromContent = accessContentFromBlockPoint(document, startBlockPoint);
+      const moveFromContentReference = makeContentReferenceFromContent(moveFromContent);
       const startBlockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(startBlockPoint));
       const endBlockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(endBlockPoint));
-      const transformSelectionRange =
-        stateViewAfterMutation &&
-        makeRemoveBlocksSelectionTransformFn(document, startBlockPoint, contentReference, () => contentFragment, stateViewAfterMutation);
+      const moveIntoContentReference =
+        mutation.type === MutationType.MoveBlocksAtEnd
+          ? mutation.contentReference
+          : makeContentReferenceFromContent(
+              accessContentFromBlockPoint(
+                document,
+                mutation.type === MutationType.MoveBlocksBefore ? mutation.moveBeforeBlockPoint : mutation.moveAfterBlockPoint,
+              ),
+            );
       const moveAfterBlockReference =
         mutation.type === MutationType.MoveBlocksAfter
           ? makeBlockReferenceFromBlockPoint(mutation.moveAfterBlockPoint)
           : mutation.type === MutationType.MoveBlocksBefore
           ? areBlockReferencesAtSameBlock(
               makeBlockReferenceFromBlockPoint(mutation.moveBeforeBlockPoint),
-              makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, 0)),
+              makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, moveFromContentReference, 0)),
             )
             ? null
             : makeBlockReferenceFromBlock(accessPreviousBlockToBlockAtBlockReference(document, makeBlockReferenceFromBlockPoint(mutation.moveBeforeBlockPoint)))
-          : getNumberOfBlocksInContentAtContentReference(document, contentReference) === 0
+          : getNumberOfBlocksInContentAtContentReference(document, moveFromContentReference) === 0
           ? null
-          : makeBlockReferenceFromBlock(accessLastBlockInContentAtContentReference(document, contentReference));
+          : makeBlockReferenceFromBlock(accessLastBlockInContentAtContentReference(document, moveFromContentReference));
+      const isMovingIntoSameContentReference = areContentReferencesAtSameContent(moveFromContentReference, moveIntoContentReference);
+      const transformSelectionRange =
+        stateViewAfterMutation &&
+        makeRemoveBlocksSelectionTransformFn(
+          document,
+          startBlockPoint,
+          moveFromContentReference,
+          () => contentFragment,
+          isMovingIntoSameContentReference,
+          stateViewAfterMutation,
+        );
       const moveAfter: ViewDeltaBlocksMoveAfterInfo = {
         blockReference: moveAfterBlockReference,
-        contentReference,
+        contentReference: moveIntoContentReference,
       };
       const contentFragment = removeBlocksFromContentAtContentReferenceBetweenBlockPoints(
         document,
-        contentReference,
+        moveFromContentReference,
         startBlockIndex,
         endBlockIndex,
         viewDeltaControl,
@@ -5519,6 +5548,19 @@ function applyMutation<
       );
       if (mutation.type !== MutationType.MoveBlocksAtEnd) {
         const insertionBlockPoint = mutation.type === MutationType.MoveBlocksBefore ? mutation.moveBeforeBlockPoint : mutation.moveAfterBlockPoint;
+        for (let i = 0; i < contentFragment.contentFragmentBlocks.length; i++) {
+          const contentFragmentBlock = contentFragment.contentFragmentBlocks[i];
+          if (areBlockPointsAtSameBlock(insertionBlockPoint, makeBlockPointFromBlock(getBlockFromContentFragmentBlock(contentFragmentBlock)))) {
+            throw new Error('Invalid attempt to move blocks before or after a removed block.');
+          }
+          if (isContentFragmentEmbed(contentFragmentBlock)) {
+            for (let j = 0; j < contentFragmentBlock.nestedBlocks.length; j++) {
+              const nestedBlock = contentFragmentBlock.nestedBlocks[j];
+              const nestedBlockPoint = makeBlockPointFromBlock(nestedBlock.block);
+              assert(!areBlockPointsAtSameBlock(insertionBlockPoint, nestedBlockPoint), 'Invalid attempt to move blocks before or after a removed block.');
+            }
+          }
+        }
         const moveIntoContent = accessContentFromBlockPoint(document, insertionBlockPoint);
         registerContentFragmentBlocks(document, makeContentReferenceFromContent(moveIntoContent), contentFragment);
         const blockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(insertionBlockPoint));
@@ -5527,7 +5569,16 @@ function applyMutation<
           contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       } else {
-        const moveIntoContentReference = mutation.contentReference;
+        for (let i = 0; i < contentFragment.contentFragmentBlocks.length; i++) {
+          const contentFragmentBlock = contentFragment.contentFragmentBlocks[i];
+          if (isContentFragmentEmbed(contentFragmentBlock)) {
+            for (let j = 0; j < contentFragmentBlock.nestedContents.length; j++) {
+              const nestedContent = contentFragmentBlock.nestedContents[j];
+              const nestedContentReference = makeContentReferenceFromContent(nestedContent.content);
+              assert(!areContentReferencesAtSameContent(moveIntoContentReference, nestedContentReference), 'Cannot move blocks into a nested content.');
+            }
+          }
+        }
         registerContentFragmentBlocks(document, moveIntoContentReference, contentFragment);
         const moveIntoContent = accessContentFromContentReference(document, moveIntoContentReference);
         moveIntoContent.blockIds.insertBefore(
@@ -5535,26 +5586,58 @@ function applyMutation<
           contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       }
+      if (getNumberOfBlocksInContentAtContentReference(document, moveFromContentReference) === 0) {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        assert(transformSelectionRange !== undefined);
+        return makeChangedMutationResult(
+          makeBatchMutation([makeMoveBlocksAtEndMutation(startBlockPoint, endBlockPoint, moveFromContentReference)]),
+          transformSelectionRange,
+        );
+      }
+      if (isMovingIntoSameContentReference) {
+        const newStartBlockIndex = moveAfterBlockReference === null ? 0 : getIndexOfBlockInContentFromBlockReference(document, moveAfterBlockReference) + 1;
+        assert(startBlockIndex !== newStartBlockIndex);
+        if (newStartBlockIndex < startBlockIndex) {
+          if (endBlockIndex < getNumberOfBlocksInContentAtContentReference(document, moveFromContentReference) - 1) {
+            return makeChangedMutationResult(
+              makeBatchMutation([
+                makeMoveBlocksBeforeMutation(
+                  startBlockPoint,
+                  endBlockPoint,
+                  makeBlockPointFromBlock(accessBlockAtIndexInContentAtContentReference(document, moveFromContentReference, endBlockIndex + 1)),
+                ),
+              ]),
+              transformSelectionRange,
+            );
+          }
+          return makeChangedMutationResult(
+            makeBatchMutation([makeMoveBlocksAtEndMutation(startBlockPoint, endBlockPoint, moveFromContentReference)]),
+            transformSelectionRange,
+          );
+        }
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      assert(transformSelectionRange !== undefined);
       if (startBlockIndex > 0) {
-        const previousBlockPoint = makeBlockPointFromBlockReference(
-          makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, startBlockIndex - 1)),
-        );
         return makeChangedMutationResult(
-          makeBatchMutation([makeMoveBlocksAfterMutation(startBlockPoint, endBlockPoint, previousBlockPoint)]),
+          makeBatchMutation([
+            makeMoveBlocksAfterMutation(
+              startBlockPoint,
+              endBlockPoint,
+              makeBlockPointFromBlock(accessBlockAtIndexInContentAtContentReference(document, moveFromContentReference, startBlockIndex - 1)),
+            ),
+          ]),
           transformSelectionRange,
         );
       }
-      if (endBlockIndex === 0) {
-        return makeChangedMutationResult(
-          makeBatchMutation([makeMoveBlocksAtEndMutation(startBlockPoint, endBlockPoint, contentReference)]),
-          transformSelectionRange,
-        );
-      }
-      const nextBlockPoint = makeBlockPointFromBlockReference(
-        makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, endBlockIndex + 1)),
-      );
       return makeChangedMutationResult(
-        makeBatchMutation([makeMoveBlocksBeforeMutation(startBlockPoint, endBlockPoint, nextBlockPoint)]),
+        makeBatchMutation([
+          makeMoveBlocksBeforeMutation(
+            startBlockPoint,
+            endBlockPoint,
+            makeBlockPointFromBlock(accessBlockAtIndexInContentAtContentReference(document, moveFromContentReference, 0)),
+          ),
+        ]),
         transformSelectionRange,
       );
     }
@@ -5888,18 +5971,30 @@ function applyMutation<
         endContentIndex,
         viewDeltaControl,
       );
-      if (startContentIndex > 0) {
-        const previousContentReference = makeContentReferenceFromContent(
-          accessContentAtIndexInEmbedAtBlockReference(document, embedReference, startContentIndex - 1),
-        );
+      if (getNumberOfEmbedContentsInEmbedAtBlockReference(document, embedReference) === 0) {
         return makeChangedMutationResult(
-          makeBatchMutation([makeInsertContentsAfterMutation(previousContentReference, contentListFragment)]),
+          makeBatchMutation([makeInsertContentsAtEndMutation(makeBlockPointFromBlockReference(embedReference), contentListFragment)]),
           transformSelectionRange,
         );
       }
-      const nextContentReference = makeContentReferenceFromContent(accessContentAtIndexInEmbedAtBlockReference(document, embedReference, endContentIndex + 1));
+      if (startContentIndex > 0) {
+        return makeChangedMutationResult(
+          makeBatchMutation([
+            makeInsertContentsAfterMutation(
+              makeContentReferenceFromContent(accessContentAtIndexInEmbedAtBlockReference(document, embedReference, startContentIndex - 1)),
+              contentListFragment,
+            ),
+          ]),
+          transformSelectionRange,
+        );
+      }
       return makeChangedMutationResult(
-        makeBatchMutation([makeInsertContentsBeforeMutation(nextContentReference, contentListFragment)]),
+        makeBatchMutation([
+          makeInsertContentsBeforeMutation(
+            makeContentReferenceFromContent(accessContentAtIndexInEmbedAtBlockReference(document, embedReference, 0)),
+            contentListFragment,
+          ),
+        ]),
         transformSelectionRange,
       );
     }
@@ -5911,7 +6006,7 @@ function applyMutation<
       const endBlockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(endBlockPoint));
       const transformSelectionRange =
         stateViewAfterMutation &&
-        makeRemoveBlocksSelectionTransformFn(document, startBlockPoint, contentReference, () => contentFragment, stateViewAfterMutation);
+        makeRemoveBlocksSelectionTransformFn(document, startBlockPoint, contentReference, () => contentFragment, false, stateViewAfterMutation);
       const contentFragment = removeBlocksFromContentAtContentReferenceBetweenBlockPoints(
         document,
         contentReference,
@@ -5920,19 +6015,29 @@ function applyMutation<
         viewDeltaControl,
         null,
       );
-      if (startBlockIndex > 0) {
-        const previousBlockPoint = makeBlockPointFromBlockReference(
-          makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, startBlockIndex - 1)),
-        );
-        return makeChangedMutationResult(makeBatchMutation([makeInsertBlocksAfterMutation(previousBlockPoint, contentFragment)]), transformSelectionRange);
-      }
-      if (endBlockIndex === 0) {
+      if (getNumberOfBlocksInContentAtContentReference(document, contentReference) === 0) {
         return makeChangedMutationResult(makeBatchMutation([makeInsertBlocksAtEndMutation(contentReference, contentFragment)]), transformSelectionRange);
       }
-      const nextBlockPoint = makeBlockPointFromBlockReference(
-        makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, endBlockIndex + 1)),
+      if (startBlockIndex > 0) {
+        return makeChangedMutationResult(
+          makeBatchMutation([
+            makeInsertBlocksAfterMutation(
+              makeBlockPointFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, startBlockIndex - 1)),
+              contentFragment,
+            ),
+          ]),
+          transformSelectionRange,
+        );
+      }
+      return makeChangedMutationResult(
+        makeBatchMutation([
+          makeInsertBlocksBeforeMutation(
+            makeBlockPointFromBlock(accessBlockAtIndexInContentAtContentReference(document, contentReference, 0)),
+            contentFragment,
+          ),
+        ]),
+        transformSelectionRange,
       );
-      return makeChangedMutationResult(makeBatchMutation([makeInsertBlocksBeforeMutation(nextBlockPoint, contentFragment)]), transformSelectionRange);
     }
     case MutationType.SpliceParagraph: {
       const { paragraphPoint, removeCount, insertChildren } = mutation;
@@ -7642,6 +7747,232 @@ function makeTransposeAtSelectionUpdateFn<
     }
   };
 }
+function makeInsertParagraphBelowOrAboveAtSelectionUpdateFn<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  belowOrAbove: 'below' | 'above',
+  selection?: Selection,
+): RunUpdateFn {
+  return () => {
+    const selectionAt = selection ?? stateControl.stateView.selection;
+    const blockIdCount = new Map<string, number>();
+    const countBlockId = (blockId: string): number => {
+      const count = blockIdCount.get(blockId) ?? 0;
+      blockIdCount.set(blockId, count + 1);
+      return count;
+    };
+    const affectedSelectionRangeInfos: [contentReference: ContentReference, blockId: string, selectionRange: SelectionRange, index: number][] = [];
+    for (let i = 0; i < selectionAt.selectionRanges.length; i++) {
+      const selectionRange = selectionAt.selectionRanges[i];
+      const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
+      assertIsNotNullish(focusRange);
+      const focusPoint = getFocusPointFromRange(focusRange);
+      if (isBlockPoint(focusPoint)) {
+        const blockId = getBlockIdFromBlockPoint(focusPoint);
+        const index = countBlockId(blockId);
+        affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+      } else if (isParagraphPoint(focusPoint)) {
+        const blockId = getBlockIdFromParagraphPoint(focusPoint);
+        const index = countBlockId(blockId);
+        affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+      }
+    }
+    const blockIdToInsertedParagraphIds = new Map<string, string[]>();
+    const mutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    blockIdCount.forEach((count, blockId) => {
+      const insertedParagraphIds: string[] = [];
+      const contentFragmentBlocks: ContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig>[] = [];
+      for (let i = 0; i < count; i++) {
+        const insertedParagraphId = generateId();
+        insertedParagraphIds.push(insertedParagraphId);
+        // TODO.
+        contentFragmentBlocks.push(
+          makeContentFragmentParagraph<ParagraphConfig, TextConfig, VoidConfig>(makeParagraph({} as ParagraphConfig, [], insertedParagraphId)),
+        );
+      }
+      blockIdToInsertedParagraphIds.set(blockId, insertedParagraphIds);
+      const mutation =
+        belowOrAbove === 'above'
+          ? makeInsertBlocksBeforeMutation<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
+              makeBlockPointFromBlockReference(makeBlockReferenceFromBlockId(blockId)),
+              makeContentFragment(contentFragmentBlocks),
+            )
+          : makeInsertBlocksAfterMutation<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
+              makeBlockPointFromBlockReference(makeBlockReferenceFromBlockId(blockId)),
+              makeContentFragment(contentFragmentBlocks),
+            );
+      mutations.push(mutation);
+    });
+    if (mutations.length === 0) {
+      return;
+    }
+    const batchMutation = makeBatchMutation(mutations);
+    stateControl.delta.applyMutation(batchMutation, undefined, (selectionRange) => {
+      for (let i = 0; i < affectedSelectionRangeInfos.length; i++) {
+        const affectedSelectionRangeInfo = affectedSelectionRangeInfos[i];
+        const [contentReference, blockId, affectedSelectionRange, index] = affectedSelectionRangeInfo;
+        if (areSelectionRangesCoveringSameContent(selectionRange, affectedSelectionRange)) {
+          const insertedParagraphIds = blockIdToInsertedParagraphIds.get(blockId);
+          assertIsNotNullish(insertedParagraphIds);
+          const insertedParagraphId = insertedParagraphIds[index];
+          assertIsNotNullish(insertedParagraphId);
+          const paragraphPoint = makeParagraphPointFromParagraphBlockReferenceAndOffset(makeBlockReferenceFromBlockId(insertedParagraphId), 0);
+          const range = makeRange(contentReference, paragraphPoint, paragraphPoint, generateId());
+          return makeSelectionRange([range], range.id, range.id, SelectionRangeIntention.Text, {}, selectionRange.id);
+        }
+      }
+      return undefined;
+    });
+  };
+}
+function makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  switchOrClone: 'switch' | 'clone',
+  belowOrAbove: 'below' | 'above',
+  selection?: Selection,
+): RunUpdateFn {
+  return () => {
+    const selectionAt = selection ?? stateControl.stateView.selection;
+    const mutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    const affectedBlockReferences: BlockReference[] = [];
+    selectionRangesLoop: for (let i = 0; i < selectionAt.selectionRanges.length; i++) {
+      const selectionRange = selectionAt.selectionRanges[i];
+      const anchorRange = selectionRange.ranges.find((range) => range.id === selectionRange.anchorRangeId);
+      assertIsNotNullish(anchorRange);
+      const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
+      assertIsNotNullish(focusRange);
+      const anchorPoint = getAnchorPointFromRange(anchorRange);
+      const focusPoint = getFocusPointFromRange(focusRange);
+      if (isStartOfContentPoint(anchorPoint) || isEndOfContentPoint(anchorPoint) || isStartOfContentPoint(focusPoint) || isEndOfContentPoint(focusPoint)) {
+        continue;
+      }
+      const anchorPointParentContentReferencesWithEmbedReferences = makeListOfAllParentContentReferencesWithEmbedReferencesOfContentAtContentReference(
+        stateControl.stateView.document,
+        anchorRange.contentReference,
+      );
+      const focusPointParentContentReferencesWithEmbedReferences = makeListOfAllParentContentReferencesWithEmbedReferencesOfContentAtContentReference(
+        stateControl.stateView.document,
+        focusRange.contentReference,
+      );
+      const anchorPointContentReferenceWithParentContentReferences = [
+        anchorRange.contentReference,
+        ...anchorPointParentContentReferencesWithEmbedReferences.map(
+          (contentReferenceWithEmbedReference) => contentReferenceWithEmbedReference.contentReference,
+        ),
+      ];
+      const focusPointContentReferenceWithParentContentReferences = [
+        focusRange.contentReference,
+        ...focusPointParentContentReferencesWithEmbedReferences.map(
+          (contentReferenceWithEmbedReference) => contentReferenceWithEmbedReference.contentReference,
+        ),
+      ];
+      let contentReferenceIndices: [anchor: number, focus: number] | null = null;
+      findCommonParentContentReference: for (let i = 0; i < anchorPointContentReferenceWithParentContentReferences.length; i++) {
+        for (let j = 0; j < focusPointContentReferenceWithParentContentReferences.length; j++) {
+          const contentReferenceContainingAnchorPoint = anchorPointContentReferenceWithParentContentReferences[i];
+          const contentReferenceContainingFocusPoint = focusPointContentReferenceWithParentContentReferences[j];
+          if (areContentReferencesAtSameContent(contentReferenceContainingAnchorPoint, contentReferenceContainingFocusPoint)) {
+            contentReferenceIndices = [i, j];
+            break findCommonParentContentReference;
+          }
+        }
+      }
+      if (contentReferenceIndices === null) {
+        continue;
+      }
+      const [anchorPointContentReferenceIndex, focusPointContentReferenceIndex] = contentReferenceIndices;
+      const anchorPointBlockReference =
+        anchorPointContentReferenceIndex === 0
+          ? isBlockPoint(anchorPoint)
+            ? makeBlockReferenceFromBlockPoint(anchorPoint)
+            : makeBlockReferenceFromParagraphPoint(anchorPoint)
+          : anchorPointParentContentReferencesWithEmbedReferences[anchorPointContentReferenceIndex - 1].embedReference;
+      const focusPointBlockReference =
+        focusPointContentReferenceIndex === 0
+          ? isBlockPoint(focusPoint)
+            ? makeBlockReferenceFromBlockPoint(focusPoint)
+            : makeBlockReferenceFromParagraphPoint(focusPoint)
+          : focusPointParentContentReferencesWithEmbedReferences[focusPointContentReferenceIndex - 1].embedReference;
+      const anchorPointBlockIndex = getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, anchorPointBlockReference);
+      const focusPointBlockIndex = getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, focusPointBlockReference);
+      const contentReference = anchorPointContentReferenceWithParentContentReferences[anchorPointContentReferenceIndex];
+      const firstBlockIndex = Math.min(anchorPointBlockIndex, focusPointBlockIndex);
+      const lastBlockIndex = Math.max(anchorPointBlockIndex, focusPointBlockIndex);
+      for (let i = firstBlockIndex; i <= lastBlockIndex; i++) {
+        const blockReference = makeBlockReferenceFromBlock(accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, contentReference, i));
+        if (affectedBlockReferences.some((affectedBlockReference) => areBlockReferencesAtSameBlock(blockReference, affectedBlockReference))) {
+          continue selectionRangesLoop;
+        }
+        affectedBlockReferences.push(blockReference);
+      }
+      let mutation: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+      if (switchOrClone === 'clone') {
+        const contentFragment = copyBlocksFromContentBetweenBlockReferencesIntoContentFragmentAndChangeIds(
+          stateControl.stateView.document,
+          anchorPointBlockReference,
+          focusPointBlockReference,
+        );
+        mutation =
+          belowOrAbove === 'above'
+            ? makeInsertBlocksBeforeMutation(
+                makeBlockPointFromBlockReference(anchorPointBlockIndex < focusPointBlockIndex ? anchorPointBlockReference : focusPointBlockReference),
+                contentFragment,
+              )
+            : makeInsertBlocksAfterMutation(
+                makeBlockPointFromBlockReference(anchorPointBlockIndex > focusPointBlockIndex ? anchorPointBlockReference : focusPointBlockReference),
+                contentFragment,
+              );
+      } else {
+        const firstBlockReference = anchorPointBlockIndex < focusPointBlockIndex ? anchorPointBlockReference : focusPointBlockReference;
+        const firstBlockPoint = makeBlockPointFromBlockReference(firstBlockReference);
+        const lastBlockReference = anchorPointBlockIndex > focusPointBlockIndex ? anchorPointBlockReference : focusPointBlockReference;
+        const lastBlockPoint = makeBlockPointFromBlockReference(lastBlockReference);
+        if (belowOrAbove === 'above') {
+          if (firstBlockIndex === 0) {
+            continue;
+          }
+          const previousBlock = accessPreviousBlockToBlockAtBlockReference(stateControl.stateView.document, firstBlockReference);
+          const previousBlockReference = makeBlockReferenceFromBlock(previousBlock);
+          if (affectedBlockReferences.some((affectedBlockReference) => areBlockReferencesAtSameBlock(previousBlockReference, affectedBlockReference))) {
+            continue;
+          }
+          affectedBlockReferences.push(previousBlockReference);
+          mutation = makeMoveBlocksBeforeMutation(firstBlockPoint, lastBlockPoint, makeBlockPointFromBlock(previousBlock));
+        } else {
+          if (lastBlockIndex === getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, contentReference) - 1) {
+            continue;
+          }
+          const nextBlock = accessNextBlockToBlockAtBlockReference(stateControl.stateView.document, lastBlockReference);
+          const nextBlockReference = makeBlockReferenceFromBlock(nextBlock);
+          if (affectedBlockReferences.some((affectedBlockReference) => areBlockReferencesAtSameBlock(nextBlockReference, affectedBlockReference))) {
+            continue;
+          }
+          affectedBlockReferences.push(nextBlockReference);
+          mutation = makeMoveBlocksAfterMutation(firstBlockPoint, lastBlockPoint, makeBlockPointFromBlock(nextBlock));
+        }
+      }
+      mutations.push(mutation);
+    }
+    if (mutations.length === 0) {
+      return;
+    }
+    const batchMutation = makeBatchMutation(mutations);
+    stateControl.delta.applyMutation(batchMutation);
+  };
+}
 function* iterContentSubBlocks(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
   contentReference: ContentReference,
@@ -7717,6 +8048,65 @@ function* iterEmbedSubParagraphs(
     const contentReference = makeContentReferenceFromContent(content);
     yield* iterContentSubParagraphs(document, contentReference);
   }
+}
+function copyBlocksFromContentBetweenBlockReferencesIntoContentFragmentAndChangeIds<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  startBlockReference: BlockReference,
+  endBlockReference: BlockReference,
+): ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
+  const indexOfStartBlockReference = getIndexOfBlockInContentFromBlockReference(document, startBlockReference);
+  const indexOfEndBlockReference = getIndexOfBlockInContentFromBlockReference(document, endBlockReference);
+  const firstBlockIndex = Math.min(indexOfStartBlockReference, indexOfEndBlockReference);
+  const lastBlockIndex = Math.max(indexOfStartBlockReference, indexOfEndBlockReference);
+  const contentReference = makeContentReferenceFromContent(accessContentFromBlockReference(document, startBlockReference));
+  assert(areContentReferencesAtSameContent(contentReference, makeContentReferenceFromContent(accessContentFromBlockReference(document, endBlockReference))));
+  const contentFragmentBlocks: ContentFragmentBlock<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+  const onNestedEmbed = (
+    embed: Embed<EmbedConfig>,
+    nestedContents: NestedContent<ContentConfig>[],
+    nestedBlocks: NestedBlock<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[],
+  ): void => {
+    const embedReference = makeBlockReferenceFromBlock(embed);
+    for (let i = 0; i <= getNumberOfEmbedContentsInEmbedAtBlockReference(document, embedReference); i++) {
+      const content = accessContentAtIndexInEmbedAtBlockReference(document, embedReference, i);
+      nestedContents.push(makeNestedContent(cloneContentAndChangeIds(content), embedReference));
+      onNestedContent(content, nestedContents, nestedBlocks);
+    }
+  };
+  const onNestedContent = (
+    content: Content<ContentConfig>,
+    nestedContents: NestedContent<ContentConfig>[],
+    nestedBlocks: NestedBlock<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[],
+  ): void => {
+    const contentReference = makeContentReferenceFromContent(content);
+    const numberOfBlocks = getNumberOfBlocksInContentAtContentReference(document, contentReference);
+    for (let i = 0; i < numberOfBlocks; i++) {
+      const block = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
+      nestedBlocks.push(makeNestedBlock(cloneBlockAndChangeIds(block), contentReference));
+      if (isEmbed(block)) {
+        onNestedEmbed(block, nestedContents, nestedBlocks);
+      }
+    }
+  };
+  for (let i = firstBlockIndex; i <= lastBlockIndex; i++) {
+    const block = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
+    if (isParagraph(block)) {
+      contentFragmentBlocks.push(makeContentFragmentParagraph(cloneParagraphAndChangeIds(block)));
+    } else {
+      const nestedContents: NestedContent<ContentConfig>[] = [];
+      const nestedBlocks: NestedBlock<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+      contentFragmentBlocks.push(makeContentFragmentEmbed(block, nestedContents, nestedBlocks));
+      onNestedEmbed(block, nestedContents, nestedBlocks);
+    }
+  }
+  return makeContentFragment(contentFragmentBlocks);
 }
 export {
   type AnyNode,
@@ -8105,4 +8495,7 @@ export {
   regenerateSelectionRangeCreatedAtTimestamp,
   iterContentSubBlocksBackwards,
   iterEmbedSubBlocksBackwards,
+  copyBlocksFromContentBetweenBlockReferencesIntoContentFragmentAndChangeIds,
+  makeInsertParagraphBelowOrAboveAtSelectionUpdateFn,
+  makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn,
 };
