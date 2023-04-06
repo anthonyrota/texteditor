@@ -1199,15 +1199,14 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
           match$(Push(matches[0]));
           match$(End);
         };
-        function doWork(deadline: IdleDeadline): void {
+        function performSearchForMatchWork(deadline: IdleDeadline): void {
           while (deadline.timeRemaining() > 0 && match$.active) {
             stepSearch();
           }
           if (match$.active) {
-            requestIdleCallbackDisposable(doWork, match$);
+            requestIdleCallbackDisposable(performSearchForMatchWork, match$);
           }
         }
-        requestIdleCallbackDisposable(doWork, match$);
         pipe(
           this.#endPendingQueries,
           subscribe((event) => {
@@ -1215,6 +1214,17 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
             match$(End);
           }, match$),
         );
+        const startTime = performance.now();
+        const deadline: IdleDeadline = {
+          didTimeout: false,
+          timeRemaining() {
+            return Math.max(0, startTime + 5 - performance.now());
+          },
+        };
+        performSearchForMatchWork(deadline);
+        if (match$.active) {
+          requestIdleCallbackDisposable(performSearchForMatchWork, match$);
+        }
         return match$;
       },
       totalMatches$,

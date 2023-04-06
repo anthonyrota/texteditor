@@ -4389,6 +4389,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         );
         const findFromSelectionRange = matita.getFocusSelectionRangeFromSelection(findFromSelection);
         const match$ = this.#searchElementTrackAllControl.wrapCurrentAlwaysOrFindNextMatch(findFromSelectionRange, matchDisposable);
+        if (isSome(match$.lastValue)) {
+          this.#renderSearchOverlayAsync = false;
+        }
         pipe(
           match$,
           subscribe((event) => {
