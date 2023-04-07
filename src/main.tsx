@@ -4316,41 +4316,16 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           goToSearchResultImmediatelyCancelDisposable.dispose();
         }
       });
-      const searchConfigSink = Sink<SearchBoxControlConfig>((event) => {
-        if (event.type !== PushType) {
-          throwUnreachable();
-        }
-        const searchBoxControlConfig = event.value;
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (searchBoxControlConfig.type !== SearchBoxConfigType.SingleParagraphPlainText) {
-          assertUnreachable(searchBoxControlConfig.type);
-        }
-        const newConfig = searchBoxControlConfig.config;
-        this.#searchControl.config = newConfig;
-        this.stateControl.queueUpdate(() => {
-          // TODO: This is a hack to queue onFinishedUpdating.
-        });
-      });
       let anchoredStateView: [matita.Selection, matita.StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>] | null =
         null;
       let matchDisposable: Disposable | null = null;
-      const searchQuerySink = Sink<string>((event) => {
-        if (event.type !== PushType) {
-          throwUnreachable();
-        }
-        const query = event.value;
-        this.#searchControl.query = query;
-        this.#renderSearchOverlayAsync = true;
-        this.stateControl.queueUpdate(() => {
-          // TODO: This is a hack to queue onFinishedUpdating.
-        });
+      const tryGoToSearchResultImmediately = (): void => {
         if (!goToSearchResultImmediately || !this.#searchElementTrackAllControl) {
           return;
         }
         assertIsNotNullish(goToSearchResultImmediatelyCancelDisposable);
         if (anchoredStateView === null) {
-          const searchInputElement = this.#searchInputRef.current;
-          if (!searchInputElement || document.activeElement !== searchInputElement) {
+          if (!this.#isInSearchBox()) {
             return;
           }
           anchoredStateView = [this.stateControl.stateView.selection, this.stateControl.snapshotStateThroughStateView()];
@@ -4371,18 +4346,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 !updateDataStack.some((data) => !!data[SearchQueryGoToSearchResultImmediatelyKey]) &&
                 !(data && !!data[SearchQueryGoToSearchResultImmediatelyKey])
               ) {
-                resetAnchoredStateViewDisposable.dispose();
-              }
-            }, resetAnchoredStateViewDisposable),
-          );
-          pipe(
-            fromReactiveValue<[FocusEvent]>((callback, disposable) => addEventListener(searchInputElement, 'blur', callback, disposable)),
-            map((args) => args[0]),
-            subscribe((event) => {
-              if (event.type === ThrowType) {
-                throw event.error;
-              }
-              if (event.type === PushType) {
                 resetAnchoredStateViewDisposable.dispose();
               }
             }, resetAnchoredStateViewDisposable),
@@ -4443,6 +4406,34 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             });
           }, matchDisposable),
         );
+      };
+      const searchConfigSink = Sink<SearchBoxControlConfig>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const searchBoxControlConfig = event.value;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (searchBoxControlConfig.type !== SearchBoxConfigType.SingleParagraphPlainText) {
+          assertUnreachable(searchBoxControlConfig.type);
+        }
+        const newConfig = searchBoxControlConfig.config;
+        this.#searchControl.config = newConfig;
+        this.stateControl.queueUpdate(() => {
+          // TODO: This is a hack to queue onFinishedUpdating.
+        });
+        tryGoToSearchResultImmediately();
+      });
+      const searchQuerySink = Sink<string>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const query = event.value;
+        this.#searchControl.query = query;
+        this.#renderSearchOverlayAsync = true;
+        this.stateControl.queueUpdate(() => {
+          // TODO: This is a hack to queue onFinishedUpdating.
+        });
+        tryGoToSearchResultImmediately();
       });
       const closeSearchSink = Sink<undefined>((event) => {
         if (event.type !== PushType) {
