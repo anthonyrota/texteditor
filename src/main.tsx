@@ -708,6 +708,7 @@ function useIsFirstRender(): boolean {
   }, []);
   return isFirstRender.current;
 }
+const searchBoxMargin = 8;
 function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
     isVisible$,
@@ -727,13 +728,12 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     initialConfig,
     inputRef,
   } = props;
-  const margin = 8;
   type Position = {
     width: number;
     dropDownPercent: number;
   };
   const calculateWidthFromContainerStaticViewRectangle = (rectangle: ViewRectangle): number => {
-    return rectangle.width - margin * 2;
+    return rectangle.width - searchBoxMargin * 2;
   };
   const { value: position } = use$<Position>(
     useCallback((sink: Sink<Position>) => {
@@ -1000,9 +1000,9 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       className="search-box"
       style={
         {
-          '--search-box_translate-y': `${margin * (position.dropDownPercent === 0 ? -100000 : 1.5 * Math.sqrt(position.dropDownPercent) - 0.5)}px`,
+          '--search-box_translate-y': `${searchBoxMargin * (position.dropDownPercent === 0 ? -100000 : 1.5 * Math.sqrt(position.dropDownPercent) - 0.5)}px`,
           '--search-box_opacity': isVisible$.currentValue ? 1 - (1 - position.dropDownPercent) ** 2 : position.dropDownPercent ** 2,
-          '--search-box_margin': `${margin}px`,
+          '--search-box_margin': `${searchBoxMargin}px`,
           '--search-box_max-width': `${position.width}px`,
         } as React.CSSProperties
       }
@@ -3001,14 +3001,20 @@ function omit<T extends object, K extends string>(value: T, keys: K[]): Omit<T, 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   return newValue;
 }
-function scrollCursorRectIntoView(cursorRect: ViewRectangle, scrollElement: HTMLElement, isScrollable: (element: Element) => boolean, nestedCall?: boolean) {
+function scrollCursorRectIntoView(
+  cursorRect: ViewRectangle,
+  scrollElement: HTMLElement,
+  isScrollable: (element: Element) => boolean,
+  getScrollElementAdditionalTopMargin: (element: Element) => number,
+  nestedCall?: boolean,
+) {
   if (!nestedCall) {
     scrollElement = findScrollContainer(scrollElement, isScrollable);
     if (scrollElement !== document.body && scrollElement !== document.documentElement) {
       let s = scrollElement;
       while (true) {
         s = findScrollContainer(s, isScrollable);
-        scrollCursorRectIntoView(cursorRect, s, isScrollable, true);
+        scrollCursorRectIntoView(cursorRect, s, isScrollable, getScrollElementAdditionalTopMargin, true);
         if (s === document.body || s === document.documentElement) {
           break;
         }
@@ -3060,16 +3066,18 @@ function scrollCursorRectIntoView(cursorRect: ViewRectangle, scrollElement: HTML
     yOffset = scrollElement.scrollTop;
     xOffset = scrollElement.scrollLeft;
   }
+  scrollElementPaddingTop += getScrollElementAdditionalTopMargin(scrollElement);
   const cursorTop = cursorRect.top + yOffset - scrollElementTop;
   const cursorLeft = cursorRect.left + xOffset - scrollElementLeft;
   let x = xOffset;
   let y = yOffset;
+  // TODO.
   if (cursorLeft < xOffset) {
     x = cursorLeft - scrollElementPaddingLeft;
   } else if (cursorLeft + cursorRect.width + scrollElementBordersX > xOffset + width) {
     x = cursorLeft + scrollElementBordersX + scrollElementPaddingRight - width;
   }
-  if (cursorTop < yOffset) {
+  if (cursorTop - scrollElementPaddingTop < yOffset) {
     y = cursorTop - scrollElementPaddingTop;
   } else if (cursorTop + cursorRect.height + scrollElementBordersY > yOffset + height) {
     y = cursorTop + scrollElementBordersY + scrollElementPaddingBottom + cursorRect.height - height;
@@ -5275,8 +5283,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       ),
       this.#getScrollContainer(),
       this.#isElementScrollable,
+      this.#getScrollElementAdditionalTopMargin,
     );
   }
+  #getScrollElementAdditionalTopMargin = (element: Element): number => {
+    return this.#isSearchElementContainerVisible$.currentValue && element === this.#getScrollContainer()
+      ? ((this.#searchElementContainerElement.firstChild as HTMLElement | null)?.getBoundingClientRect().height ?? 0) + searchBoxMargin * 2
+      : 0;
+  };
   #isElementScrollable = (element: Element): boolean => {
     // TODO: Figure this out without forcing style calculation.
     return element === document.documentElement;
