@@ -1,5 +1,7 @@
+import { assert } from './util';
 type LpsArray = number[];
 function computeLpsArray(pattern: string): number[] {
+  assert(pattern.length > 0);
   const lps: number[] = [];
   const M = pattern.length;
   let len = 0;
@@ -32,13 +34,15 @@ function searchKmp(accessChar: (i: number) => string, N: number, pattern: string
       i++;
     }
     if (j === M) {
-      startIndices.push(i - j);
-      j = lps[j - 1];
+      const k = i - j;
+      startIndices.push(k);
+      i = k + M;
+      j = 0;
     } else if (i < N && pattern[j] !== accessChar(i)) {
       if (j !== 0) {
         j = lps[j - 1];
       } else {
-        i = i + 1;
+        i++;
       }
     }
   }

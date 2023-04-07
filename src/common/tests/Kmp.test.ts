@@ -16,6 +16,13 @@ describe('searchKmp', () => {
     pattern,
     computeLpsArray(pattern),
   ];
+  test('throws when needle is empty', () => {
+    expect(() => searchKmp(...makeStringArgs('', ''))).toThrow();
+    expect(() => searchKmp(...makeStringArgs('a', ''))).toThrow();
+  });
+  test('does not throw when haystack is empty', () => {
+    expect(() => searchKmp(...makeStringArgs('', 'a'))).not.toThrow();
+  });
   test('matches equal string', () => {
     expect(searchKmp(...makeStringArgs('text', 'text'))).toEqual([0]);
   });
@@ -27,5 +34,8 @@ describe('searchKmp', () => {
   });
   test('matches at end of string', () => {
     expect(searchKmp(...makeStringArgs('the full project gutenberg license', 'license'))).toEqual([27]);
+  });
+  test('matches do not overlap', () => {
+    expect(searchKmp(...makeStringArgs('eeeeeeeeeeeee', 'eee'))).toEqual([0, 3, 6, 9]);
   });
 });
