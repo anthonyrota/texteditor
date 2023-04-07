@@ -463,7 +463,7 @@ const replaceWithValueIndex = map((_, idx: number) => idx);
 function interval(delayMs: number): Source<number> {
   return replaceWithValueIndex(fromScheduleFunction(ScheduleInterval(delayMs)));
 }
-function startWith<T>(...values: T[]): <U>(source: Source<U>) => Source<T | U> {
+function startWith<T>(values: T[]): <U>(source: Source<U>) => Source<T | U> {
   return <U>(source: Source<U>) =>
     Source<T | U>((sink) => {
       pushArrayItemsToSink(values, sink);
@@ -688,7 +688,7 @@ function mapEvents<T, U>(transform: (event: Event<T>, index: number) => Event<U>
       source(sourceSink);
     });
 }
-function endWith<T>(...values: T[]): <U>(source: Source<U>) => Source<T | U> {
+function endWith<T>(values: T[]): <U>(source: Source<U>) => Source<T | U> {
   return <U>(source: Source<U>) =>
     Source<T | U>((sink) => {
       const sourceSink = Sink<U>((event) => {
@@ -745,8 +745,8 @@ function timeout<T>(timeoutSource: Source<unknown>, replacementSource: Source<T>
     pipe(
       timeoutSource,
       mapEvents<unknown, never>((event) => (event.type === PushType ? End : event)),
-      startWith(0 as const),
-      endWith(1 as const),
+      startWith([0 as const]),
+      endWith([1 as const]),
       map<0 | 1, Source<T | U>>((t) => (t === 0 ? source : replacementSource)),
       switchEach,
     );

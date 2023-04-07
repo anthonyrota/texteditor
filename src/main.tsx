@@ -14,7 +14,7 @@ import {
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
-import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
+import { CurrentValueDistributor, CurrentValueSource, Distributor, LastValueDistributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
 import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
 import {
@@ -45,7 +45,6 @@ import {
   startWith,
   subscribe,
   switchEach,
-  take,
   takeUntil,
   takeWhile,
   throttle,
@@ -364,7 +363,6 @@ interface ViewCursorAndRangeInfosForSelectionRange {
   selectionRangeId: string;
   hasFocus: boolean;
   isInComposition: boolean;
-  isDraggingSelection: boolean;
 }
 interface ViewCursorAndRangeInfos {
   viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
@@ -471,12 +469,19 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
     true,
   );
   const cursorBlinkSpeed = 500;
+  const resetSynchronizedCursorVisibility$ = useMemo(() => LastValueDistributor<undefined>(), []);
   const synchronizedCursorVisibility$ = useMemo(
     () =>
       pipe(
-        interval(cursorBlinkSpeed),
-        map((i) => i % 2 === 1),
-        startWith(true),
+        resetSynchronizedCursorVisibility$,
+        map<undefined, Source<boolean>>(() =>
+          pipe(
+            interval(cursorBlinkSpeed),
+            map((i) => i % 2 === 1),
+            startWith([true]),
+          ),
+        ),
+        switchEach,
         share(),
       ),
     [],
@@ -494,7 +499,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
   return (
     <>
       {viewCursorAndRangeInfosForSelectionRanges.flatMap((viewCursorAndRangeInfoForSelectionRange) => {
-        const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, isDraggingSelection, selectionRangeId } = viewCursorAndRangeInfoForSelectionRange;
+        const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, selectionRangeId } = viewCursorAndRangeInfoForSelectionRange;
         return viewCursorAndRangeInfosForRanges.flatMap((viewCursorAndRangeInfosForRange) => {
           return viewCursorAndRangeInfosForRange.viewParagraphInfos.flatMap((viewCursorAndRangeInfosForParagraphInRange) => {
             const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForParagraphInRange;
@@ -543,10 +548,10 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                     JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId]),
                   )}
                   viewCursorInfo={viewCursorInfo}
+                  resetSynchronizedCursorVisibilitySink={resetSynchronizedCursorVisibility$}
                   synchronizedCursorVisibility$={synchronizedCursorVisibility$}
                   cursorBlinkSpeed={cursorBlinkSpeed}
                   hasFocus={hasFocus}
-                  isDraggingSelection={isDraggingSelection}
                   isRectHidden={isRectHidden}
                 />
               );
@@ -560,21 +565,21 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
 }
 interface BlinkingCursorProps {
   viewCursorInfo: ViewCursorInfo;
+  resetSynchronizedCursorVisibilitySink: Sink<undefined>;
   synchronizedCursorVisibility$: Source<boolean>;
   cursorBlinkSpeed: number;
   hasFocus: boolean;
-  isDraggingSelection: boolean;
   isRectHidden: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isDraggingSelection, isRectHidden } = props;
+  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isRectHidden } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
   const isVisibleMaybe = use$(
     useMemo(
       () =>
-        !hasFocus || isDraggingSelection
+        !hasFocus
           ? ofEvent<boolean>(End)
           : pipe(
               fromArray([
@@ -586,9 +591,15 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
               ]),
               flat(1),
             ),
-      [cursorBlinkSpeed, synchronizedCursorVisibility$, hasFocus, isDraggingSelection],
+      [cursorBlinkSpeed, synchronizedCursorVisibility$, hasFocus],
     ),
   );
+  useEffect(() => {
+    resetSynchronizedCursorVisibilitySink(Push(undefined));
+    return () => {
+      resetSynchronizedCursorVisibilitySink(Push(undefined));
+    };
+  }, []);
   const cursorWidth = 2;
   return (
     <span
@@ -6525,7 +6536,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         selectionRangeId: selectionRange.id,
         hasFocus: this.#hasFocus(),
         isInComposition: this.#isInComposition > 0,
-        isDraggingSelection: this.#isDraggingSelection,
       })),
     );
   }
