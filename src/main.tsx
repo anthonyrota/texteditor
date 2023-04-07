@@ -1123,10 +1123,10 @@ enum StandardCommand {
   SelectPreviousInstanceOfSearchQuery = 'standard.selectPreviousInstanceOfSearchQuery',
   SelectNextSearchMatch = 'standard.selectNextSearchMatch',
   SelectPreviousSearchMatch = 'standard.selectPreviousSearchMatch',
-  MoveCurrentBlocksAbove = 'standard.switchWithBlockAbove',
-  MoveCurrentBlocksBelow = 'standard.switchWithBlockBelow',
-  CloneCurrentBlocksAbove = 'standard.cloneCurrentBlockToAbove',
-  CloneCurrentBlocksBelow = 'standard.cloneCurrentBlockToBelow',
+  MoveCurrentBlocksAbove = 'standard.moveCurrentBlocksAbove',
+  MoveCurrentBlocksBelow = 'standard.moveCurrentBlocksBelow',
+  CloneCurrentBlocksAbove = 'standard.cloneCurrentBlocksAbove',
+  CloneCurrentBlocksBelow = 'standard.cloneCurrentBlocksBelow',
 }
 enum Platform {
   Apple = 'Apple',
