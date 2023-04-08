@@ -3636,6 +3636,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         subscribe(pointerUpLeft$),
       );
     });
+    let currentDebounceSink: Sink<unknown>;
     let currentDebounceTimer$: Distributor<never>;
     pipe(
       pointerDownLeft$,
@@ -3644,9 +3645,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           pointerDownLeft$,
           debounce(
             () => {
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+              currentDebounceTimer$?.dispose();
               currentDebounceTimer$ = Distributor<never>();
               pipe(timer(400), subscribe(currentDebounceTimer$));
-              return currentDebounceTimer$;
+              return Source((debounceSink) => {
+                currentDebounceSink = debounceSink;
+                currentDebounceTimer$(debounceSink);
+              });
             },
             true,
             false,
@@ -3747,6 +3753,27 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               endSelectionDragDisposable.dispose();
               currentDebounceTimer$(End);
             };
+            currentDebounceSink.add(
+              Disposable(() => {
+                pointerCaptureDisposable.add(endSelectionDragDisposable);
+              }),
+            );
+            pipe(
+              currentDebounceTimer$,
+              subscribe((event) => {
+                assert(event.type === EndType);
+                pointerCaptureDisposable.add(
+                  Disposable(() => {
+                    // TODO.
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(() => {
+                        dragState = undefined;
+                      });
+                    });
+                  }),
+                );
+              }, Disposable()),
+            );
             pipe(
               this.#endSelectionDrag$,
               subscribe((event) => {
@@ -3792,14 +3819,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   top: pointerEvent.y,
                 };
                 const position = this.#calculatePositionFromViewPosition(viewPosition);
-                let endPointInfo: PointInfo | undefined;
-                if (position) {
-                  endPointInfo = {
+                queueSelectionUpdate(
+                  position && {
                     position,
                     stateView: this.stateControl.snapshotStateThroughStateView(),
-                  };
-                }
-                queueSelectionUpdate(endPointInfo);
+                  },
+                );
               }, pointerCaptureDisposable),
             );
             const selectionType: SelectionType = index === 0 ? 'grapheme' : (index - 1) % 2 === 0 ? 'word' : 'paragraph';
@@ -3822,7 +3847,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               flat(),
             );
             let isMovedPastThreshold = false;
-            const calculateSelection = (endPointInfo?: PointInfo): matita.Selection | null => {
+            const calculateSelection = (endPointInfo: PointInfo | null): matita.Selection | null => {
               assertIsNotNullish(dragState);
               const transformedBeforeSelection = this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
                 { selection: dragState.beforeSelection, fixWhen: matita.MutationSelectionTransformFixWhen.NoFix, shouldTransformAsSelection: true },
@@ -3845,6 +3870,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 return null;
               }
               const originalIsWrappedLineStart = (endPointInfo ?? dragState.lastPointInfo).position.isWrappedLineStart;
+              endPointInfo = null;
               let extendedSelectionRangeIdMaybe: Maybe<string>;
               if (dragState.isExtendSelection && transformedBeforeSelection.selectionRanges.length > 0) {
                 let selectionRangeToExtend: matita.SelectionRange | undefined | null;
@@ -4130,11 +4156,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 (info) => resolveOverlappingSelectionRanges(info, draggedSelectionRange.id),
               );
             };
-            const queueSelectionUpdate = (endPointInfo?: PointInfo): void => {
+            const queueSelectionUpdate = (endPointInfo: PointInfo | null): void => {
               this.#isDraggingSelection = !endPointInfo;
               this.stateControl.queueUpdate(() => {
                 const newSelection = calculateSelection(endPointInfo);
                 if (!newSelection) {
+                  endPointInfo = null;
                   return;
                 }
                 const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(newSelection);
@@ -4145,6 +4172,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                     ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: [focusSelectionRange.id] }
                     : undefined,
                 );
+                endPointInfo = null;
               });
             };
             pipe(
@@ -4187,25 +4215,25 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 dragState.lastViewPosition = viewPosition;
                 const position = this.#calculatePositionFromViewPosition(viewPosition);
                 if (position) {
-                  const pointInfo: PointInfo = {
+                  dragState.lastPointInfo = {
                     position,
                     stateView: this.stateControl.snapshotStateThroughStateView(),
                   };
-                  dragState.lastPointInfo = pointInfo;
-                  queueSelectionUpdate();
+                  queueSelectionUpdate(null);
                 }
               }, pointerCaptureDisposable),
             );
             if (!position) {
               return;
             }
-            const pointInfo: PointInfo = {
+            let pointInfo: PointInfo | null = {
               position,
               stateView: this.stateControl.snapshotStateThroughStateView(),
             };
             if (dragState) {
               dragState.lastPointInfo = pointInfo;
-              queueSelectionUpdate();
+              pointInfo = null;
+              queueSelectionUpdate(null);
               return;
             }
             const separateSelectionId = this.#keyDownSet.get('Alt');
@@ -4220,7 +4248,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               isExtendSelection,
               separateSelectionId: separateSelectionId === undefined ? None : Some(separateSelectionId),
             };
-            queueSelectionUpdate();
+            pointInfo = null;
+            queueSelectionUpdate(null);
           }, this),
         );
       }, this),

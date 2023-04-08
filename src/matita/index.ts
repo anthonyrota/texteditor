@@ -23,7 +23,7 @@ import { Disposable, implDisposableMethods } from '../ruscel/disposable';
 import { Distributor } from '../ruscel/distributor';
 import { isSome, Maybe, None, Some } from '../ruscel/maybe';
 import { End, Push, Source } from '../ruscel/source';
-import { requestAnimationFrameDisposable } from '../ruscel/util';
+import { requestAnimationFrameDisposable, requestIdleCallbackDisposable } from '../ruscel/util';
 type JsonPrimitive = undefined | null | string | number | boolean;
 type JsonMap = {
   [key: string]: Json;
@@ -3768,6 +3768,21 @@ function makeStateControl<
     transformSelectionRange: TransformSelectionRangeFn | null;
     reverseMutation: BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
   };
+  let isGarbageCollectCommittedMutationInfosForReversingQueued = false;
+  const garbageCollectCommittedMutationInfosForReversing = (): void => {
+    isGarbageCollectCommittedMutationInfosForReversingQueued = false;
+    const firstNonGarbageCollectedIndex = committedMutationInfosForReversing.findIndex((info) => info.mutationReferenceWeakRef.deref() !== undefined);
+    if (firstNonGarbageCollectedIndex > 0) {
+      committedMutationInfosForReversing.splice(0, firstNonGarbageCollectedIndex);
+    }
+  };
+  const finalizationRegistry = new FinalizationRegistry<undefined>(() => {
+    if (isGarbageCollectCommittedMutationInfosForReversingQueued) {
+      return;
+    }
+    isGarbageCollectCommittedMutationInfosForReversingQueued = true;
+    requestIdleCallbackDisposable(garbageCollectCommittedMutationInfosForReversing, disposable);
+  });
   const committedMutationInfosForReversing: (CommittedMutationInfoForReversingDummyFirst | CommittedMutationInfoForReversingMutation)[] = [
     {
       mutationReferenceWeakRef: new WeakRef(latestMutationReference),
@@ -3776,7 +3791,8 @@ function makeStateControl<
       currentCustomCollapsedSelectionTextConfig: state.customCollapsedSelectionTextConfig,
       reverseMutation: null,
     },
-  ]; // TODO: Garbage collect.
+  ];
+  finalizationRegistry.register(latestMutationReference, undefined);
   let currentTimeTravelInfo: {
     timeTraveledToAfterMutationId: string | null;
   } | null = null;
@@ -4035,6 +4051,7 @@ function makeStateControl<
         latestMutationReference = {
           mutationId,
         };
+        finalizationRegistry.register(latestMutationReference, undefined);
         const mutationReferenceWeakRef = new WeakRef(latestMutationReference);
         committedMutationInfosForReversing.push({
           mutation: mutationPart,
