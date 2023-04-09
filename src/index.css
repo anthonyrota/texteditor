@@ -12,7 +12,6 @@ body {
   height: 100%;
 }
 body {
-  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 img,
@@ -64,6 +63,7 @@ button {
   contain: content;
   font-family: 'IBM Plex Sans', sans-serif;
   font-size: 16;
+  line-height: 1.5;
 }
 .search-box__line-container {
   padding: 0.5em 1em;
@@ -152,7 +152,7 @@ button {
   display: flex;
   gap: 0.5em 1em;
   flex-wrap: wrap;
-  line-height: 1.25em;
+  line-height: 1.25;
 }
 .search-box__checkbox-container {
   display: flex;
@@ -177,7 +177,7 @@ button {
   content: '\2713';
   position: absolute;
   left: calc(50% - 0.37em);
-  top: calc(50% - 0.58em);
+  top: calc(50% - 0.515em);
 }
 @supports selector(:has(*)) {
   .search-box__checkbox-container:has(.search-box__checkbox-input:focus-visible) {

@@ -556,15 +556,27 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     const textPartGroups: TextPartGroup[] = [];
     let startOffset = 0;
     const wordBoundaryIndices: number[] | null = this.#config.wholeWords ? [] : null;
-    for (let i = 0; i < paragraph.children.length; i++) {
+    let i = 0;
+    while (i < paragraph.children.length) {
       const inline = paragraph.children[i];
       if (matita.isVoid(inline)) {
         startOffset += 1;
+        i++;
         continue;
       }
-      const { text } = inline;
-      const endOffset = startOffset + text.length;
-      const textPart = new TextPart(text, startOffset, endOffset);
+      let text = inline.text;
+      const textRunStartOffset = startOffset;
+      while (++i < paragraph.children.length) {
+        const inline = paragraph.children[i];
+        if (matita.isVoid(inline)) {
+          startOffset += 1;
+          i++;
+          break;
+        }
+        text += inline.text;
+      }
+      const textRunEndOffset = textRunStartOffset + text.length;
+      const textPart = new TextPart(text, textRunStartOffset, textRunEndOffset);
       const normalizedTextParts = normalizeTextPart(textPart, this.#config, this.#graphemeSegmenter);
       if (normalizedTextParts.length > 0) {
         textPartGroups.push(new TextPartGroup(normalizedTextParts));
@@ -578,7 +590,6 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
           wordBoundaryIndices!.push(startOffset + segment.index + segment.segment.length);
         }
       }
-      startOffset = endOffset;
     }
     return new ProcessedParagraph(textPartGroups, wordBoundaryIndices);
   }
@@ -665,7 +676,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     }
     return matches;
   }
-  #getMatchesForParagraphAtBlockReference(paragraphReference: matita.BlockReference, trackMatches: boolean): ParagraphMatches {
+  #getMatchesForParagraphAtBlockReference(paragraphReference: matita.BlockReference, updateMatchCount: boolean): ParagraphMatches {
     if (this.#searchPatterns.length === 0) {
       return {
         matches: [],
@@ -690,7 +701,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     const paragraphMatches: ParagraphMatches = {
       matches,
     };
-    if (trackMatches && this.#isTrackingAll) {
+    if (updateMatchCount && this.#isTrackingAll) {
       assertIsNotNullish(this.#paragraphMatchCounts);
       this.#paragraphMatchCounts.setCount(paragraphId, matches.length);
     }
@@ -748,7 +759,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         );
         blockReference = matita.makeBlockReferenceFromBlock(lastBlock);
         if (matita.isParagraph(lastBlock)) {
-          const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+          const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
           const endOffset = matita.isParagraphPoint(lastPoint) ? lastPoint.offset : matita.getParagraphLength(lastBlock);
           let matchIndex = -1;
           for (let i = matches.length - 1; i >= 0; i--) {
@@ -795,7 +806,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         if (matita.isEmbed(block)) {
           continue;
         }
-        const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+        const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
         if (matches.length === 0) {
           continue;
         }
@@ -811,7 +822,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
         continue;
       }
-      const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+      const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
       if (matches.length === 0) {
         if (isLast) {
           break;
@@ -859,7 +870,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         );
         blockReference = matita.makeBlockReferenceFromBlock(firstBlock);
         if (matita.isParagraph(firstBlock)) {
-          const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+          const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
           const startOffset = matita.isParagraphPoint(firstPoint) ? firstPoint.offset : 0;
           const matchIndex = matches.findIndex((match) => startOffset < match.endOffset);
           if (matchIndex !== -1) {
@@ -899,7 +910,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         if (matita.isEmbed(block)) {
           continue;
         }
-        const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+        const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
         if (matches.length === 0) {
           continue;
         }
@@ -915,7 +926,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
         continue;
       }
-      const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+      const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
       if (matches.length === 0) {
         if (isLast) {
           break;
@@ -1138,7 +1149,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
             );
             blockReference = matita.makeBlockReferenceFromBlock(firstBlock);
             if (matita.isParagraph(firstBlock)) {
-              const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+              const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
               const startOffset = matita.isParagraphPoint(firstPoint) ? firstPoint.offset : 0;
               const matchIndex = matches.findIndex((match) => startOffset < match.endOffset);
               if (matchIndex !== -1) {
@@ -1169,7 +1180,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
             if (matita.isEmbed(block)) {
               return;
             }
-            const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, false);
+            const { matches } = this.#getMatchesForParagraphAtBlockReference(blockReference, true);
             if (matches.length === 0) {
               return;
             }
@@ -1197,7 +1208,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
             }
             return;
           }
-          const { matches } = this.#getMatchesForParagraphAtBlockReference(iteratorBlockReference, false);
+          const { matches } = this.#getMatchesForParagraphAtBlockReference(iteratorBlockReference, true);
           if (matches.length === 0) {
             if (isLast) {
               match$(Push(null));

@@ -6,7 +6,6 @@
 // TODO: Remove DocumentConfig, etc. generics?
 // TODO: Change mutations to use references instead of points.
 // TODO: Don't necessitate BatchMutation for reverseMutation.
-import { v4 as makeUuidV4 } from 'uuid';
 import { IndexableUniqueStringList } from '../common/IndexableUniqueStringList';
 import {
   assertUnreachable,
@@ -54,12 +53,14 @@ function areJsonEqual(j1: Json, j2: Json): boolean {
     if (!Array.isArray(j2)) {
       return false;
     }
-    return j1.every((v, i) => areJsonEqual(v, j2[i]));
+    return j1.length === j2.length && j1.every((v, i) => areJsonEqual(v, j2[i]));
   }
   if (Array.isArray(j2)) {
     return false;
   }
-  return Object.entries(j1).every(([k, v]) => areJsonEqual(v, j2[k]));
+  const j1Keys = Object.keys(j1);
+  const j2Keys = Object.keys(j2);
+  return j1Keys.length === j2Keys.length && Object.entries(j1).every(([k, v]) => areJsonEqual(v, j2[k]));
 }
 enum NodeType {
   Document = 'Document',
@@ -371,9 +372,9 @@ interface NodeBase<Type extends NodeType, Config extends NodeConfig> {
   readonly id: string;
   config: Config;
 }
-// TODO: Use different id generator for range ids.
+let globalId = 0;
 function generateId(): string {
-  return makeUuidV4();
+  return String(globalId++);
 }
 interface Text<Config extends NodeConfig> {
   readonly type: NodeType.Text;
@@ -493,6 +494,40 @@ function sliceParagraphChildren<TextConfig extends NodeConfig, VoidConfig extend
 ): Inline<TextConfig, VoidConfig>[] {
   return sliceParagraphInlineNodes(paragraph.children, fromIndex, toIndex);
 }
+function* iterateParagraphInlineNodesWhole<TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
+  inlineNodes: Inline<TextConfig, VoidConfig>[],
+  fromIndex: number,
+  toIndex: number,
+): Generator<Inline<TextConfig, VoidConfig>, void> {
+  if (fromIndex < 0 || toIndex < fromIndex) {
+    throw new InvalidBoundsError({
+      cause: { inlineNodes, fromIndex, toIndex },
+    });
+  }
+  if (toIndex === fromIndex) {
+    return;
+  }
+  let end = 0;
+  for (let i = 0; i < inlineNodes.length; i++) {
+    const inline = inlineNodes[i];
+    const start = end;
+    end += getInlineLength(inline);
+    if (end <= fromIndex) {
+      continue;
+    }
+    if (start >= toIndex) {
+      break;
+    }
+    yield inline;
+  }
+}
+function iterateParagraphChildrenWhole<TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
+  paragraph: Paragraph<NodeConfig, TextConfig, VoidConfig>,
+  fromIndex: number,
+  toIndex: number,
+): Generator<Inline<TextConfig, VoidConfig>, void> {
+  return iterateParagraphInlineNodesWhole(paragraph.children, fromIndex, toIndex);
+}
 interface InlineNodeWithStartOffset<TextConfig extends NodeConfig, VoidConfig extends NodeConfig> {
   inline: Inline<TextConfig, VoidConfig>;
   startOffset: number;
@@ -554,11 +589,12 @@ function mergeTextsWithEqualConfigs<TextConfig extends NodeConfig, VoidConfig ex
   for (let i = 0; i < inlineNodes.length - 1; i++) {
     const current = inlineNodes[i];
     const next = inlineNodes[i + 1];
-    if (isText(current) && isText(next) && areNodeConfigsEqual<TextConfig>(current.config, next.config)) {
+    if (isText(current) && isText(next) && areNodeConfigsEqual(current.config, next.config)) {
       inlineNodes.splice(i--, 2, makeText(current.config, current.text + next.text));
     }
   }
 }
+// TODO.
 function spliceParagraphInlineNodes<TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
   inlineNodes: Inline<TextConfig, VoidConfig>[],
   fromOffset: number,
@@ -3639,7 +3675,7 @@ interface Delta<
   ) => void;
   applyUpdate: (runUpdate: RunUpdateFn, data?: UpdateData) => void;
   setSelection: (selection: Selection, keepCollapsedSelectionTextConfigWhenSelectionChanges?: boolean, data?: SelectionChangeData) => void;
-  setCustomCollapsedSelectionTextConfig: (newTextConfig: TextConfig) => void;
+  setCustomCollapsedSelectionTextConfig: (newTextConfig: TextConfig | null) => void;
 }
 type RunUpdateFn = (updateDataStack: UpdateData[]) => void;
 interface QueuedUpdate {
@@ -3722,13 +3758,14 @@ interface StateControl<
     secondStateView: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   ) => Selection;
 }
+function isSelectionRangeCollapsedInText(
+  document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
+  selectionRange: SelectionRange,
+): boolean {
+  return selectionRange.ranges.length === 1 && getRangeDirection(document, selectionRange.ranges[0]) === RangeDirection.NeutralText;
+}
 function isSelectionCollapsedInText(document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>, selection: Selection): boolean {
-  return (
-    selection.selectionRanges.length > 0 &&
-    selection.selectionRanges.every((selectionRange) =>
-      selectionRange.ranges.every((range) => getRangeDirection(document, range) === RangeDirection.NeutralText),
-    )
-  );
+  return selection.selectionRanges.length > 0 && selection.selectionRanges.every((selectionRange) => isSelectionRangeCollapsedInText(document, selectionRange));
 }
 interface MutationReference {
   mutationId: string | null;
@@ -4013,7 +4050,7 @@ function makeStateControl<
       mutation:
         | Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
         | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-      keepCollapsedSelectionTextConfigWhenSelectionChanges?: boolean,
+      keepCollapsedSelectionTextConfigWhenSelectionChanges = true,
       customTransformStateSelectionRangeFn?: CustomTransformStateSelectionRangeFn,
     ): void {
       didApplyMutation = true;
@@ -4138,7 +4175,7 @@ function makeStateControl<
     delta = {
       applyMutation: deltaApplyMutation,
       applyUpdate: deltaApplyUpdate,
-      setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges, data?: SelectionChangeData) => {
+      setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges = false, data?: SelectionChangeData) => {
         if (!areSelectionsEqual(stateView.selection, selection)) {
           const currentSelection = sortAndMergeAndFixSelectionRanges(stateView.document, stateControlConfig, selection.selectionRanges);
           const previousSelection = stateView.selection;
@@ -4548,15 +4585,18 @@ interface UpdateTextConfigBetweenParagraphPointsMutation<TextConfig extends Node
   type: MutationType.UpdateTextConfigBetweenParagraphPoints;
   startParagraphPoint: ParagraphPoint;
   endParagraphPoint: ParagraphPoint;
+  mergeTextConfig: TextConfig;
 }
 function makeUpdateTextConfigBetweenParagraphPointsMutation<TextConfig extends NodeConfig>(
   startParagraphPoint: ParagraphPoint,
   endParagraphPoint: ParagraphPoint,
+  mergeTextConfig: TextConfig,
 ): UpdateTextConfigBetweenParagraphPointsMutation<TextConfig> {
   return {
     type: MutationType.UpdateTextConfigBetweenParagraphPoints,
     startParagraphPoint,
     endParagraphPoint,
+    mergeTextConfig,
   };
 }
 interface UpdateParagraphConfigBetweenBlockPointsMutation<ParagraphConfig extends NodeConfig> {
@@ -6098,7 +6138,235 @@ function applyMutation<
         transformSelectionRange,
       );
     }
-    case MutationType.UpdateTextConfigBetweenParagraphPoints:
+    case MutationType.UpdateTextConfigBetweenParagraphPoints: {
+      const { startParagraphPoint, endParagraphPoint, mergeTextConfig } = mutation;
+      const contentReference = makeContentReferenceFromContent(accessContentFromParagraphPoint(document, startParagraphPoint));
+      const mergeTextConfigKeys = Object.keys(mergeTextConfig);
+      const willTextConfigChangeAfterMerge = (originalConfig: TextConfig): boolean => {
+        return mergeTextConfigKeys.some((key) => !areJsonEqual(originalConfig[key], mergeTextConfig[key]));
+      };
+      const updateConfig = (originalConfig: TextConfig): { newConfig: TextConfig; reverseMergeConfig: TextConfig } => {
+        const newConfig: TextConfig = {} as TextConfig;
+        const reverseMergeConfig: TextConfig = {} as TextConfig;
+        const originalConfigKeys = Object.keys(originalConfig);
+        for (let i = 0; i < originalConfigKeys.length; i++) {
+          const originalConfigKey = originalConfigKeys[i];
+          (newConfig as JsonMap)[originalConfigKey] = originalConfig[originalConfigKey];
+        }
+        for (let i = 0; i < mergeTextConfigKeys.length; i++) {
+          const mergeTextConfigKey = mergeTextConfigKeys[i];
+          (reverseMergeConfig as JsonMap)[mergeTextConfigKey] = originalConfig[mergeTextConfigKey];
+          const mergeValue = mergeTextConfig[mergeTextConfigKey];
+          if (mergeValue === undefined) {
+            delete newConfig[mergeTextConfigKey];
+          } else {
+            (newConfig as JsonMap)[mergeTextConfigKey] = mergeValue;
+          }
+        }
+        return { newConfig, reverseMergeConfig };
+      };
+      const formatTextBetween = (
+        startBlockIndex: number,
+        startOffset: number,
+        endBlockIndex: number,
+        endOffset: number,
+      ): MutationResult<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
+        type ChangedGroupInfo = {
+          didChange: true;
+          reverseMergeConfig: TextConfig;
+          startParagraphPoint: ParagraphPoint;
+          endParagraphPoint: ParagraphPoint;
+        };
+        type NotChangedGroupInfo = {
+          didChange: false;
+        };
+        type GroupInfo = ChangedGroupInfo | NotChangedGroupInfo;
+        const textsBetweenParagraphPoints: GroupInfo[] = [];
+        function willPortionOfTextInParagraphChange(
+          paragraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
+          fromOffset: number,
+          toOffset: number,
+        ): boolean {
+          for (const inline of iterateParagraphChildrenWhole(paragraph, fromOffset, toOffset)) {
+            if (isText(inline) && willTextConfigChangeAfterMerge(inline.config)) {
+              return true;
+            }
+          }
+          return false;
+        }
+        function formatPortionOfTextInParagraph(paragraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>, fromOffset: number, toOffset: number): void {
+          const paragraphReference = makeBlockReferenceFromBlock(paragraph);
+          let startInlineOffset = fromOffset;
+          const inlineNodesToChangeConfig = sliceParagraphChildren(paragraph, fromOffset, toOffset).map((inline) => {
+            const inlineLength = getInlineLength(inline);
+            if (isText(inline) && willTextConfigChangeAfterMerge(inline.config)) {
+              const { newConfig, reverseMergeConfig } = updateConfig(inline.config);
+              textsBetweenParagraphPoints.push({
+                didChange: true,
+                reverseMergeConfig,
+                startParagraphPoint: makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, startInlineOffset),
+                endParagraphPoint: makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, startInlineOffset + inlineLength),
+              });
+              startInlineOffset += inlineLength;
+              return makeText(newConfig, inline.text);
+            }
+            textsBetweenParagraphPoints.push({
+              didChange: false,
+            });
+            startInlineOffset += inlineLength;
+            return inline;
+          });
+          spliceParagraphChildren(paragraph, fromOffset, toOffset - fromOffset, inlineNodesToChangeConfig);
+        }
+        const changedParagraphIndices = Array<boolean>(endBlockIndex - startBlockIndex + 1);
+        let willChange = false;
+        detectChangesBeforeCommittingLoop: for (let i = startBlockIndex; i <= endBlockIndex; i++) {
+          const block = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
+          subParagraphFormatting: if (i === startBlockIndex) {
+            assertIsParagraph(block);
+            const paragraphLength = getParagraphLength(block);
+            let endOffsetForThisLine: number;
+            if (i === endBlockIndex) {
+              endOffsetForThisLine = endOffset;
+            } else {
+              endOffsetForThisLine = paragraphLength;
+            }
+            if (startOffset === 0 && endOffsetForThisLine === paragraphLength) {
+              break subParagraphFormatting;
+            }
+            const willThisParagraphChange = willPortionOfTextInParagraphChange(block, startOffset, endOffsetForThisLine);
+            changedParagraphIndices[i - startBlockIndex] = willThisParagraphChange;
+            if (willThisParagraphChange) {
+              willChange = true;
+              if (viewDeltaControl) {
+                const paragraphReference = makeBlockReferenceFromBlock(block);
+                viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(paragraphReference, true, false);
+              }
+            }
+            continue;
+          } else if (i === endBlockIndex) {
+            assertIsParagraph(block);
+            if (endOffset === getParagraphLength(block)) {
+              break subParagraphFormatting;
+            }
+            const willThisParagraphChange = willPortionOfTextInParagraphChange(block, 0, endOffset);
+            changedParagraphIndices[i - startBlockIndex] = willThisParagraphChange;
+            if (willThisParagraphChange) {
+              willChange = true;
+              if (viewDeltaControl) {
+                const paragraphReference = makeBlockReferenceFromBlock(block);
+                viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(paragraphReference, true, false);
+              }
+            }
+            continue;
+          }
+          if (!isParagraph(block)) {
+            changedParagraphIndices[i - startBlockIndex] = false;
+            continue;
+          }
+          const paragraphReference = makeBlockReferenceFromBlock(block);
+          for (let j = 0; j < block.children.length; j++) {
+            const inline = block.children[j];
+            if (isText(inline) && willTextConfigChangeAfterMerge(inline.config)) {
+              changedParagraphIndices[i - startBlockIndex] = true;
+              willChange = true;
+              viewDeltaControl?.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(paragraphReference, true, false);
+              continue detectChangesBeforeCommittingLoop;
+            }
+          }
+          changedParagraphIndices[i - startBlockIndex] = false;
+        }
+        if (!willChange) {
+          return makeNoChangeMutationResult();
+        }
+        viewDeltaControl?.onViewDeltasMarkedBeforeMutationCommitted();
+        for (let i = startBlockIndex; i <= endBlockIndex; i++) {
+          if (!changedParagraphIndices[i - startBlockIndex]) {
+            if (isParagraph(accessBlockAtIndexInContentAtContentReference(document, contentReference, i))) {
+              textsBetweenParagraphPoints.push({
+                didChange: false,
+              });
+            }
+            continue;
+          }
+          const paragraph = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
+          assertIsParagraph(paragraph);
+          subParagraphFormatting: if (i === startBlockIndex) {
+            const paragraphLength = getParagraphLength(paragraph);
+            let endOffsetForThisLine: number;
+            if (i === endBlockIndex) {
+              endOffsetForThisLine = endOffset;
+            } else {
+              endOffsetForThisLine = paragraphLength;
+            }
+            if (startOffset === 0 && endOffsetForThisLine === paragraphLength) {
+              break subParagraphFormatting;
+            }
+            formatPortionOfTextInParagraph(paragraph, startOffset, endOffsetForThisLine);
+            if (startBlockIndex !== endBlockIndex && endOffsetForThisLine < paragraphLength) {
+              textsBetweenParagraphPoints.push({
+                didChange: false,
+              });
+            }
+            continue;
+          } else if (i === endBlockIndex && endOffset !== getParagraphLength(paragraph)) {
+            formatPortionOfTextInParagraph(paragraph, 0, endOffset);
+            continue;
+          }
+          const paragraphReference = makeBlockReferenceFromBlock(paragraph);
+          let startInlineOffset = 0;
+          for (let j = 0; j < paragraph.children.length; j++) {
+            const inline = paragraph.children[j];
+            const inlineLength = getInlineLength(inline);
+            if (isText(inline) && willTextConfigChangeAfterMerge(inline.config)) {
+              const { newConfig, reverseMergeConfig } = updateConfig(inline.config);
+              textsBetweenParagraphPoints.push({
+                didChange: true,
+                reverseMergeConfig,
+                startParagraphPoint: makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, startInlineOffset),
+                endParagraphPoint: makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, startInlineOffset + inlineLength),
+              });
+              paragraph.children[j] = makeText(newConfig, inline.text);
+            } else {
+              textsBetweenParagraphPoints.push({
+                didChange: false,
+              });
+            }
+            startInlineOffset += inlineLength;
+          }
+        }
+        const reverseMutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = groupConsecutiveItemsInArray(
+          textsBetweenParagraphPoints,
+          (item) => item,
+          (a, b) => (!a.didChange && !b.didChange) || (a.didChange && b.didChange && areNodeConfigsEqual(a.reverseMergeConfig, b.reverseMergeConfig)),
+        )
+          .filter((group): group is GroupConsecutiveItemsInArrayGroup<GroupInfo, ChangedGroupInfo> => group.groupInfos[0].didChange)
+          .map((group) => {
+            return makeUpdateTextConfigBetweenParagraphPointsMutation(
+              group.groupInfos[0].startParagraphPoint,
+              group.groupInfos[group.groupInfos.length - 1].endParagraphPoint,
+              group.groupInfos[0].reverseMergeConfig,
+            );
+          });
+        assert(reverseMutations.length > 0);
+        return makeChangedMutationResult(makeBatchMutation(reverseMutations), null);
+      };
+      const startParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromParagraphPoint(startParagraphPoint));
+      const endParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromParagraphPoint(endParagraphPoint));
+      if (startParagraphIndex < endParagraphIndex) {
+        return formatTextBetween(startParagraphIndex, startParagraphPoint.offset, endParagraphIndex, endParagraphPoint.offset);
+      }
+      if (startParagraphIndex === endParagraphIndex) {
+        if (startParagraphPoint.offset < endParagraphPoint.offset) {
+          return formatTextBetween(startParagraphIndex, startParagraphPoint.offset, endParagraphIndex, endParagraphPoint.offset);
+        }
+        if (startParagraphPoint.offset > endParagraphPoint.offset) {
+          return formatTextBetween(endParagraphIndex, endParagraphPoint.offset, startParagraphIndex, startParagraphPoint.offset);
+        }
+        return makeNoChangeMutationResult();
+      }
+      return formatTextBetween(endParagraphIndex, endParagraphPoint.offset, startParagraphIndex, startParagraphPoint.offset);
+    }
     case MutationType.UpdateParagraphConfigBetweenBlockPoints: {
       throwNotImplemented();
     }
@@ -6180,7 +6448,6 @@ function applyMutation<
         document.config = cloneNodeConfig(newDocumentConfig);
         return makeChangedMutationResult(makeBatchMutation([makeChangeDocumentConfigMutation(cloneNodeConfig(previousDocumentConfig))]), null);
       }
-      viewDeltaControl?.onViewDeltasMarkedBeforeMutationCommitted();
       return makeNoChangeMutationResult();
     }
     case MutationType.ChangeContentConfig: {
@@ -6195,7 +6462,6 @@ function applyMutation<
         content.config = cloneNodeConfig(newContentConfig);
         return makeChangedMutationResult(makeBatchMutation([makeChangeContentConfigMutation(contentReference, cloneNodeConfig(previousContentConfig))]), null);
       }
-      viewDeltaControl?.onViewDeltasMarkedBeforeMutationCommitted();
       return makeNoChangeMutationResult();
     }
     case MutationType.ChangeEmbedConfig: {
@@ -6211,7 +6477,6 @@ function applyMutation<
         embed.config = cloneNodeConfig(newEmbedConfig);
         return makeChangedMutationResult(makeBatchMutation([makeChangeEmbedConfigMutation(embedBlockPoint, cloneNodeConfig(previousEmbedConfig))]), null);
       }
-      viewDeltaControl?.onViewDeltasMarkedBeforeMutationCommitted();
       return makeNoChangeMutationResult();
     }
     case MutationType.ChangeVoidConfig: {
@@ -6235,7 +6500,6 @@ function applyMutation<
         nextInlineWithStartOffset.inline.config = cloneNodeConfig(newVoidConfig);
         return makeChangedMutationResult(makeBatchMutation([makeChangeVoidConfigMutation(voidStartParagraphPoint, cloneNodeConfig(previousVoidConfig))]), null);
       }
-      viewDeltaControl?.onViewDeltasMarkedBeforeMutationCommitted();
       return makeNoChangeMutationResult();
     }
     case MutationType.RegisterTopLevelContent: {
@@ -6625,8 +6889,8 @@ function makeInsertContentFragmentAtRangeUpdateFn<
           mutations.push(makeJoinParagraphsBackwardsMutation(originalFirstParagraphPoint));
           const originalFirstParagraph = accessParagraphFromParagraphPoint(document, originalFirstParagraphPoint);
           const originalSecondParagraph = accessParagraphFromParagraphPoint(document, originalSecondParagraphPoint);
-          const dummyParagraphInlineNodes = originalFirstParagraph.children.map(cloneInline);
-          spliceParagraphInlineNodes(
+          let dummyParagraphInlineNodes = originalFirstParagraph.children.map(cloneInline);
+          dummyParagraphInlineNodes = spliceParagraphInlineNodes(
             dummyParagraphInlineNodes,
             getLengthOfParagraphInlineNodes(dummyParagraphInlineNodes),
             0,
@@ -6954,13 +7218,14 @@ function makeDefaultPointTransformFn<
             };
           }
           let text = previousInlineWithStartOffset.inline.text;
-          const inlineEndOffset = previousInlineWithStartOffset.startOffset + previousInlineWithStartOffset.inline.text.length;
+          let inlineEndOffset = previousInlineWithStartOffset.startOffset + previousInlineWithStartOffset.inline.text.length;
           let inlineWithStartOffset: InlineNodeWithStartOffset<TextConfig, VoidConfig> | null = null;
           while (
             (inlineWithStartOffset = getInlineNodeWithStartOffsetAfterParagraphPoint(document, changeParagraphPointOffset(point, inlineEndOffset))) &&
             !isVoid(inlineWithStartOffset.inline)
           ) {
             text += inlineWithStartOffset.inline.text;
+            inlineEndOffset = inlineWithStartOffset.startOffset + inlineWithStartOffset.inline.text.length;
           }
           inlineWithStartOffset = previousInlineWithStartOffset;
           let textStartOffsetInParagraph = inlineWithStartOffset.startOffset;
@@ -7057,13 +7322,14 @@ function makeDefaultPointTransformFn<
           };
         }
         let text = nextInlineWithStartOffset.inline.text;
-        const inlineEndOffset = nextInlineWithStartOffset.startOffset + nextInlineWithStartOffset.inline.text.length;
+        let inlineEndOffset = nextInlineWithStartOffset.startOffset + nextInlineWithStartOffset.inline.text.length;
         let inlineWithStartOffset: InlineNodeWithStartOffset<TextConfig, VoidConfig> | null = null;
         while (
           (inlineWithStartOffset = getInlineNodeWithStartOffsetAfterParagraphPoint(document, changeParagraphPointOffset(point, inlineEndOffset))) &&
           !isVoid(inlineWithStartOffset.inline)
         ) {
           text += inlineWithStartOffset.inline.text;
+          inlineEndOffset = inlineWithStartOffset.startOffset + inlineWithStartOffset.inline.text.length;
         }
         inlineWithStartOffset = nextInlineWithStartOffset;
         let textStartOffsetInParagraph = inlineWithStartOffset.startOffset;
@@ -7569,7 +7835,9 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
   VoidConfig extends NodeConfig,
 >(
   stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  contentFragment: ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  getContentFragmentFromSelectionRange: (
+    selectionRange: SelectionRange,
+  ) => ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selection?: Selection,
   getShouldReplaceEdgeParagraphConfig?: (
     edgeParagraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
@@ -7624,7 +7892,8 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
         updateFn = makeInsertContentFragmentAtRangeUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
           stateControl,
           lastRangeWithSelectionRange.range,
-          contentFragment,
+          // TODO: Calculate this beforehand or this won't work.
+          getContentFragmentFromSelectionRange(lastRangeWithSelectionRange.selectionRange),
           getShouldReplaceEdgeParagraphConfig,
           selection && !treatAsSelection
             ? undefined
@@ -7988,6 +8257,149 @@ function makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn<
     }
     const batchMutation = makeBatchMutation(mutations);
     stateControl.delta.applyMutation(batchMutation);
+  };
+}
+function makeToggleUpdateTextConfigAtSelectionUpdateFn<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  isTextConfigActive: ((textConfig: TextConfig) => boolean) | null,
+  makeMergeTextConfig: (isAllActive: boolean) => TextConfig,
+  selection?: Selection,
+): RunUpdateFn {
+  return () => {
+    const selectionAt = selection ?? stateControl.stateView.selection;
+    const paragraphPointRanges: { firstParagraphPoint: ParagraphPoint; lastParagraphPoint: ParagraphPoint }[] = [];
+    let isAllActive = true;
+    for (let i = 0; i < selectionAt.selectionRanges.length; i++) {
+      const selectionRange = selectionAt.selectionRanges[i];
+      for (let j = 0; j < selectionRange.ranges.length; j++) {
+        const range = selectionRange.ranges[j];
+        const direction = getRangeDirection(stateControl.stateView.document, range);
+        if (direction === RangeDirection.NeutralEmptyContent || direction === RangeDirection.NeutralText) {
+          continue;
+        }
+        const firstPoint = direction === RangeDirection.Backwards ? range.endPoint : range.startPoint;
+        const lastPoint = direction === RangeDirection.Backwards ? range.startPoint : range.endPoint;
+        let firstParagraphPoint: ParagraphPoint | undefined;
+        let lastParagraphPoint: ParagraphPoint | undefined;
+        if (isParagraphPoint(firstPoint) && isParagraphPoint(lastPoint)) {
+          firstParagraphPoint = firstPoint;
+          lastParagraphPoint = lastPoint;
+        }
+        if (!firstParagraphPoint || (isTextConfigActive !== null && isAllActive)) {
+          const firstPointBlockIndex = isStartOfContentPoint(firstPoint)
+            ? 0
+            : isEndOfContentPoint(firstPoint)
+            ? getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, range.contentReference) - 1
+            : getIndexOfBlockInContentFromBlockReference(
+                stateControl.stateView.document,
+                isParagraphPoint(firstPoint) ? makeBlockReferenceFromParagraphPoint(firstPoint) : makeBlockReferenceFromBlockPoint(firstPoint),
+              );
+          const lastPointBlockIndex = isStartOfContentPoint(lastPoint)
+            ? 0
+            : isEndOfContentPoint(lastPoint)
+            ? getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, range.contentReference) - 1
+            : getIndexOfBlockInContentFromBlockReference(
+                stateControl.stateView.document,
+                isParagraphPoint(lastPoint) ? makeBlockReferenceFromParagraphPoint(lastPoint) : makeBlockReferenceFromBlockPoint(lastPoint),
+              );
+          if (!firstParagraphPoint) {
+            if (isParagraphPoint(firstPoint)) {
+              firstParagraphPoint = firstPoint;
+            } else {
+              for (let k = firstPointBlockIndex; k <= lastPointBlockIndex; k++) {
+                const block = accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, range.contentReference, k);
+                if (isParagraph(block)) {
+                  firstParagraphPoint = makeParagraphPointFromParagraphAndOffset(block, 0);
+                  break;
+                }
+              }
+              if (firstParagraphPoint === undefined) {
+                continue;
+              }
+            }
+            if (isParagraphPoint(lastPoint)) {
+              lastParagraphPoint = lastPoint;
+            } else {
+              for (let k = firstPointBlockIndex; k <= lastPointBlockIndex; k++) {
+                const block = accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, range.contentReference, k);
+                if (isParagraph(block)) {
+                  lastParagraphPoint = makeParagraphPointFromParagraphAndOffset(block, getParagraphLength(block));
+                  break;
+                }
+              }
+            }
+          }
+          if (isTextConfigActive !== null && isAllActive) {
+            for (let i = firstPointBlockIndex; i <= lastPointBlockIndex; i++) {
+              const block = accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, range.contentReference, i);
+              if (isEmbed(block)) {
+                continue;
+              }
+              const startParagraphOffset = i === firstPointBlockIndex && isParagraphPoint(firstPoint) ? firstPoint.offset : 0;
+              const endParagraphOffset = i === lastPointBlockIndex && isParagraphPoint(lastPoint) ? lastPoint.offset : getParagraphLength(block);
+              for (const inline of iterateParagraphChildrenWhole(block, startParagraphOffset, endParagraphOffset)) {
+                if (isText(inline) && !isTextConfigActive(inline.config)) {
+                  isAllActive = false;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        assertIsNotNullish(lastParagraphPoint);
+        paragraphPointRanges.push({ firstParagraphPoint, lastParagraphPoint });
+      }
+    }
+    if (paragraphPointRanges.length === 0) {
+      return;
+    }
+    const mutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    const mergeTextConfig = makeMergeTextConfig(isAllActive);
+    for (let i = 0; i < paragraphPointRanges.length; i++) {
+      const paragraphPointRange = paragraphPointRanges[i];
+      const { firstParagraphPoint, lastParagraphPoint } = paragraphPointRange;
+      mutations.push(makeUpdateTextConfigBetweenParagraphPointsMutation(firstParagraphPoint, lastParagraphPoint, mergeTextConfig));
+    }
+    const batchMutation = makeBatchMutation(mutations);
+    stateControl.delta.applyMutation(batchMutation);
+  };
+}
+function makeToggleUpdateTextConfigAtCurrentSelectionAndCustomCollapsedSelectionTextConfigUpdateFn<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  isTextConfigActive: (textConfig: TextConfig) => boolean,
+  makeMergeTextConfig: (isAllActive: boolean) => TextConfig,
+  getInsertTextConfigAtSelectionRange: (
+    document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+    customCollapsedSelectionTextConfig: TextConfig | null,
+    selectionRange: SelectionRange,
+  ) => TextConfig,
+): RunUpdateFn {
+  return () => {
+    if (isSelectionCollapsedInText(stateControl.stateView.document, stateControl.stateView.selection)) {
+      const customCollapsedSelectionTextConfig = stateControl.stateView.customCollapsedSelectionTextConfig ?? {};
+      const isAllActive = stateControl.stateView.selection.selectionRanges.every((selectionRange) =>
+        isTextConfigActive(
+          getInsertTextConfigAtSelectionRange(stateControl.stateView.document, stateControl.stateView.customCollapsedSelectionTextConfig, selectionRange),
+        ),
+      );
+      stateControl.delta.setCustomCollapsedSelectionTextConfig({ ...customCollapsedSelectionTextConfig, ...makeMergeTextConfig(isAllActive) });
+      return;
+    }
+    stateControl.delta.applyUpdate(makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, isTextConfigActive, makeMergeTextConfig));
   };
 }
 function* iterContentSubBlocks(
@@ -8362,6 +8774,7 @@ export {
   isParagraphPoint,
   isParagraphPointAtParagraph,
   isPointAtBlock,
+  isSelectionRangeCollapsedInText,
   isSelectionCollapsedInText,
   isStartOfContentPoint,
   isText,
@@ -8515,4 +8928,6 @@ export {
   copyBlocksFromContentBetweenBlockReferencesIntoContentFragmentAndChangeIds,
   makeInsertParagraphBelowOrAboveAtSelectionUpdateFn,
   makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn,
+  makeToggleUpdateTextConfigAtSelectionUpdateFn,
+  makeToggleUpdateTextConfigAtCurrentSelectionAndCustomCollapsedSelectionTextConfigUpdateFn,
 };
