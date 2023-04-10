@@ -162,6 +162,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   #viewControl: VirtualizedViewControl;
   containerHtmlElement: HTMLElement;
   textNodeInfos: TextElementInfo[] = [];
+  #fontSize = 16;
+  #lineHeight = 2;
+  #scriptFontSizeMultiplier = 0.85;
   #onContainerHtmlElementChange: (previousContainerHtmlElement: HTMLElement) => void;
   constructor(
     paragraphReference: matita.BlockReference,
@@ -182,8 +185,33 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     containerHtmlElement.style.whiteSpace = 'break-spaces';
     containerHtmlElement.style.overflowWrap = 'anywhere';
     containerHtmlElement.style.fontFamily = 'Poppins, sans-serif';
-    containerHtmlElement.style.fontSize = '16px';
+    containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
+    containerHtmlElement.style.lineHeight = `${this.#lineHeight}`;
+    containerHtmlElement.style.position = 'relative';
     return containerHtmlElement;
+  }
+  convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
+    lineTop: number,
+    lineHeight: number,
+    insertTextConfig: TextConfig,
+  ): { top: number; height: number } {
+    let height: number;
+    let top: number;
+    if (insertTextConfig.script === undefined) {
+      top = lineTop + lineHeight / 2 - this.#fontSize / 2 - this.#fontSize * 0.225;
+      height = this.#fontSize * 1.4;
+    } else {
+      height = this.#fontSize / this.#scriptFontSizeMultiplier;
+      top = lineTop + lineHeight / 2 - height / 2;
+      if (insertTextConfig.script === TextConfigScript.Sub) {
+        top += 0.21 * height;
+      } else {
+        top -= 0.21 * height;
+      }
+      top -= height * 0.1;
+      height *= 1.15;
+    }
+    return { height, top };
   }
   #addInlineStylesToTextElement(
     textElement: HTMLElement,
@@ -209,7 +237,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       textElement.style.textDecoration = 'line-through';
     }
     if (textConfig.script !== undefined) {
-      textElement.style.fontSize = '0.85em';
+      textElement.style.fontSize = `${this.#fontSize * this.#scriptFontSizeMultiplier}px`;
       if (textConfig.script === TextConfigScript.Super) {
         textElement.style.verticalAlign = 'super';
       } else {
@@ -220,14 +248,14 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       textElement.style.fontFamily = 'Fira Code, monospace';
       textElement.style.backgroundColor = '#afb8c133';
       if (isFirstInTextNode && (inlineIndex === 0 || !paragraph.children[inlineIndex - 1].config.code)) {
-        textElement.style.paddingLeft = '0.3em';
-        textElement.style.borderTopLeftRadius = '0.3em';
-        textElement.style.borderBottomLeftRadius = '0.3em';
+        textElement.style.paddingLeft = '4px';
+        textElement.style.borderTopLeftRadius = '4px';
+        textElement.style.borderBottomLeftRadius = '4px';
       }
       if (isLastInTextNode && (inlineIndex === paragraph.children.length - 1 || !paragraph.children[inlineIndex + 1].config.code)) {
-        textElement.style.paddingRight = '0.3em';
-        textElement.style.borderTopRightRadius = '0.3em';
-        textElement.style.borderBottomRightRadius = '0.3em';
+        textElement.style.paddingRight = '4px';
+        textElement.style.borderTopRightRadius = '4px';
+        textElement.style.borderBottomRightRadius = '4px';
       }
     }
   }
@@ -546,6 +574,7 @@ interface ViewCursorInfo {
   height: number;
   isAnchor: boolean;
   isFocus: boolean;
+  isItalic: boolean;
   paragraphReference: matita.BlockReference;
   offset: number;
   rangeDirection: matita.RangeDirection;
@@ -748,7 +777,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                   return spans;
                 });
             const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
-              const { isAnchor, isFocus, offset, paragraphReference, rangeDirection } = viewCursorInfo;
+              const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection } = viewCursorInfo;
               return (
                 <BlinkingCursor
                   key={uniqueKeyControl.makeUniqueKey(
@@ -759,6 +788,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                   synchronizedCursorVisibility$={synchronizedCursorVisibility$}
                   cursorBlinkSpeed={cursorBlinkSpeed}
                   hasFocus={hasFocus}
+                  isItalic={isItalic}
                   isRectHidden={isRectHidden}
                 />
               );
@@ -776,10 +806,11 @@ interface BlinkingCursorProps {
   synchronizedCursorVisibility$: Source<boolean>;
   cursorBlinkSpeed: number;
   hasFocus: boolean;
+  isItalic: boolean;
   isRectHidden: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isRectHidden } = props;
+  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isItalic, isRectHidden } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
@@ -817,6 +848,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         width: cursorWidth,
         height: viewCursorInfo.height,
         backgroundColor: hasFocus || isRectHidden ? '#222' : '#666',
+        transform: isItalic ? 'skew(-8deg)' : undefined,
         visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
       }}
     />
@@ -1252,14 +1284,8 @@ interface MeasuredParagraphLineRange {
   characterRectangles: ViewRectangle[];
   endsWithLineBreak: boolean;
 }
-interface TextNodeMeasurement {
-  characterRectangles: ViewRectangle[];
-  startOffset: number;
-  endOffset: number;
-}
 interface RelativeParagraphMeasureCacheValue {
   characterRectangles: (ViewRectangle | null)[];
-  textNodeMeasurements: Map<Node, TextNodeMeasurement>;
   measuredParagraphLineRanges: MeasuredParagraphLineRange[];
 }
 interface AbsoluteParagraphMeasurement extends RelativeParagraphMeasureCacheValue {
@@ -1371,13 +1397,11 @@ function satisfiesSelector<T extends string>(values: T[], selector: Selector<T>)
   }
   return selector.any.some((selector) => satisfiesSelector(values, selector));
 }
-type PlatformSelector = Selector<Platform>;
-type ContextSelector = Selector<Context>;
 type KeyCommands = {
   key: string | null;
   command: string | null;
-  platform?: PlatformSelector | null;
-  context?: ContextSelector | null;
+  platform?: Selector<Platform> | null;
+  context?: Selector<Context> | null;
   cancelKeyEvent?: boolean;
 }[];
 const defaultTextEditingKeyCommands: KeyCommands = [
@@ -1491,12 +1515,36 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     context: Context.Editing,
     cancelKeyEvent: true,
   },
-  { key: 'Backspace', command: StandardCommand.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Alt+Backspace', command: StandardCommand.RemoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Delete', command: StandardCommand.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Alt+Delete', command: StandardCommand.RemoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Backspace', command: StandardCommand.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Delete', command: StandardCommand.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  {
+    key: 'Shift?+Backspace',
+    command: StandardCommand.RemoveSelectionGraphemeBackwards,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Alt+Shift?+Backspace,Control+Shift?+Backspace,Control+Alt+Shift?+Backspace',
+    command: StandardCommand.RemoveSelectionWordBackwards,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  { key: 'Shift?+Delete', command: StandardCommand.RemoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  {
+    key: 'Alt+Shift?+Delete,Control+Shift?+Delete,Control+Alt+Shift?+Delete',
+    command: StandardCommand.RemoveSelectionWordForwards,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  {
+    key: 'Meta+Shift?+Backspace',
+    command: StandardCommand.RemoveSelectionSoftLineStart,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
+  { key: 'Meta+Shift?+Delete', command: StandardCommand.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+KeyT', command: StandardCommand.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Enter', command: StandardCommand.InsertParagraphAbove, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Shift+Enter', command: StandardCommand.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -1633,7 +1681,7 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+KeyB', command: StandardCommand.ApplyBold, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+KeyI', command: StandardCommand.ApplyItalic, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+KeyU', command: StandardCommand.ApplyUnderline, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyJ', command: StandardCommand.ApplyCode, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Shift+KeyJ', command: StandardCommand.ApplyCode, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Shift+KeyX', command: StandardCommand.ApplyStrikethrough, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Shift+Comma', command: StandardCommand.ApplySubscript, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Shift+Period', command: StandardCommand.ApplySuperscript, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -5509,7 +5557,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const isLineWrapToNextLine = !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine];
       const { document } = this.stateControl.stateView;
       matita.assertIsParagraphPoint(point);
-      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(point, isLineWrapToNextLine);
+      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(point, isLineWrapToNextLine);
       for (let i = 0; i < 16; i++) {
         const verticalDelta = (i + 1) * cursorPositionAndHeight.height;
         const position = this.#calculatePositionFromViewPosition({
@@ -5558,7 +5606,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     return !!document.activeElement && this.#searchElementContainerElement.contains(document.activeElement);
   }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
-    // TODO: Can't do this with multiple selectionChange$ listeners.
+    // TODO: Can't do this with multiple selectionChange$ listeners, change to using a map with selection range id as key.
     if (event.type !== PushType) {
       throwUnreachable();
     }
@@ -5712,7 +5760,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     assertIsNotNullish(focusRange);
     const focusPoint = matita.getFocusPointFromRange(focusRange);
     matita.assertIsParagraphPoint(focusPoint);
-    const cursorPositionAndHeightFromParagraphPoint = this.#getCursorPositionAndHeightFromParagraphPoint(
+    const cursorPositionAndHeightFromParagraphPoint = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(
       focusPoint,
       !!focusSelectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
     );
@@ -5757,7 +5805,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     throwUnreachable();
   }
-  #getCursorPositionAndHeightFromParagraphPoint(point: matita.ParagraphPoint, isLineWrapToNextLine: boolean): { position: ViewPosition; height: number } {
+  #getCursorPositionAndHeightFromParagraphPointFillingLine(
+    point: matita.ParagraphPoint,
+    isLineWrapToNextLine: boolean,
+  ): { position: ViewPosition; height: number } {
     // Fix horizontal scroll hidden in safari.
     if (this.#isOverflowClipNotSupported) {
       this.#containerHtmlElement.scrollLeft = 0;
@@ -5799,19 +5850,22 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               height: measuredParagraphLineRange.boundingRect.height,
             };
           }
+          const characterRectangle = paragraphMeasurement.characterRectangles[point.offset - 1];
+          assertIsNotNullish(characterRectangle);
           return {
             position: {
-              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-              left: paragraphMeasurement.characterRectangles[point.offset - 1]!.right,
+              left: characterRectangle.right,
               top: measuredParagraphLineRange.boundingRect.top,
             },
             height: measuredParagraphLineRange.boundingRect.height,
           };
         }
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const characterRectangle = paragraphMeasurement.characterRectangles[point.offset];
+        assertIsNotNullish(characterRectangle);
         return {
           position: {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            left: paragraphMeasurement.characterRectangles[point.offset]!.left,
+            left: characterRectangle.left,
             top: measuredParagraphLineRange.boundingRect.top,
           },
           height: measuredParagraphLineRange.boundingRect.height,
@@ -5832,7 +5886,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     return event.code;
   }
-  #modifiers = ['Meta', 'Shift', 'Control', 'Alt'];
   #shortcutKeys: string[] = [
     'KeyA',
     'KeyB',
@@ -5948,14 +6001,20 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const requiredControl = parsedKeySet.has('Control');
         const requiredAlt = parsedKeySet.has('Alt');
         const requiredShift = parsedKeySet.has('Shift');
-        const requiredNonModifierKeys = Array.from(parsedKeySet).filter((requiredKey) => !this.#modifiers.includes(requiredKey));
+        const optionalMeta = parsedKeySet.has('Meta?');
+        const optionalControl = parsedKeySet.has('Control?');
+        const optionalAlt = parsedKeySet.has('Alt?');
+        const optionalShift = parsedKeySet.has('Shift?');
+        const requiredNonModifierKeys = Array.from(parsedKeySet).filter(
+          (requiredKey) => !['Meta', 'Shift', 'Control', 'Alt'].includes(requiredKey) && !requiredKey.endsWith('?'),
+        );
         if (
           !(
             requiredNonModifierKeys.every((requiredNonModifierKey) => normalizedKey === requiredNonModifierKey) &&
-            (requiredMeta ? hasMeta : !hasMeta) &&
-            (requiredControl ? hasControl : !hasControl) &&
-            (requiredAlt ? hasAlt : !hasAlt) &&
-            (requiredShift ? hasShift : !hasShift)
+            (optionalMeta || (requiredMeta ? hasMeta : !hasMeta)) &&
+            (optionalControl || (requiredControl ? hasControl : !hasControl)) &&
+            (optionalAlt || (requiredAlt ? hasAlt : !hasAlt)) &&
+            (optionalShift || (requiredShift ? hasShift : !hasShift))
           )
         ) {
           continue;
@@ -6380,23 +6439,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       function shiftRelativeCharacterRectangle(relativeCharacterRectangle: ViewRectangle): ViewRectangle {
         return shiftViewRectangle(relativeCharacterRectangle, containerHtmlElementBoundingRect.left, containerHtmlElementBoundingRect.top);
       }
-      function* mapEntries(iterator: Iterable<[Node, TextNodeMeasurement]>): IterableIterator<[Node, TextNodeMeasurement]> {
-        for (const [textNode, textNodeMeasurement] of iterator) {
-          yield [
-            textNode,
-            {
-              characterRectangles: textNodeMeasurement.characterRectangles.map(shiftRelativeCharacterRectangle),
-              startOffset: textNodeMeasurement.startOffset,
-              endOffset: textNodeMeasurement.endOffset,
-            },
-          ];
-        }
-      }
       return {
         characterRectangles: cachedMeasurement.characterRectangles.map(
           (characterRectangle) => characterRectangle && shiftRelativeCharacterRectangle(characterRectangle),
         ),
-        textNodeMeasurements: new Map(mapEntries(cachedMeasurement.textNodeMeasurements.entries())),
         measuredParagraphLineRanges: cachedMeasurement.measuredParagraphLineRanges.map((measuredParagraphLineRange) => {
           return {
             boundingRect: shiftRelativeCharacterRectangle(measuredParagraphLineRange.boundingRect),
@@ -6419,10 +6465,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       return shiftCachedMeasurement(cachedMeasurement);
     }
     const measureRange = document.createRange();
-    const textNodeMeasurements = new Map<Node, TextNodeMeasurement>();
     const measuredParagraphLineRanges: MeasuredParagraphLineRange[] = [];
     const paragraphCharacterRectangles: (ViewRectangle | null)[] = [];
     let isPreviousLineBreak = false;
+    type MutableViewRectangle = { -readonly [P in keyof ViewRectangle]: ViewRectangle[P] };
     for (let i = 0; i < paragraphRenderControl.textNodeInfos.length; i++) {
       const textNodeInfo = paragraphRenderControl.textNodeInfos[i];
       const { textStart, textEnd, textNode, endsWithLineBreak } = textNodeInfo;
@@ -6463,10 +6509,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const top = measureRangeBoundingRect.top - containerHtmlElementBoundingRect.top;
         const width = measureRangeBoundingRect.width;
         const height = measureRangeBoundingRect.height;
-        const characterRectangle = makeViewRectangle(left, top, width, height);
+        const characterRectangle = makeViewRectangle(left, top, width, height) as MutableViewRectangle;
         paragraphCharacterRectangles.push(characterRectangle);
         characterRectangles.push(characterRectangle);
         if (paragraphCharacterRectangles.length === 1) {
+          characterRectangle.left = 0;
+          characterRectangle.width = characterRectangle.right - characterRectangle.left;
           measuredParagraphLineRanges.push({
             boundingRect: characterRectangle,
             characterRectangles: [characterRectangle],
@@ -6508,6 +6556,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             const expandedRight = Math.max(measuredParagraphLineRange.boundingRect.right, characterRectangle.right);
             const expandedBottom = Math.max(measuredParagraphLineRange.boundingRect.bottom, characterRectangle.bottom);
             measuredParagraphLineRange.boundingRect = makeViewRectangle(expandedLeft, expandedTop, expandedRight - expandedLeft, expandedBottom - expandedTop);
+            const lastCharacterRectangle = measuredParagraphLineRange.characterRectangles[measuredParagraphLineRange.characterRectangles.length - 1];
+            characterRectangle.left = lastCharacterRectangle.right;
+            characterRectangle.width = characterRectangle.right - characterRectangle.left;
             measuredParagraphLineRange.characterRectangles.push(characterRectangle);
             measuredParagraphLineRange.endOffset = textStart + j + 1;
             continue;
@@ -6519,6 +6570,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           const fixedHeight = fixedCharacterRectangle.height / 2;
           fixedCharacterRectangle = makeViewRectangle(characterRectangle.left, characterRectangle.top + fixedHeight, 16, fixedHeight);
         }
+        characterRectangle.left = 0;
+        characterRectangle.width = characterRectangle.right - characterRectangle.left;
         measuredParagraphLineRanges.push({
           boundingRect: fixedCharacterRectangle,
           characterRectangles: [fixedCharacterRectangle],
@@ -6528,11 +6581,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         });
       }
       measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1].endsWithLineBreak = endsWithLineBreak;
-      textNodeMeasurements.set(textNode, {
-        characterRectangles: characterRectangles,
-        startOffset: textStart,
-        endOffset: textEnd,
-      });
       if (endsWithLineBreak) {
         isPreviousLineBreak = true;
         paragraphCharacterRectangles.push(null);
@@ -6540,9 +6588,32 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     const newCachedMeasurement: RelativeParagraphMeasureCacheValue = {
       characterRectangles: paragraphCharacterRectangles,
-      textNodeMeasurements,
       measuredParagraphLineRanges,
     };
+    const linesTopAndBottomAndHeightBefore = measuredParagraphLineRanges.map((measuredParagraphLineRange) => ({
+      top: measuredParagraphLineRange.boundingRect.top,
+      bottom: measuredParagraphLineRange.boundingRect.bottom,
+      height: measuredParagraphLineRange.boundingRect.height,
+    }));
+    for (let i = 0; i < measuredParagraphLineRanges.length; i++) {
+      const measuredParagraphLineRange = measuredParagraphLineRanges[i];
+      const boundingRect = measuredParagraphLineRange.boundingRect as MutableViewRectangle;
+      if (i === 0) {
+        boundingRect.top = 0;
+      } else {
+        const previous = linesTopAndBottomAndHeightBefore[i - 1];
+        const current = linesTopAndBottomAndHeightBefore[i];
+        boundingRect.top = (previous.bottom * previous.height + current.top * current.height) / (previous.height + current.height);
+      }
+      if (i === measuredParagraphLineRanges.length - 1) {
+        boundingRect.bottom = containerHtmlElementBoundingRect.bottom - containerHtmlElementBoundingRect.top;
+      } else {
+        const current = linesTopAndBottomAndHeightBefore[i];
+        const next = linesTopAndBottomAndHeightBefore[i + 1];
+        boundingRect.bottom = (current.bottom * current.height + next.top * next.height) / (current.height + next.height);
+      }
+      boundingRect.height = boundingRect.bottom - boundingRect.top;
+    }
     this.#relativeParagraphMeasurementCache.set(paragraphReference.blockId, newCachedMeasurement);
     return shiftCachedMeasurement(newCachedMeasurement);
   }
@@ -6989,11 +7060,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #virtualSelectionDisposable: Disposable | null = null;
   #lastRenderedSelection: matita.Selection | null = null;
+  #lastRenderedCustomCollapsedSelectionTextConfig: TextConfig | null = null;
   #replaceViewSelectionRanges(forceUpdate?: boolean): void {
-    if (forceUpdate === false && this.#lastRenderedSelection === this.stateControl.stateView.selection) {
+    if (
+      forceUpdate === false &&
+      this.#lastRenderedSelection === this.stateControl.stateView.selection &&
+      this.#lastRenderedCustomCollapsedSelectionTextConfig === this.stateControl.stateView.customCollapsedSelectionTextConfig
+    ) {
       return;
     }
     this.#lastRenderedSelection = this.stateControl.stateView.selection;
+    this.#lastRenderedCustomCollapsedSelectionTextConfig = this.stateControl.stateView.customCollapsedSelectionTextConfig;
     this.#virtualSelectionDisposable?.dispose();
     const virtualSelectionDisposable = Disposable();
     this.#virtualSelectionDisposable = virtualSelectionDisposable;
@@ -7043,6 +7120,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         isFocusSelectionRange,
         !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
         disposable,
+        selectionRange,
       );
       return viewCursorAndRangeInfosForRange$;
     });
@@ -7106,7 +7184,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               lastCharacterBoundingRect.right + relativeOffsetLeft,
               lastCharacterBoundingRect.top + relativeOffsetTop,
               defaultVisibleLineBreakPadding,
-              lastCharacterBoundingRect.height,
+              measuredParagraphLineRange.boundingRect.height,
             );
           }
           viewRangeInfos.push({
@@ -7158,6 +7236,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     isFocusSelectionRange: boolean,
     isLineWrapFocusCursorWrapToNextLine: boolean,
     disposable: Disposable,
+    selectionRange?: matita.SelectionRange,
   ): Source<ViewCursorAndRangeInfosForRange> {
     const { contentReference } = range;
     const direction = matita.getRangeDirection(this.stateControl.stateView.document, range);
@@ -7304,10 +7383,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       const anchorPoint = matita.getAnchorPointFromRange(range);
       matita.assertIsParagraphPoint(anchorPoint);
-      const anchorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(
-        anchorPoint,
-        direction === matita.RangeDirection.NeutralText ? isLineWrapFocusCursorWrapToNextLine : false,
-      );
+      const anchorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(anchorPoint, isLineWrapFocusCursorWrapToNextLine);
       const minTop = Math.min(cursorPositionAndHeight.position.top, anchorPositionAndHeight.position.top);
       const maxBottom = Math.max(
         cursorPositionAndHeight.position.top + cursorPositionAndHeight.height,
@@ -7342,18 +7418,40 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     };
     const calculateViewCursorInfoForFocusPoint = (relativeOffsetLeft: number, relativeOffsetTop: number): ViewCursorInfo => {
       const cursorOffset = focusPoint.offset;
-      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPoint(focusPoint, isLineWrapFocusCursorWrapToNextLine);
+      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(focusPoint, isLineWrapFocusCursorWrapToNextLine);
+      assertIsNotNullish(selectionRange);
+      const insertTextConfig = getInsertTextConfigAtSelectionRange(
+        this.stateControl.stateView.document,
+        this.stateControl.stateView.customCollapsedSelectionTextConfig,
+        selectionRange,
+      );
+      let cursorTop: number;
+      let cursorHeight: number;
+      if (direction === matita.RangeDirection.NeutralText) {
+        const firstParagraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(firstParagraphReference);
+        const cursorTopAndHeight = firstParagraphRenderControl.convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
+          cursorPositionAndHeight.position.top,
+          cursorPositionAndHeight.height,
+          insertTextConfig,
+        );
+        cursorTop = cursorTopAndHeight.top;
+        cursorHeight = cursorTopAndHeight.height;
+      } else {
+        cursorTop = cursorPositionAndHeight.position.top;
+        cursorHeight = cursorPositionAndHeight.height;
+      }
       const viewCursorInfo: ViewCursorInfo = {
         position: {
           left: cursorPositionAndHeight.position.left + relativeOffsetLeft,
-          top: cursorPositionAndHeight.position.top + relativeOffsetTop,
+          top: cursorTop + relativeOffsetTop,
         },
-        height: cursorPositionAndHeight.height,
+        height: cursorHeight,
         isAnchor,
         isFocus,
         paragraphReference: focusParagraphReference,
         offset: cursorOffset,
         rangeDirection: direction,
+        isItalic: direction === matita.RangeDirection.NeutralText && !!insertTextConfig.italic,
       };
       // TODO: Refactor so this function is pure?
       if (isFocusSelectionRange) {

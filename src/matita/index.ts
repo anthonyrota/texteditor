@@ -3708,6 +3708,10 @@ interface SelectionChangeMessage {
   data?: SelectionChangeData;
   updateDataStack: UpdateData[];
 }
+interface CustomCollapsedSelectionTextConfigChangeMessage<TextConfig extends NodeConfig> {
+  previousCustomCollapsedSelectionTextConfig: TextConfig | null;
+  updateDataStack: UpdateData[];
+}
 type UpdateData = Record<string, unknown>;
 interface BeforeMutationPartMessage<
   DocumentConfig extends NodeConfig,
@@ -3751,6 +3755,7 @@ interface StateControl<
   afterMutationPart$: Source<AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
   finishedUpdating$: Source<FinishedUpdatingMessage>;
   selectionChange$: Source<SelectionChangeMessage>;
+  customCollapsedSelectionTextConfigChange$: Source<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>;
   snapshotStateThroughStateView: () => StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
   transformSelectionForwardsFromFirstStateViewToSecondStateView: (
     selectionToTransform: MutationSelectionToTransform,
@@ -4043,6 +4048,9 @@ function makeStateControl<
   const finishedUpdating$ = Distributor<FinishedUpdatingMessage>();
   disposable.add(finishedUpdating$);
   const selectionChange$ = Distributor<SelectionChangeMessage>();
+  disposable.add(selectionChange$);
+  const customCollapsedSelectionTextConfig$ = Distributor<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>();
+  disposable.add(customCollapsedSelectionTextConfig$);
   let updateDataStack: UpdateData[] | null = null;
   function runUpdates(): void {
     let didApplyMutation = false;
@@ -4053,9 +4061,10 @@ function makeStateControl<
       keepCollapsedSelectionTextConfigWhenSelectionChanges = true,
       customTransformStateSelectionRangeFn?: CustomTransformStateSelectionRangeFn,
     ): void {
+      assertIsNotNullish(delta);
       didApplyMutation = true;
       const customTransformStateSelectionRangeDidTransformSelectionRanges: SelectionRange[] = [];
-      let selectionRangesToTransform = stateView.selection.selectionRanges;
+      let selectionRangesToTransform = state.selection.selectionRanges;
       const onMutation = (
         mutationPart: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
         mutationIndex: number,
@@ -4075,7 +4084,7 @@ function makeStateControl<
           beforeMutationPart$(Push(beforeMutationPartMessage));
         });
         const mutationPartResult: MutationResult<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = applyMutation(
-          stateView.document,
+          state.document,
           mutationPart,
           viewDeltaControl,
           makeStateViewOfStateAfterDynamicMutationReferenceId(() => mutationId, false),
@@ -4094,9 +4103,8 @@ function makeStateControl<
           mutation: mutationPart,
           mutationReferenceWeakRef,
           mutationId,
-          currentSelection: stateView.selection,
-          currentCustomCollapsedSelectionTextConfig:
-            stateView.customCollapsedSelectionTextConfig && cloneNodeConfig(stateView.customCollapsedSelectionTextConfig),
+          currentSelection: state.selection,
+          currentCustomCollapsedSelectionTextConfig: state.customCollapsedSelectionTextConfig && cloneNodeConfig(state.customCollapsedSelectionTextConfig),
           customTransformStateSelectionRangeFn:
             customTransformStateSelectionRangeFn === undefined ? null : mutationIndex === 0 ? customTransformStateSelectionRangeFn : undefined,
           transformSelectionRange,
@@ -4125,7 +4133,7 @@ function makeStateControl<
             return [transformedSelectionRange];
           });
           if (selectionRangesToTransform.length > 0) {
-            const fixedSelection = sortAndMergeAndFixSelectionRanges(stateView.document, stateControlConfig, selectionRangesToTransform);
+            const fixedSelection = sortAndMergeAndFixSelectionRanges(state.document, stateControlConfig, selectionRangesToTransform);
             selectionRangesToTransform = fixedSelection.selectionRanges;
           }
         }
@@ -4151,7 +4159,7 @@ function makeStateControl<
       if (customTransformStateSelectionRangeDidTransformSelectionRanges.length > 0) {
         delta.setSelection(
           sortAndMergeAndFixSelectionRanges(
-            stateView.document,
+            state.document,
             stateControlConfig,
             customTransformStateSelectionRangeDidTransformSelectionRanges.concat(selectionRangesToTransform),
           ),
@@ -4163,6 +4171,7 @@ function makeStateControl<
       afterMutation$(End);
     }
     function deltaApplyUpdate(runUpdate: RunUpdateFn, data?: UpdateData): void {
+      assertIsNotNullish(delta);
       assertIsNotNullish(updateDataStack);
       if (data) {
         updateDataStack.push(data);
@@ -4176,26 +4185,43 @@ function makeStateControl<
       applyMutation: deltaApplyMutation,
       applyUpdate: deltaApplyUpdate,
       setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges = false, data?: SelectionChangeData) => {
-        if (!areSelectionsEqual(stateView.selection, selection)) {
-          const currentSelection = sortAndMergeAndFixSelectionRanges(stateView.document, stateControlConfig, selection.selectionRanges);
-          const previousSelection = stateView.selection;
-          state.selection = currentSelection;
-          const isCollapsedInText = isSelectionCollapsedInText(stateView.document, selection);
-          if (!isCollapsedInText || !keepCollapsedSelectionTextConfigWhenSelectionChanges) {
-            state.customCollapsedSelectionTextConfig = null;
-          }
-          assertIsNotNullish(updateDataStack);
-          selectionChange$(
-            Push({
-              previousSelection,
-              data,
-              updateDataStack,
-            }),
-          );
+        assertIsNotNullish(delta);
+        assertIsNotNullish(updateDataStack);
+        if (areSelectionsEqual(state.selection, selection)) {
+          return;
         }
+        const currentSelection = sortAndMergeAndFixSelectionRanges(state.document, stateControlConfig, selection.selectionRanges);
+        const previousSelection = state.selection;
+        state.selection = currentSelection;
+        if (!keepCollapsedSelectionTextConfigWhenSelectionChanges || !isSelectionCollapsedInText(state.document, selection)) {
+          delta.setCustomCollapsedSelectionTextConfig(null);
+        }
+        selectionChange$(
+          Push({
+            previousSelection,
+            data,
+            updateDataStack,
+          }),
+        );
       },
       setCustomCollapsedSelectionTextConfig: (newTextConfig) => {
+        assertIsNotNullish(delta);
+        assertIsNotNullish(updateDataStack);
+        if (
+          state.customCollapsedSelectionTextConfig === null
+            ? newTextConfig === null
+            : newTextConfig !== null && areNodeConfigsEqual(state.customCollapsedSelectionTextConfig, newTextConfig)
+        ) {
+          return;
+        }
+        const previousCustomCollapsedSelectionTextConfig = state.customCollapsedSelectionTextConfig;
         state.customCollapsedSelectionTextConfig = newTextConfig;
+        customCollapsedSelectionTextConfig$(
+          Push({
+            previousCustomCollapsedSelectionTextConfig,
+            updateDataStack,
+          }),
+        );
       },
     };
     const updateQueue_ = updateQueue;
@@ -4242,6 +4268,7 @@ function makeStateControl<
       afterMutationPart$: Source(afterMutationPart$),
       finishedUpdating$: Source(finishedUpdating$),
       selectionChange$: Source(selectionChange$),
+      customCollapsedSelectionTextConfigChange$: Source(customCollapsedSelectionTextConfig$),
       snapshotStateThroughStateView,
       transformSelectionForwardsFromFirstStateViewToSecondStateView,
     },
