@@ -64,7 +64,101 @@ import {
 import './index.css';
 interface DocumentConfig extends matita.NodeConfig {}
 interface ContentConfig extends matita.NodeConfig {}
-interface ParagraphConfig extends matita.NodeConfig {}
+enum ParagraphType {
+  ListItem = 'listItem',
+  Quote = 'quote',
+  Heading1 = 'heading1',
+  Heading2 = 'heading2',
+  Heading3 = 'heading3',
+  Code = 'code',
+}
+enum CodeLanguageIdentifier {
+  ABAP = 'abap',
+  Bash = 'bash',
+  WindowsBat = 'bat',
+  BibTeX = 'bibtex',
+  Clojure = 'clojure',
+  Coffeescript = 'coffeescript',
+  C = 'c',
+  CPlusPlus = 'cpp',
+  CSharp = 'csharp',
+  Compose = 'dockercompose',
+  CSS = 'css',
+  CUDACPlusPlus = 'cudacpp',
+  Diff = 'diff',
+  Dockerfile = 'dockerfile',
+  FSharp = 'fsharp',
+  GitCommit = 'gitcommit',
+  GitRebase = 'gitrebase',
+  Go = 'go',
+  Groovy = 'groovy',
+  Handlebars = 'handlebars',
+  Haml = 'haml',
+  HTML = 'html',
+  Ini = 'ini',
+  Java = 'java',
+  JavaScript = 'javascript',
+  JavaScriptJSX = 'javascriptreact',
+  JSON = 'json',
+  JSONWithComments = 'jsonc',
+  LaTeX = 'latex',
+  Less = 'less',
+  Lua = 'lua',
+  Makefile = 'makefile',
+  Markdown = 'markdown',
+  ObjectiveC = 'objectivec',
+  ObjectiveCPlusPlus = 'objectivecpp',
+  Perl = 'perl',
+  Raku = 'raku',
+  PHP = 'php',
+  PlainText = 'plaintext',
+  PowerShell = 'powershell',
+  Pug = 'pug',
+  Python = 'python',
+  R = 'r',
+  Razor = 'razor',
+  Ruby = 'ruby',
+  Rust = 'rust',
+  SCSS = 'scss',
+  SASS = 'sass',
+  ShaderLab = 'shaderlab',
+  Slim = 'slim',
+  SQL = 'sql',
+  Stylus = 'stylus',
+  Swift = 'swift',
+  TypeScript = 'typescript',
+  TypeScriptJSX = 'typescriptreact',
+  TeX = 'tex',
+  VisualBasic = 'vb',
+  Vue = 'vue',
+  VueHTML = 'vuehtml',
+  XML = 'xml',
+  XSL = 'xsl',
+  YAML = 'yaml',
+}
+enum TextAlign {
+  Left = 'left',
+  Center = 'center',
+  Right = 'right',
+  Justify = 'justify',
+}
+enum LineHeight {
+  Single = 'single',
+  Normal = 'normal',
+  PlusHalf = 'plusHalf',
+  Double = 'double',
+}
+interface ParagraphConfig extends matita.NodeConfig {
+  type?: ParagraphType;
+  ListItem_listId?: string;
+  ListItem_Todo_checked?: true;
+  textAlign?: TextAlign;
+  indentLevel?: number;
+  hangingIndent?: true;
+  lineHeight?: LineHeight;
+  Code_lang?: CodeLanguageIdentifier;
+}
+const maxIndentLevel = 8;
 interface EmbedConfig extends matita.NodeConfig {}
 enum TextConfigScript {
   Sub = 'sub',
@@ -184,7 +278,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     containerHtmlElement.style.contain = 'content';
     containerHtmlElement.style.whiteSpace = 'break-spaces';
     containerHtmlElement.style.overflowWrap = 'anywhere';
-    containerHtmlElement.style.fontFamily = 'Poppins, sans-serif';
+    containerHtmlElement.style.fontFamily = 'IBM Plex Sans, sans-serif';
     containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
     containerHtmlElement.style.lineHeight = `${this.#lineHeight}`;
     containerHtmlElement.style.position = 'relative';
@@ -198,18 +292,17 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     let height: number;
     let top: number;
     if (insertTextConfig.script === undefined) {
-      top = lineTop + lineHeight / 2 - this.#fontSize / 2 - this.#fontSize * 0.225;
-      height = this.#fontSize * 1.4;
+      top = lineTop + lineHeight / 2 - this.#fontSize / 2 - this.#fontSize * 0.18;
+      height = this.#fontSize * 1.42;
     } else {
       height = this.#fontSize / this.#scriptFontSizeMultiplier;
       top = lineTop + lineHeight / 2 - height / 2;
       if (insertTextConfig.script === TextConfigScript.Sub) {
-        top += 0.21 * height;
+        top += 0.155 * height;
       } else {
-        top -= 0.21 * height;
+        top -= 0.23 * height;
       }
-      top -= height * 0.1;
-      height *= 1.15;
+      height *= 1.07;
     }
     return { height, top };
   }
@@ -560,49 +653,6 @@ function getNativeTextNodeAndOffset(root: Node, offset: number): NativeNodeAndOf
   }
   throwUnreachable();
 }
-interface HitPosition {
-  pointWithContentReference: matita.PointWithContentReference;
-  isPastPreviousCharacterHalfPoint: boolean;
-  isWrappedLineStart: boolean;
-}
-interface ViewPosition {
-  readonly left: number;
-  readonly top: number;
-}
-interface ViewCursorInfo {
-  position: ViewPosition;
-  height: number;
-  isAnchor: boolean;
-  isFocus: boolean;
-  isItalic: boolean;
-  paragraphReference: matita.BlockReference;
-  offset: number;
-  rangeDirection: matita.RangeDirection;
-}
-interface ViewRangeInfo {
-  rectangle: ViewRectangle;
-  paragraphLineIndex: number;
-  startOffset: number;
-  endOffset: number;
-  paragraphReference: matita.BlockReference;
-}
-interface ViewCursorAndRangeInfosForParagraphInRange {
-  paragraphReference: matita.BlockReference;
-  viewCursorInfos: ViewCursorInfo[];
-  viewRangeInfos: ViewRangeInfo[];
-}
-interface ViewCursorAndRangeInfosForRange {
-  viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[];
-}
-interface ViewCursorAndRangeInfosForSelectionRange {
-  viewCursorAndRangeInfosForRanges: ViewCursorAndRangeInfosForRange[];
-  selectionRangeId: string;
-  hasFocus: boolean;
-  isInComposition: boolean;
-}
-interface ViewCursorAndRangeInfos {
-  viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
-}
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Some<T> | (() => Some<T>),
@@ -663,6 +713,50 @@ function use$<T>(
     };
   }, [source]);
   return value;
+}
+interface HitPosition {
+  pointWithContentReference: matita.PointWithContentReference;
+  isPastPreviousCharacterHalfPoint: boolean;
+  isWrappedLineStart: boolean;
+}
+interface ViewPosition {
+  readonly left: number;
+  readonly top: number;
+}
+interface ViewCursorInfo {
+  position: ViewPosition;
+  height: number;
+  isAnchor: boolean;
+  isFocus: boolean;
+  isCollapsed: boolean;
+  insertTextConfig: TextConfig;
+  paragraphReference: matita.BlockReference;
+  offset: number;
+  rangeDirection: matita.RangeDirection;
+}
+interface ViewRangeInfo {
+  rectangle: ViewRectangle;
+  paragraphLineIndex: number;
+  startOffset: number;
+  endOffset: number;
+  paragraphReference: matita.BlockReference;
+}
+interface ViewCursorAndRangeInfosForParagraphInRange {
+  paragraphReference: matita.BlockReference;
+  viewCursorInfos: ViewCursorInfo[];
+  viewRangeInfos: ViewRangeInfo[];
+}
+interface ViewCursorAndRangeInfosForRange {
+  viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[];
+}
+interface ViewCursorAndRangeInfosForSelectionRange {
+  viewCursorAndRangeInfosForRanges: ViewCursorAndRangeInfosForRange[];
+  selectionRangeId: string;
+  hasFocus: boolean;
+  isInComposition: boolean;
+}
+interface ViewCursorAndRangeInfos {
+  viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
 }
 interface SelectionViewMessage {
   viewCursorAndRangeInfos: ViewCursorAndRangeInfos;
@@ -777,18 +871,19 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                   return spans;
                 });
             const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
-              const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection } = viewCursorInfo;
+              const { isAnchor, isFocus, isCollapsed, insertTextConfig, offset, paragraphReference, rangeDirection } = viewCursorInfo;
               return (
                 <BlinkingCursor
                   key={uniqueKeyControl.makeUniqueKey(
-                    JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId]),
+                    JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, isCollapsed, offset, rangeDirection, selectionRangeId, insertTextConfig]),
                   )}
                   viewCursorInfo={viewCursorInfo}
                   resetSynchronizedCursorVisibilitySink={resetSynchronizedCursorVisibility$}
                   synchronizedCursorVisibility$={synchronizedCursorVisibility$}
                   cursorBlinkSpeed={cursorBlinkSpeed}
                   hasFocus={hasFocus}
-                  isItalic={isItalic}
+                  isCollapsed={isCollapsed}
+                  insertTextConfig={insertTextConfig}
                   isRectHidden={isRectHidden}
                 />
               );
@@ -806,11 +901,21 @@ interface BlinkingCursorProps {
   synchronizedCursorVisibility$: Source<boolean>;
   cursorBlinkSpeed: number;
   hasFocus: boolean;
-  isItalic: boolean;
+  isCollapsed: boolean;
+  insertTextConfig: TextConfig;
   isRectHidden: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isItalic, isRectHidden } = props;
+  const {
+    viewCursorInfo,
+    resetSynchronizedCursorVisibilitySink,
+    synchronizedCursorVisibility$,
+    cursorBlinkSpeed,
+    hasFocus,
+    isCollapsed,
+    insertTextConfig,
+    isRectHidden,
+  } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
@@ -848,7 +953,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         width: cursorWidth,
         height: viewCursorInfo.height,
         backgroundColor: hasFocus || isRectHidden ? '#222' : '#666',
-        transform: isItalic ? 'skew(-8deg)' : undefined,
+        transform: isCollapsed && insertTextConfig.italic === true ? 'skew(-7deg)' : undefined,
         visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
       }}
     />
@@ -7448,10 +7553,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         height: cursorHeight,
         isAnchor,
         isFocus,
+        isCollapsed: direction === matita.RangeDirection.NeutralText,
         paragraphReference: focusParagraphReference,
         offset: cursorOffset,
         rangeDirection: direction,
-        isItalic: direction === matita.RangeDirection.NeutralText && !!insertTextConfig.italic,
+        insertTextConfig,
       };
       // TODO: Refactor so this function is pure?
       if (isFocusSelectionRange) {

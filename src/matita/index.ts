@@ -6,6 +6,7 @@
 // TODO: Remove DocumentConfig, etc. generics?
 // TODO: Change mutations to use references instead of points.
 // TODO: Don't necessitate BatchMutation for reverseMutation.
+// TODO: Make sure range ids are generated unique each time in transformation functions, and not reused.
 import { IndexableUniqueStringList } from '../common/IndexableUniqueStringList';
 import {
   assertUnreachable,
@@ -7096,12 +7097,6 @@ function makeDefaultPointTransformFn<
   movementGranularity: MovementGranularity,
   pointMovement: PointMovement,
 ): PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
-  assert(
-    !(
-      movementGranularity === MovementGranularity.Grapheme &&
-      (pointMovement === PointMovement.PreviousBoundByEdge || pointMovement === PointMovement.NextBoundByEdge)
-    ),
-  );
   return (document, stateControlConfig, selectionRangeIntention, range, point) => {
     if (movementGranularity === MovementGranularity.TopLevelContent) {
       const parentContentReferences = makeListOfAllParentContentReferencesOfContentAtContentReference(document, range.contentReference);
@@ -7958,100 +7953,159 @@ function makeTransposeAtSelectionUpdateFn<
   VoidConfig extends NodeConfig,
 >(stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, selection?: Selection): RunUpdateFn {
   return () => {
-    const {
-      delta,
-      stateView: { document },
-    } = stateControl;
-    const segmenter = new stateControl.stateControlConfig.IntlSegmenter();
     const selectionToTranspose = selection ?? stateControl.stateView.selection;
     const mutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-    const selectionRangeUpdates: [SelectionRange, Range][] = [];
-    selectionToTranspose.selectionRanges.forEach((selectionRange) => {
-      if (selectionRange.ranges.length === 1 && getRangeDirection(document, selectionRange.ranges[0]) === RangeDirection.NeutralText) {
-        const collapsedTransposeRange = selectionRange.ranges[0];
-        const transposeParagraphPoint = collapsedTransposeRange.startPoint;
-        assertIsParagraphPoint(transposeParagraphPoint);
-        const nextInlineWithStartOffset = getInlineNodeWithStartOffsetAfterParagraphPoint(document, transposeParagraphPoint);
-        const previousInlineWithStartOffset = getInlineNodeWithStartOffsetAfterParagraphPoint(document, transposeParagraphPoint);
-        type TextInlineWithStartOffset = { inline: Text<TextConfig>; startOffset: number };
-        let firstTextWithStartOffset: TextInlineWithStartOffset;
-        let secondTextWithStartOffset: TextInlineWithStartOffset | null = null;
-        let firstGraphemeTextConfigBeforeTranspose: TextConfig;
-        let secondGraphemeTextConfigBeforeTranspose: TextConfig | null = null;
-        // TODO: Doesn't work when grapheme is split into multiple texts with different styling.
-        if (!nextInlineWithStartOffset || isVoid(nextInlineWithStartOffset.inline)) {
-          if (!previousInlineWithStartOffset || isVoid(previousInlineWithStartOffset.inline)) {
-            // Between two voids.
-            return;
-          }
-          // End of text.
-          firstTextWithStartOffset = previousInlineWithStartOffset as TextInlineWithStartOffset;
-        } else if (!previousInlineWithStartOffset || isVoid(previousInlineWithStartOffset.inline)) {
-          // Start of text.
-          firstTextWithStartOffset = nextInlineWithStartOffset as TextInlineWithStartOffset;
-        } else {
-          // Middle of text.
-          firstTextWithStartOffset = previousInlineWithStartOffset as TextInlineWithStartOffset;
-          if (previousInlineWithStartOffset.startOffset !== nextInlineWithStartOffset.startOffset) {
-            secondTextWithStartOffset = nextInlineWithStartOffset as TextInlineWithStartOffset;
-          }
-        }
-        const segments: { segment: string; index: number }[] = [];
-        for (const { segment, index } of segmenter.segment(
-          secondTextWithStartOffset === null
-            ? firstTextWithStartOffset.inline.text
-            : firstTextWithStartOffset.inline.text + secondTextWithStartOffset.inline.text,
-        )) {
-          segments.push({ segment, index });
-          if (firstTextWithStartOffset.startOffset + index >= transposeParagraphPoint.offset && segments.length > 1) {
-            firstGraphemeTextConfigBeforeTranspose = firstTextWithStartOffset.inline.config;
-            if (secondTextWithStartOffset !== null && firstTextWithStartOffset.startOffset + index >= secondTextWithStartOffset.startOffset) {
-              secondGraphemeTextConfigBeforeTranspose = secondTextWithStartOffset.inline.config;
-            }
-            break;
-          }
-        }
-        firstGraphemeTextConfigBeforeTranspose ??= firstTextWithStartOffset.inline.config;
-        assert(segments.length !== 0);
-        if (segments.length === 1) {
-          return;
-        }
-        const firstGrapheme = segments[segments.length - 2];
-        const secondGrapheme = segments[segments.length - 1];
-        const pointAfterFirstGraphemeAfterTransposed = changeParagraphPointOffset(
-          transposeParagraphPoint,
-          firstTextWithStartOffset.startOffset + firstGrapheme.index + secondGrapheme.segment.length,
-        );
-        selectionRangeUpdates.push([
-          selectionRange,
-          makeRange(collapsedTransposeRange.contentReference, pointAfterFirstGraphemeAfterTransposed, pointAfterFirstGraphemeAfterTransposed, generateId()),
-        ]);
-        mutations.push(
-          makeSpliceParagraphMutation(
-            changeParagraphPointOffset(transposeParagraphPoint, firstTextWithStartOffset.startOffset + firstGrapheme.index),
-            firstGrapheme.segment.length + secondGrapheme.segment.length,
-            secondGraphemeTextConfigBeforeTranspose === null
-              ? [makeText(firstGraphemeTextConfigBeforeTranspose, secondGrapheme.segment + firstGrapheme.segment)]
-              : [
-                  makeText(secondGraphemeTextConfigBeforeTranspose, secondGrapheme.segment),
-                  makeText(firstGraphemeTextConfigBeforeTranspose, firstGrapheme.segment),
-                ],
-          ),
-        );
+    const selectionRangeUpdates: {
+      selectionRangeBefore: SelectionRange;
+      previousGraphemePointOffset: number;
+      nextGraphemePointOffset: number;
+      contentReferenceAfter: ContentReference;
+      pointAfter: ParagraphPoint;
+    }[] = [];
+    for (let i = 0; i < selectionToTranspose.selectionRanges.length; i++) {
+      const selectionRange = selectionToTranspose.selectionRanges[i];
+      if (selectionRange.ranges.length > 1) {
+        return;
       }
-    });
+      const collapsedTransposeRange = selectionRange.ranges[0];
+      if (getRangeDirection(stateControl.stateView.document, collapsedTransposeRange) !== RangeDirection.NeutralText) {
+        continue;
+      }
+      const transposeParagraphPoint = collapsedTransposeRange.startPoint;
+      assertIsParagraphPoint(transposeParagraphPoint);
+      const graphemePreviousEdgeTransform = makeDefaultPointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
+        MovementGranularity.Grapheme,
+        PointMovement.PreviousBoundByEdge,
+      );
+      const graphemePreviousTransform = makeDefaultPointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
+        MovementGranularity.Grapheme,
+        PointMovement.Previous,
+      );
+      const graphemeNextTransform = makeDefaultPointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
+        MovementGranularity.Grapheme,
+        PointMovement.Next,
+      );
+      let transposeParagraphGraphemeEdgePoint = graphemePreviousEdgeTransform(
+        stateControl.stateView.document,
+        stateControl.stateControlConfig,
+        SelectionRangeIntention.Text,
+        collapsedTransposeRange,
+        transposeParagraphPoint,
+        selectionRange,
+      ).point;
+      if (
+        !isParagraphPoint(transposeParagraphGraphemeEdgePoint) ||
+        !areParagraphPointsAtSameParagraph(transposeParagraphGraphemeEdgePoint, transposeParagraphPoint)
+      ) {
+        throwUnreachable();
+      }
+      let previousGraphemePoint = graphemePreviousTransform(
+        stateControl.stateView.document,
+        stateControl.stateControlConfig,
+        SelectionRangeIntention.Text,
+        collapsedTransposeRange,
+        transposeParagraphGraphemeEdgePoint,
+        selectionRange,
+      ).point;
+      if (
+        !isParagraphPoint(previousGraphemePoint) ||
+        !areParagraphPointsAtSameParagraph(previousGraphemePoint, transposeParagraphPoint) ||
+        previousGraphemePoint.offset === transposeParagraphGraphemeEdgePoint.offset
+      ) {
+        previousGraphemePoint = transposeParagraphGraphemeEdgePoint;
+        transposeParagraphGraphemeEdgePoint = graphemeNextTransform(
+          stateControl.stateView.document,
+          stateControl.stateControlConfig,
+          SelectionRangeIntention.Text,
+          collapsedTransposeRange,
+          transposeParagraphGraphemeEdgePoint,
+          selectionRange,
+        ).point;
+        if (
+          !isParagraphPoint(transposeParagraphGraphemeEdgePoint) ||
+          !areParagraphPointsAtSameParagraph(transposeParagraphGraphemeEdgePoint, transposeParagraphPoint) ||
+          previousGraphemePoint.offset === transposeParagraphGraphemeEdgePoint.offset
+        ) {
+          continue;
+        }
+      }
+      let nextGraphemePoint = graphemeNextTransform(
+        stateControl.stateView.document,
+        stateControl.stateControlConfig,
+        SelectionRangeIntention.Text,
+        collapsedTransposeRange,
+        transposeParagraphGraphemeEdgePoint,
+        selectionRange,
+      ).point;
+      if (
+        !isParagraphPoint(nextGraphemePoint) ||
+        !areParagraphPointsAtSameParagraph(nextGraphemePoint, transposeParagraphPoint) ||
+        nextGraphemePoint.offset === transposeParagraphGraphemeEdgePoint.offset
+      ) {
+        nextGraphemePoint = transposeParagraphGraphemeEdgePoint;
+        transposeParagraphGraphemeEdgePoint = previousGraphemePoint;
+        previousGraphemePoint = graphemePreviousTransform(
+          stateControl.stateView.document,
+          stateControl.stateControlConfig,
+          SelectionRangeIntention.Text,
+          collapsedTransposeRange,
+          transposeParagraphGraphemeEdgePoint,
+          selectionRange,
+        ).point;
+        if (
+          !isParagraphPoint(previousGraphemePoint) ||
+          !areParagraphPointsAtSameParagraph(previousGraphemePoint, transposeParagraphPoint) ||
+          previousGraphemePoint.offset === transposeParagraphGraphemeEdgePoint.offset
+        ) {
+          continue;
+        }
+      }
+      const previousGraphemePointOffset = previousGraphemePoint.offset;
+      const nextGraphemePointOffset = nextGraphemePoint.offset;
+      if (
+        selectionRangeUpdates.some((selectionRangeUpdate) => {
+          return (
+            areParagraphPointsAtSameParagraph(selectionRangeUpdate.pointAfter, transposeParagraphPoint) &&
+            ((selectionRangeUpdate.previousGraphemePointOffset <= previousGraphemePointOffset &&
+              previousGraphemePointOffset < selectionRangeUpdate.nextGraphemePointOffset) ||
+              (selectionRangeUpdate.previousGraphemePointOffset < nextGraphemePointOffset &&
+                nextGraphemePointOffset <= selectionRangeUpdate.nextGraphemePointOffset))
+          );
+        })
+      ) {
+        continue;
+      }
+      const paragraph = accessParagraphFromParagraphPoint(stateControl.stateView.document, transposeParagraphPoint);
+      const previousGraphemeInlineNodes = sliceParagraphChildren(paragraph, previousGraphemePointOffset, transposeParagraphGraphemeEdgePoint.offset);
+      const nextGraphemeInlineNodes = sliceParagraphChildren(paragraph, transposeParagraphGraphemeEdgePoint.offset, nextGraphemePointOffset);
+      selectionRangeUpdates.push({
+        selectionRangeBefore: selectionRange,
+        previousGraphemePointOffset,
+        nextGraphemePointOffset,
+        contentReferenceAfter: collapsedTransposeRange.contentReference,
+        pointAfter: transposeParagraphGraphemeEdgePoint,
+      });
+      mutations.push(
+        makeSpliceParagraphMutation(previousGraphemePoint, nextGraphemePointOffset - previousGraphemePointOffset, [
+          ...nextGraphemeInlineNodes,
+          ...previousGraphemeInlineNodes,
+        ]),
+      );
+    }
     if (mutations.length > 0) {
-      delta.applyMutation(makeBatchMutation(mutations), undefined, (selectionRange) => {
-        const selectionRangeUpdate = selectionRangeUpdates.find((selectionRangeUpdate) =>
-          areSelectionRangesCoveringSameContent(selectionRange, selectionRangeUpdate[0]),
-        );
+      stateControl.delta.applyMutation(makeBatchMutation(mutations), undefined, (selectionRange) => {
+        const selectionRangeUpdate = selectionRangeUpdates.find((selectionRangeUpdate) => {
+          return areSelectionRangesCoveringSameContent(selectionRange, selectionRangeUpdate.selectionRangeBefore);
+        });
         if (!selectionRangeUpdate) {
           return;
         }
+        const { contentReferenceAfter, pointAfter } = selectionRangeUpdate;
+        const rangeId = generateId();
         return makeSelectionRange(
-          [selectionRangeUpdate[1]],
-          selectionRangeUpdate[1].id,
-          selectionRangeUpdate[1].id,
+          [makeRange(contentReferenceAfter, pointAfter, pointAfter, rangeId)],
+          rangeId,
+          rangeId,
           SelectionRangeIntention.Text,
           selectionRange.data,
           selectionRange.id,
