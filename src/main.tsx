@@ -728,7 +728,6 @@ interface ViewCursorInfo {
   height: number;
   isAnchor: boolean;
   isFocus: boolean;
-  isCollapsed: boolean;
   insertTextConfig: TextConfig;
   paragraphReference: matita.BlockReference;
   offset: number;
@@ -754,6 +753,7 @@ interface ViewCursorAndRangeInfosForSelectionRange {
   selectionRangeId: string;
   hasFocus: boolean;
   isInComposition: boolean;
+  roundCorners: boolean;
 }
 interface ViewCursorAndRangeInfos {
   viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
@@ -776,6 +776,128 @@ class UniqueKeyControl {
     this.#keyCount.set(key, 1);
     return JSON.stringify([key, 0]);
   }
+}
+function getCurvedLineRectSpans(
+  previousLineRect: ViewRectangle | undefined,
+  currentLineRect: ViewRectangle,
+  nextLineRect: ViewRectangle | undefined,
+  borderRadius: number,
+  key: string,
+  backgroundColor: string,
+): JSX.Element[] {
+  const spans: JSX.Element[] = [];
+  const cssProperties: React.CSSProperties = {
+    position: 'absolute',
+    top: currentLineRect.top,
+    left: currentLineRect.left,
+    width: currentLineRect.width,
+    height: currentLineRect.height,
+    backgroundColor,
+  };
+  if (previousLineRect === undefined) {
+    cssProperties.borderTopLeftRadius = borderRadius;
+    cssProperties.borderTopRightRadius = borderRadius;
+  } else {
+    if (previousLineRect.left !== currentLineRect.left) {
+      if (previousLineRect.left < currentLineRect.left && currentLineRect.left <= previousLineRect.right) {
+        const restrictedBorderRadiusTopLeft = Math.min(borderRadius, currentLineRect.left - previousLineRect.left);
+        spans.push(
+          <span
+            key={key + 'tl'}
+            style={{
+              position: 'absolute',
+              top: currentLineRect.top,
+              left: currentLineRect.left - restrictedBorderRadiusTopLeft,
+              width: restrictedBorderRadiusTopLeft,
+              height: restrictedBorderRadiusTopLeft,
+              // eslint-disable-next-line max-len
+              background: `radial-gradient(circle at bottom left, transparent 0, transparent ${restrictedBorderRadiusTopLeft}px, ${backgroundColor} ${restrictedBorderRadiusTopLeft}px`,
+            }}
+          />,
+        );
+      } else {
+        const restrictedBorderRadiusTopLeft =
+          previousLineRect.left > currentLineRect.left ? Math.min(borderRadius, currentLineRect.left - previousLineRect.left) : borderRadius;
+        cssProperties.borderTopLeftRadius = restrictedBorderRadiusTopLeft;
+      }
+    }
+    if (previousLineRect.right !== currentLineRect.right) {
+      if (previousLineRect.left <= currentLineRect.right && currentLineRect.right < previousLineRect.right) {
+        const restrictedBorderRadiusTopRight = Math.min(borderRadius, previousLineRect.right - currentLineRect.right);
+        spans.push(
+          <span
+            key={key + 'tr'}
+            style={{
+              position: 'absolute',
+              top: currentLineRect.top,
+              left: currentLineRect.right,
+              width: restrictedBorderRadiusTopRight,
+              height: restrictedBorderRadiusTopRight,
+              // eslint-disable-next-line max-len
+              background: `radial-gradient(circle at bottom right, transparent 0, transparent ${restrictedBorderRadiusTopRight}px, ${backgroundColor} ${restrictedBorderRadiusTopRight}px`,
+            }}
+          />,
+        );
+      } else {
+        const restrictedBorderRadiusTopRight =
+          currentLineRect.right > previousLineRect.right ? Math.min(borderRadius, currentLineRect.right - previousLineRect.right) : borderRadius;
+        cssProperties.borderTopRightRadius = restrictedBorderRadiusTopRight;
+      }
+    }
+  }
+  if (nextLineRect === undefined) {
+    cssProperties.borderBottomLeftRadius = borderRadius;
+    cssProperties.borderBottomRightRadius = borderRadius;
+  } else {
+    if (nextLineRect.left !== currentLineRect.left) {
+      if (nextLineRect.left < currentLineRect.left && currentLineRect.left <= nextLineRect.right) {
+        const restrictedBorderRadiusBottomLeft = Math.min(borderRadius, currentLineRect.left - nextLineRect.left);
+        spans.push(
+          <span
+            key={key + 'bl'}
+            style={{
+              position: 'absolute',
+              top: currentLineRect.bottom - restrictedBorderRadiusBottomLeft,
+              left: currentLineRect.left - restrictedBorderRadiusBottomLeft,
+              width: restrictedBorderRadiusBottomLeft,
+              height: restrictedBorderRadiusBottomLeft,
+              // eslint-disable-next-line max-len
+              background: `radial-gradient(circle at top left, transparent 0, transparent ${restrictedBorderRadiusBottomLeft}px, ${backgroundColor} ${restrictedBorderRadiusBottomLeft}px`,
+            }}
+          />,
+        );
+      } else {
+        const restrictedBorderRadiusBottomLeft =
+          nextLineRect.left > currentLineRect.left ? Math.min(borderRadius, currentLineRect.left - nextLineRect.left) : borderRadius;
+        cssProperties.borderBottomLeftRadius = restrictedBorderRadiusBottomLeft;
+      }
+    }
+    if (nextLineRect.right !== currentLineRect.right) {
+      if (nextLineRect.left <= currentLineRect.right && currentLineRect.right < nextLineRect.right) {
+        const restrictedBorderRadiusBottomRight = Math.min(borderRadius, nextLineRect.right - currentLineRect.right);
+        spans.push(
+          <span
+            key={key + 'br'}
+            style={{
+              position: 'absolute',
+              top: currentLineRect.bottom - restrictedBorderRadiusBottomRight,
+              left: currentLineRect.right,
+              width: restrictedBorderRadiusBottomRight,
+              height: restrictedBorderRadiusBottomRight,
+              // eslint-disable-next-line max-len
+              background: `radial-gradient(circle at top right, transparent 0, transparent ${restrictedBorderRadiusBottomRight}px, ${backgroundColor} ${restrictedBorderRadiusBottomRight}px`,
+            }}
+          />,
+        );
+      } else {
+        const restrictedBorderRadiusBottomRight =
+          currentLineRect.right > nextLineRect.right ? Math.min(borderRadius, currentLineRect.right - nextLineRect.right) : borderRadius;
+        cssProperties.borderBottomRightRadius = restrictedBorderRadiusBottomRight;
+      }
+    }
+  }
+  spans.push(<span key={key} style={cssProperties} />);
+  return spans;
 }
 // TODO: Simplify information passed in.
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
@@ -829,62 +951,75 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
   return (
     <>
       {viewCursorAndRangeInfosForSelectionRanges.flatMap((viewCursorAndRangeInfoForSelectionRange) => {
-        const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, selectionRangeId } = viewCursorAndRangeInfoForSelectionRange;
+        const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, selectionRangeId, roundCorners } = viewCursorAndRangeInfoForSelectionRange;
         return viewCursorAndRangeInfosForRanges.flatMap((viewCursorAndRangeInfosForRange) => {
-          return viewCursorAndRangeInfosForRange.viewParagraphInfos.flatMap((viewCursorAndRangeInfosForParagraphInRange) => {
+          return viewCursorAndRangeInfosForRange.viewParagraphInfos.flatMap((viewCursorAndRangeInfosForParagraphInRange, i) => {
             const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForParagraphInRange;
-            const isRectHidden = hideSelectionIds.some((selectionId) => selectionRangeId === selectionId);
-            const viewRangeElements = isRectHidden
-              ? []
-              : viewRangeInfos.flatMap((viewRangeInfo) => {
-                  const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
-                  const spans: JSX.Element[] = [];
-                  const useCompositionStyle = isInComposition;
-                  if (useCompositionStyle) {
-                    spans.push(
-                      <span
-                        key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
-                        style={{
-                          position: 'absolute',
-                          top: rectangle.bottom - 2,
-                          left: rectangle.left,
-                          width: rectangle.width,
-                          height: 2,
-                          backgroundColor: '#222',
-                        }}
-                      />,
-                    );
-                  }
-                  spans.push(
-                    <span
-                      key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]))}
-                      style={{
-                        position: 'absolute',
-                        top: rectangle.top,
-                        left: rectangle.left,
-                        width: rectangle.width,
-                        height: rectangle.height,
-                        backgroundColor: useCompositionStyle ? '#accef733' : hasFocus ? '#accef799' : '#d3d3d36c',
-                      }}
-                    />,
-                  );
-                  return spans;
-                });
+            if (hideSelectionIds.some((selectionId) => selectionRangeId === selectionId)) {
+              return [];
+            }
+            const viewRangeElements = viewRangeInfos.flatMap((viewRangeInfo, j) => {
+              const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
+              const spans: JSX.Element[] = [];
+              const useCompositionStyle = isInComposition;
+              if (useCompositionStyle) {
+                spans.push(
+                  <span
+                    key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
+                    style={{
+                      position: 'absolute',
+                      top: rectangle.bottom - 2,
+                      left: rectangle.left,
+                      width: rectangle.width,
+                      height: 2,
+                      backgroundColor: '#222',
+                    }}
+                  />,
+                );
+              }
+              let previousLineRect = viewRangeInfos[j - 1]?.rectangle as ViewRectangle | undefined;
+              if (previousLineRect === undefined && i > 0) {
+                const previousParagraphViewRangeInfos = viewCursorAndRangeInfosForRange.viewParagraphInfos[i - 1].viewRangeInfos;
+                previousLineRect = previousParagraphViewRangeInfos[previousParagraphViewRangeInfos.length - 1]?.rectangle;
+              }
+              let nextLineRect = viewRangeInfos[j + 1]?.rectangle as ViewRectangle | undefined;
+              if (nextLineRect === undefined && i < viewCursorAndRangeInfosForRange.viewParagraphInfos.length - 1) {
+                const nextParagraphViewRangeInfos = viewCursorAndRangeInfosForRange.viewParagraphInfos[i + 1].viewRangeInfos;
+                nextLineRect = nextParagraphViewRangeInfos[0]?.rectangle;
+              }
+              const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]));
+              const backgroundColor = useCompositionStyle ? '#accef733' : hasFocus ? '#accef799' : '#d3d3d36c';
+              if (roundCorners) {
+                return getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
+              }
+              return [
+                <span
+                  key={key}
+                  style={{
+                    position: 'absolute',
+                    top: rectangle.top,
+                    left: rectangle.left,
+                    width: rectangle.width,
+                    height: rectangle.height,
+                    backgroundColor,
+                  }}
+                />,
+              ];
+            });
             const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
-              const { isAnchor, isFocus, isCollapsed, insertTextConfig, offset, paragraphReference, rangeDirection } = viewCursorInfo;
+              const { isAnchor, isFocus, insertTextConfig, offset, paragraphReference, rangeDirection } = viewCursorInfo;
               return (
                 <BlinkingCursor
                   key={uniqueKeyControl.makeUniqueKey(
-                    JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, isCollapsed, offset, rangeDirection, selectionRangeId, insertTextConfig]),
+                    JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId, insertTextConfig]),
                   )}
                   viewCursorInfo={viewCursorInfo}
                   resetSynchronizedCursorVisibilitySink={resetSynchronizedCursorVisibility$}
                   synchronizedCursorVisibility$={synchronizedCursorVisibility$}
                   cursorBlinkSpeed={cursorBlinkSpeed}
                   hasFocus={hasFocus}
-                  isCollapsed={isCollapsed}
+                  isCollapsed={rangeDirection === matita.RangeDirection.NeutralText}
                   insertTextConfig={insertTextConfig}
-                  isRectHidden={isRectHidden}
                 />
               );
             });
@@ -903,19 +1038,10 @@ interface BlinkingCursorProps {
   hasFocus: boolean;
   isCollapsed: boolean;
   insertTextConfig: TextConfig;
-  isRectHidden: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const {
-    viewCursorInfo,
-    resetSynchronizedCursorVisibilitySink,
-    synchronizedCursorVisibility$,
-    cursorBlinkSpeed,
-    hasFocus,
-    isCollapsed,
-    insertTextConfig,
-    isRectHidden,
-  } = props;
+  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isCollapsed, insertTextConfig } =
+    props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
@@ -952,7 +1078,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         left: viewCursorInfo.position.left - cursorWidth / 2,
         width: cursorWidth,
         height: viewCursorInfo.height,
-        backgroundColor: hasFocus || isRectHidden ? '#222' : '#666',
+        backgroundColor: hasFocus ? '#222' : '#666',
         transform: isCollapsed && insertTextConfig.italic === true ? 'skew(-7deg)' : undefined,
         visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
       }}
@@ -966,6 +1092,7 @@ interface SearchOverlayMatchInfo {
 }
 interface SearchOverlayMessage {
   calculateMatchInfos: () => SearchOverlayMatchInfo[];
+  roundCorners: boolean;
   renderSync: boolean;
 }
 interface SearchOverlayProps {
@@ -988,25 +1115,32 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
   if (isNone(searchOverlayMaybe)) {
     return null;
   }
-  const { calculateMatchInfos } = searchOverlayMaybe.value;
+  const { calculateMatchInfos, roundCorners } = searchOverlayMaybe.value;
   const matchInfos = calculateMatchInfos();
   const uniqueKeyControl = new UniqueKeyControl();
   return (
     <>
       {matchInfos.flatMap((matchInfo) => {
         const { viewRangeInfos, isSelected, hasFocus } = matchInfo;
-        return viewRangeInfos.flatMap((viewRangeInfo) => {
+        return viewRangeInfos.flatMap((viewRangeInfo, i) => {
           const { rectangle, paragraphReference, paragraphLineIndex } = viewRangeInfo;
+          const previousLineRect = viewRangeInfos[i - 1]?.rectangle;
+          const nextLineRect = viewRangeInfos[i + 1]?.rectangle;
+          const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]));
+          const backgroundColor = hasFocus ? '#aa77ff99' : isSelected ? '#aa77ff66' : '#f5c6ec99';
+          if (roundCorners) {
+            return getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
+          }
           return (
             <span
-              key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]))}
+              key={key}
               style={{
                 position: 'absolute',
                 top: rectangle.top,
                 left: rectangle.left,
                 width: rectangle.width,
                 height: rectangle.height,
-                backgroundColor: hasFocus ? '#aa77ff99' : isSelected ? '#aa77ff66' : '#f5c6ec99',
+                backgroundColor,
               }}
             />
           );
@@ -4062,6 +4196,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
       calculateMatchInfos: () => [],
       renderSync: false,
+      roundCorners: true,
     });
     this.#relativeParagraphMeasurementCache = new LruCache(250);
     this.#keyCommands = defaultTextEditingKeyCommands;
@@ -7160,6 +7295,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       Push({
         calculateMatchInfos: this.#calculateVisibleSearchResultsMatchInfos.bind(this),
         renderSync: !renderSearchOverlayAsync,
+        roundCorners: true,
       }),
     );
   }
@@ -7231,12 +7367,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     });
     return pipe(
       combine(viewCursorAndRangeInfoForRangeSources),
-      map((viewCursorAndRangeInfosForRanges) => ({
-        viewCursorAndRangeInfosForRanges,
-        selectionRangeId: selectionRange.id,
-        hasFocus: this.#hasFocus(),
-        isInComposition: this.#isInComposition > 0,
-      })),
+      map(
+        (viewCursorAndRangeInfosForRanges): ViewCursorAndRangeInfosForSelectionRange => ({
+          viewCursorAndRangeInfosForRanges,
+          selectionRangeId: selectionRange.id,
+          hasFocus: this.#hasFocus(),
+          isInComposition: this.#isInComposition > 0,
+          roundCorners: true,
+        }),
+      ),
     );
   }
   #calculateRelativeOffsets(): { relativeOffsetLeft: number; relativeOffsetTop: number } {
@@ -7284,10 +7423,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               measuredParagraphLineRange.boundingRect.height,
             );
           } else {
-            const lastCharacterBoundingRect = measuredParagraphLineRange.characterRectangles[measuredParagraphLineRange.characterRectangles.length - 1];
             lineRect = makeViewRectangle(
-              lastCharacterBoundingRect.right + relativeOffsetLeft,
-              lastCharacterBoundingRect.top + relativeOffsetTop,
+              measuredParagraphLineRange.boundingRect.right + relativeOffsetLeft,
+              measuredParagraphLineRange.boundingRect.top + relativeOffsetTop,
               defaultVisibleLineBreakPadding,
               measuredParagraphLineRange.boundingRect.height,
             );
@@ -7553,7 +7691,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         height: cursorHeight,
         isAnchor,
         isFocus,
-        isCollapsed: direction === matita.RangeDirection.NeutralText,
         paragraphReference: focusParagraphReference,
         offset: cursorOffset,
         rangeDirection: direction,
