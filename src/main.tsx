@@ -257,7 +257,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   containerHtmlElement: HTMLElement;
   textNodeInfos: TextElementInfo[] = [];
   #fontSize = 16;
-  #lineHeight = 2;
+  #lineHeight = 1.5;
   #scriptFontSizeMultiplier = 0.85;
   #onContainerHtmlElementChange: (previousContainerHtmlElement: HTMLElement) => void;
   constructor(
@@ -728,6 +728,7 @@ interface ViewCursorInfo {
   height: number;
   isAnchor: boolean;
   isFocus: boolean;
+  isItalic: boolean;
   insertTextConfig: TextConfig;
   paragraphReference: matita.BlockReference;
   offset: number;
@@ -800,7 +801,7 @@ function getCurvedLineRectSpans(
   } else {
     if (previousLineRect.left !== currentLineRect.left) {
       if (previousLineRect.left < currentLineRect.left && currentLineRect.left <= previousLineRect.right) {
-        const restrictedBorderRadiusTopLeft = Math.min(borderRadius, currentLineRect.left - previousLineRect.left);
+        const restrictedBorderRadiusTopLeft = Math.min(borderRadius, (currentLineRect.left - previousLineRect.left) / 2);
         spans.push(
           <span
             key={key + 'tl'}
@@ -817,13 +818,13 @@ function getCurvedLineRectSpans(
         );
       } else {
         const restrictedBorderRadiusTopLeft =
-          previousLineRect.left > currentLineRect.left ? Math.min(borderRadius, currentLineRect.left - previousLineRect.left) : borderRadius;
+          previousLineRect.left > currentLineRect.left ? Math.min(borderRadius, (currentLineRect.left - previousLineRect.left) / 2) : borderRadius;
         cssProperties.borderTopLeftRadius = restrictedBorderRadiusTopLeft;
       }
     }
     if (previousLineRect.right !== currentLineRect.right) {
       if (previousLineRect.left <= currentLineRect.right && currentLineRect.right < previousLineRect.right) {
-        const restrictedBorderRadiusTopRight = Math.min(borderRadius, previousLineRect.right - currentLineRect.right);
+        const restrictedBorderRadiusTopRight = Math.min(borderRadius, (previousLineRect.right - currentLineRect.right) / 2);
         spans.push(
           <span
             key={key + 'tr'}
@@ -840,7 +841,7 @@ function getCurvedLineRectSpans(
         );
       } else {
         const restrictedBorderRadiusTopRight =
-          currentLineRect.right > previousLineRect.right ? Math.min(borderRadius, currentLineRect.right - previousLineRect.right) : borderRadius;
+          currentLineRect.right > previousLineRect.right ? Math.min(borderRadius, (currentLineRect.right - previousLineRect.right) / 2) : borderRadius;
         cssProperties.borderTopRightRadius = restrictedBorderRadiusTopRight;
       }
     }
@@ -851,7 +852,7 @@ function getCurvedLineRectSpans(
   } else {
     if (nextLineRect.left !== currentLineRect.left) {
       if (nextLineRect.left < currentLineRect.left && currentLineRect.left <= nextLineRect.right) {
-        const restrictedBorderRadiusBottomLeft = Math.min(borderRadius, currentLineRect.left - nextLineRect.left);
+        const restrictedBorderRadiusBottomLeft = Math.min(borderRadius, (currentLineRect.left - nextLineRect.left) / 2);
         spans.push(
           <span
             key={key + 'bl'}
@@ -868,13 +869,13 @@ function getCurvedLineRectSpans(
         );
       } else {
         const restrictedBorderRadiusBottomLeft =
-          nextLineRect.left > currentLineRect.left ? Math.min(borderRadius, currentLineRect.left - nextLineRect.left) : borderRadius;
+          nextLineRect.left > currentLineRect.left ? Math.min(borderRadius, (currentLineRect.left - nextLineRect.left) / 2) : borderRadius;
         cssProperties.borderBottomLeftRadius = restrictedBorderRadiusBottomLeft;
       }
     }
     if (nextLineRect.right !== currentLineRect.right) {
       if (nextLineRect.left <= currentLineRect.right && currentLineRect.right < nextLineRect.right) {
-        const restrictedBorderRadiusBottomRight = Math.min(borderRadius, nextLineRect.right - currentLineRect.right);
+        const restrictedBorderRadiusBottomRight = Math.min(borderRadius, (nextLineRect.right - currentLineRect.right) / 2);
         spans.push(
           <span
             key={key + 'br'}
@@ -891,7 +892,7 @@ function getCurvedLineRectSpans(
         );
       } else {
         const restrictedBorderRadiusBottomRight =
-          currentLineRect.right > nextLineRect.right ? Math.min(borderRadius, currentLineRect.right - nextLineRect.right) : borderRadius;
+          currentLineRect.right > nextLineRect.right ? Math.min(borderRadius, (currentLineRect.right - nextLineRect.right) / 2) : borderRadius;
         cssProperties.borderBottomRightRadius = restrictedBorderRadiusBottomRight;
       }
     }
@@ -1007,7 +1008,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               ];
             });
             const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
-              const { isAnchor, isFocus, insertTextConfig, offset, paragraphReference, rangeDirection } = viewCursorInfo;
+              const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection, insertTextConfig } = viewCursorInfo;
               return (
                 <BlinkingCursor
                   key={uniqueKeyControl.makeUniqueKey(
@@ -1018,8 +1019,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                   synchronizedCursorVisibility$={synchronizedCursorVisibility$}
                   cursorBlinkSpeed={cursorBlinkSpeed}
                   hasFocus={hasFocus}
-                  isCollapsed={rangeDirection === matita.RangeDirection.NeutralText}
-                  insertTextConfig={insertTextConfig}
+                  isItalic={isItalic}
                 />
               );
             });
@@ -1036,12 +1036,10 @@ interface BlinkingCursorProps {
   synchronizedCursorVisibility$: Source<boolean>;
   cursorBlinkSpeed: number;
   hasFocus: boolean;
-  isCollapsed: boolean;
-  insertTextConfig: TextConfig;
+  isItalic: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isCollapsed, insertTextConfig } =
-    props;
+  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isItalic } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
@@ -1079,7 +1077,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         width: cursorWidth,
         height: viewCursorInfo.height,
         backgroundColor: hasFocus ? '#222' : '#666',
-        transform: isCollapsed && insertTextConfig.italic === true ? 'skew(-7deg)' : undefined,
+        transform: isItalic ? 'skew(-7deg)' : undefined,
         visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
       }}
     />
@@ -7670,7 +7668,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       );
       let cursorTop: number;
       let cursorHeight: number;
-      if (direction === matita.RangeDirection.NeutralText) {
+      const isCollapsed = direction === matita.RangeDirection.NeutralText;
+      if (isCollapsed) {
         const firstParagraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(firstParagraphReference);
         const cursorTopAndHeight = firstParagraphRenderControl.convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
           cursorPositionAndHeight.position.top,
@@ -7691,6 +7690,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         height: cursorHeight,
         isAnchor,
         isFocus,
+        isItalic: isCollapsed && insertTextConfig.italic === true,
         paragraphReference: focusParagraphReference,
         offset: cursorOffset,
         rangeDirection: direction,
