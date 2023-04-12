@@ -1125,7 +1125,7 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
           const previousLineRect = viewRangeInfos[i - 1]?.rectangle;
           const nextLineRect = viewRangeInfos[i + 1]?.rectangle;
           const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]));
-          const backgroundColor = hasFocus ? '#aa77ff99' : isSelected ? '#aa77ff66' : '#f5c6ec99';
+          const backgroundColor = hasFocus ? '#aa77ff' : isSelected ? '#aa77ff' : '#f5c6ec';
           if (roundCorners) {
             return getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
           }
@@ -4173,6 +4173,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #keyCommands: KeyCommands;
   #commandRegister: VirtualizedCommandRegister;
   #undoControl: LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+  #graphemeSegmenter: IntlSegmenter;
   constructor(
     rootHtmlElement: HTMLElement,
     stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
@@ -4215,6 +4216,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#undoControl.registerCommands(this.#commandRegister);
     this.#inputElementLastSynchronizedParagraphReference = null;
     this.#inputElementContainedInSingleParagraph = false;
+    this.#graphemeSegmenter = new this.stateControl.stateControlConfig.IntlSegmenter();
   }
   #isDraggingSelection = false;
   #endSelectionDrag$ = Distributor<undefined>();
@@ -4974,9 +4976,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#containerHtmlElement.style.position = 'relative';
     this.#containerHtmlElement.append(
       this.#inputTextElementMeasurementElement,
-      this.#topLevelContentViewContainerElement,
       this.#searchOverlayContainerElement,
       this.#selectionViewContainerElement,
+      this.#topLevelContentViewContainerElement,
       this.#inputTextElement,
       this.#searchElementContainerElement,
     );
@@ -5102,6 +5104,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const findFromSelectionRange = matita.getFocusSelectionRangeFromSelection(findFromSelection);
         const match$ = this.#searchElementTrackAllControl.wrapCurrentAlwaysOrFindNextMatch(findFromSelectionRange, matchDisposable);
         if (isSome(match$.lastValue)) {
+          // TODO: Still render async.
           this.#renderSearchOverlayAsync = false;
         }
         pipe(
@@ -6007,7 +6010,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       makeViewRectangle(
         cursorPositionAndHeightFromParagraphPoint.position.left,
         cursorPositionAndHeightFromParagraphPoint.position.top,
-        0,
+        2,
         cursorPositionAndHeightFromParagraphPoint.height,
       ),
       this.#getScrollContainer(),
@@ -6705,6 +6708,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const measureRange = document.createRange();
     const measuredParagraphLineRanges: MeasuredParagraphLineRange[] = [];
     const paragraphCharacterRectangles: (ViewRectangle | null)[] = [];
+    const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+    matita.assertIsParagraph(paragraph);
     let isPreviousLineBreak = false;
     type MutableViewRectangle = { -readonly [P in keyof ViewRectangle]: ViewRectangle[P] };
     for (let i = 0; i < paragraphRenderControl.textNodeInfos.length; i++) {
@@ -6734,14 +6739,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         });
         continue;
       }
-      const characterRectangles: ViewRectangle[] = [];
       let previousNativeEndNodeAndOffset: NativeNodeAndOffset | undefined;
-      for (let j = 0; j < textEnd - textStart; j++) {
-        const nativeStartNodeAndOffset = previousNativeEndNodeAndOffset ?? getNativeTextNodeAndOffset(textNode, j);
+      const measureGraphemeThroughIndices = (startIndex: number, j: number): void => {
+        const nativeStartNodeAndOffset = previousNativeEndNodeAndOffset ?? getNativeTextNodeAndOffset(textNode, startIndex);
         const nativeEndNodeAndOffset = getNativeTextNodeAndOffset(textNode, j + 1);
         previousNativeEndNodeAndOffset = nativeEndNodeAndOffset;
         measureRange.setStart(nativeStartNodeAndOffset[0], nativeStartNodeAndOffset[1]);
         measureRange.setEnd(nativeEndNodeAndOffset[0], nativeEndNodeAndOffset[1]);
+        // TODO: In Safari, when e.g. emoji is split where one character code is styled differently then the other, hence rendered as an unknown glyph, the
+        // measurement for the rest of the characters in that line is bogus. Also for invisible/malformed graphemes, the measured width can be negative (????).
         const measureRangeBoundingRect = measureRange.getBoundingClientRect();
         const left = measureRangeBoundingRect.left - containerHtmlElementBoundingRect.left;
         const top = measureRangeBoundingRect.top - containerHtmlElementBoundingRect.top;
@@ -6749,18 +6755,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const height = measureRangeBoundingRect.height;
         const characterRectangle = makeViewRectangle(left, top, width, height) as MutableViewRectangle;
         paragraphCharacterRectangles.push(characterRectangle);
-        characterRectangles.push(characterRectangle);
-        if (paragraphCharacterRectangles.length === 1) {
+        if (measuredParagraphLineRanges.length === 0) {
           characterRectangle.left = 0;
           characterRectangle.width = characterRectangle.right - characterRectangle.left;
           measuredParagraphLineRanges.push({
             boundingRect: characterRectangle,
             characterRectangles: [characterRectangle],
-            startOffset: textStart + j,
+            startOffset: textStart + startIndex,
             endOffset: textStart + j + 1,
             endsWithLineBreak: false,
           });
-          continue;
+          return;
         }
         const previousCharacterRectangle = paragraphCharacterRectangles[paragraphCharacterRectangles.length - 2];
         const minDifferenceToBeConsideredTheSame = 5;
@@ -6777,6 +6782,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             Math.abs(previousCharacterRectangle.bottom - characterRectangle.top) <= 32);
         // In Safari, the first wrapped character's bounding box envelops from the previous character (before the wrap) to the current character (after the
         // wrap), i.e. double height and full line width.
+        const currentMeasuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1];
         const isSafariFirstWrappedCharacter =
           isSafari &&
           !isSameLineDifferentFontSize &&
@@ -6784,39 +6790,73 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             (previousCharacterRectangle !== null &&
               previousCharacterRectangle.width > 1 &&
               characterRectangle.left - previousCharacterRectangle.right < previousCharacterRectangle.width * 2 &&
-              characterRectangle.height > previousCharacterRectangle.height));
+              characterRectangle.height > previousCharacterRectangle.height &&
+              characterRectangle.width > currentMeasuredParagraphLineRange.boundingRect.width));
         if (!isPreviousLineBreak && !isSafariFirstWrappedCharacter) {
           assertIsNotNullish(previousCharacterRectangle);
           if (isSameLineSameFontSize || isSameLineDifferentFontSize) {
-            const measuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1];
-            const expandedLeft = Math.min(measuredParagraphLineRange.boundingRect.left, characterRectangle.left);
-            const expandedTop = Math.min(measuredParagraphLineRange.boundingRect.top, characterRectangle.top);
-            const expandedRight = Math.max(measuredParagraphLineRange.boundingRect.right, characterRectangle.right);
-            const expandedBottom = Math.max(measuredParagraphLineRange.boundingRect.bottom, characterRectangle.bottom);
-            measuredParagraphLineRange.boundingRect = makeViewRectangle(expandedLeft, expandedTop, expandedRight - expandedLeft, expandedBottom - expandedTop);
-            const lastCharacterRectangle = measuredParagraphLineRange.characterRectangles[measuredParagraphLineRange.characterRectangles.length - 1];
+            const currentMeasuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1];
+            const expandedLeft = Math.min(currentMeasuredParagraphLineRange.boundingRect.left, characterRectangle.left);
+            const expandedTop = Math.min(currentMeasuredParagraphLineRange.boundingRect.top, characterRectangle.top);
+            const expandedRight = Math.max(currentMeasuredParagraphLineRange.boundingRect.right, characterRectangle.right);
+            const expandedBottom = Math.max(currentMeasuredParagraphLineRange.boundingRect.bottom, characterRectangle.bottom);
+            currentMeasuredParagraphLineRange.boundingRect = makeViewRectangle(
+              expandedLeft,
+              expandedTop,
+              expandedRight - expandedLeft,
+              expandedBottom - expandedTop,
+            );
+            const lastCharacterRectangle =
+              currentMeasuredParagraphLineRange.characterRectangles[currentMeasuredParagraphLineRange.characterRectangles.length - 1];
             characterRectangle.left = lastCharacterRectangle.right;
             characterRectangle.width = characterRectangle.right - characterRectangle.left;
-            measuredParagraphLineRange.characterRectangles.push(characterRectangle);
-            measuredParagraphLineRange.endOffset = textStart + j + 1;
-            continue;
+            currentMeasuredParagraphLineRange.characterRectangles.push(characterRectangle);
+            currentMeasuredParagraphLineRange.endOffset = textStart + j + 1;
+            return;
           }
         }
         isPreviousLineBreak = false;
         let fixedCharacterRectangle = characterRectangle;
         if (isSafariFirstWrappedCharacter) {
           const fixedHeight = fixedCharacterRectangle.height / 2;
-          fixedCharacterRectangle = makeViewRectangle(characterRectangle.left, characterRectangle.top + fixedHeight, 16, fixedHeight);
+          fixedCharacterRectangle = makeViewRectangle(
+            characterRectangle.left,
+            characterRectangle.top + fixedHeight,
+            currentMeasuredParagraphLineRange.characterRectangles.length === 0
+              ? 9
+              : currentMeasuredParagraphLineRange.boundingRect.width / currentMeasuredParagraphLineRange.characterRectangles.length,
+            fixedHeight,
+          );
         }
         characterRectangle.left = 0;
         characterRectangle.width = characterRectangle.right - characterRectangle.left;
         measuredParagraphLineRanges.push({
           boundingRect: fixedCharacterRectangle,
           characterRectangles: [fixedCharacterRectangle],
-          startOffset: textStart + j,
+          startOffset: textStart + startIndex,
           endOffset: textStart + j + 1,
           endsWithLineBreak: false,
         });
+      };
+      // We store graphemes covering multiple character codes as a run of zero-width measurements followed by the grapheme's measurement at the end.
+      const relevantText = matita
+        .sliceParagraphChildren(paragraph, textStart, textEnd)
+        .map((inlineNode) => {
+          matita.assertIsText(inlineNode);
+          return inlineNode.text;
+        })
+        .join('');
+      for (const segmentData of this.#graphemeSegmenter.segment(relevantText)) {
+        measureGraphemeThroughIndices(segmentData.index, segmentData.index + segmentData.segment.length - 1);
+        for (let j = segmentData.index; j < segmentData.index + segmentData.segment.length - 1; j++) {
+          const measuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1];
+          assertIsNotNullish(measuredParagraphLineRange);
+          const lastCharacterRectangle = measuredParagraphLineRange.characterRectangles[measuredParagraphLineRange.characterRectangles.length - 1];
+          assertIsNotNullish(lastCharacterRectangle);
+          const characterRectangle = makeViewRectangle(lastCharacterRectangle.left, lastCharacterRectangle.top, 0, lastCharacterRectangle.height);
+          paragraphCharacterRectangles.splice(paragraphCharacterRectangles.length - 1, 0, characterRectangle);
+          measuredParagraphLineRange.characterRectangles.splice(measuredParagraphLineRange.characterRectangles.length - 1, 0, characterRectangle);
+        }
       }
       measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1].endsWithLineBreak = endsWithLineBreak;
       if (endsWithLineBreak) {
@@ -6824,10 +6864,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         paragraphCharacterRectangles.push(null);
       }
     }
-    const newCachedMeasurement: RelativeParagraphMeasureCacheValue = {
-      characterRectangles: paragraphCharacterRectangles,
-      measuredParagraphLineRanges,
-    };
     const linesTopAndBottomAndHeightBefore = measuredParagraphLineRanges.map((measuredParagraphLineRange) => ({
       top: measuredParagraphLineRange.boundingRect.top,
       bottom: measuredParagraphLineRange.boundingRect.bottom,
@@ -6852,6 +6888,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       boundingRect.height = boundingRect.bottom - boundingRect.top;
     }
+    const newCachedMeasurement: RelativeParagraphMeasureCacheValue = {
+      characterRectangles: paragraphCharacterRectangles,
+      measuredParagraphLineRanges,
+    };
     this.#relativeParagraphMeasurementCache.set(paragraphReference.blockId, newCachedMeasurement);
     return shiftCachedMeasurement(newCachedMeasurement);
   }
@@ -6980,7 +7020,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           continue;
         }
         const isPastPreviousCharacterHalfPoint = viewPosition.left > (characterRectangle.right + previousCharacterRightWithoutInfinity) / 2;
-        const pointStartOffset = startOffset + j + (isPastPreviousCharacterHalfPoint ? 1 : 0);
+        if (isPastPreviousCharacterHalfPoint) {
+          j += 1;
+        }
+        // In Safari some malformed character measurements are negative???
+        while (j > 0 && characterRectangles[j - 1].width <= 0) {
+          // The preceding character has a width of 0, so it combines with the current character.
+          j--;
+        }
+        const pointStartOffset = startOffset + j;
         return {
           pointWithContentReference: {
             contentReference: matita.makeContentReferenceFromContent(

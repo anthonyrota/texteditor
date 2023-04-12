@@ -8083,7 +8083,10 @@ function makeTransposeAtSelectionUpdateFn<
         previousGraphemePointOffset,
         nextGraphemePointOffset,
         contentReferenceAfter: collapsedTransposeRange.contentReference,
-        pointAfter: transposeParagraphGraphemeEdgePoint,
+        pointAfter: changeParagraphPointOffset(
+          transposeParagraphPoint,
+          previousGraphemePointOffset + (nextGraphemePointOffset - transposeParagraphGraphemeEdgePoint.offset),
+        ),
       });
       mutations.push(
         makeSpliceParagraphMutation(previousGraphemePoint, nextGraphemePointOffset - previousGraphemePointOffset, [
