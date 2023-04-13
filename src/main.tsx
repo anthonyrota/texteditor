@@ -1,7 +1,7 @@
 import { createRef, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import { isSafari } from './common/browserDetection';
+import { isFirefox, isSafari } from './common/browserDetection';
 import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
 import { LruCache } from './common/LruCache';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
@@ -45,12 +45,14 @@ import {
   startWith,
   subscribe,
   switchEach,
+  take,
   takeUntil,
   takeWhile,
   throttle,
   ThrowType,
   timer,
   windowScheduledBySource,
+  withPrevious,
 } from './ruscel/source';
 import {
   pipe,
@@ -761,10 +763,10 @@ interface ViewCursorAndRangeInfos {
 }
 interface SelectionViewMessage {
   viewCursorAndRangeInfos: ViewCursorAndRangeInfos;
+  renderSync: boolean;
 }
 interface SelectionViewProps {
   selectionView$: Source<SelectionViewMessage>;
-  hideSelectionIds$: Source<string[]>;
 }
 class UniqueKeyControl {
   #keyCount = new Map<string, number>();
@@ -901,24 +903,20 @@ function getCurvedLineRectSpans(
   return spans;
 }
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
-  const { selectionView$, hideSelectionIds$ } = props;
+  const { selectionView$ } = props;
   const renderDataMaybe = use$(
     useMemo(
       () =>
         pipe(
-          combine([
-            selectionView$,
-            pipe(
-              hideSelectionIds$,
-              memoConsecutive((previous, current) => previous.length === current.length && previous.every((selectionId, i) => current[i] === selectionId)),
-            ),
-          ] as const),
+          selectionView$,
           debounce(() => ofEvent(End, scheduleMicrotask)),
         ),
       [],
     ),
     undefined,
-    true,
+    (maybe) => {
+      return isSome(maybe) && maybe.value.renderSync;
+    },
   );
   const cursorBlinkSpeed = 500;
   const resetSynchronizedCursorVisibility$ = useMemo(() => LastValueDistributor<undefined>(), []);
@@ -941,9 +939,8 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
   if (isNone(renderDataMaybe)) {
     return null;
   }
-  const { viewCursorAndRangeInfos } = renderDataMaybe.value[0];
+  const { viewCursorAndRangeInfos } = renderDataMaybe.value;
   const { viewCursorAndRangeInfosForSelectionRanges } = viewCursorAndRangeInfos;
-  const hideSelectionIds = renderDataMaybe.value[1];
   if (viewCursorAndRangeInfosForSelectionRanges.length === 0) {
     return null;
   }
@@ -958,9 +955,6 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
       for (let k = 0; k < viewParagraphInfos.length; k++) {
         const viewCursorAndRangeInfosForParagraphInRange = viewParagraphInfos[k];
         const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForParagraphInRange;
-        if (hideSelectionIds.some((selectionId) => selectionRangeId === selectionId)) {
-          continue;
-        }
         for (let l = 0; l < viewRangeInfos.length; l++) {
           const viewRangeInfo = viewRangeInfos[l];
           const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
@@ -1093,6 +1087,7 @@ interface SearchOverlayMessage {
   calculateMatchInfos: () => SearchOverlayMatchInfo[];
   roundCorners: boolean;
   renderSync: boolean;
+  onRender?: () => void;
 }
 interface SearchOverlayProps {
   searchOverlay$: Source<SearchOverlayMessage>;
@@ -1109,12 +1104,15 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
       [],
     ),
     undefined,
-    (maybe) => isSome(maybe) && maybe.value.renderSync,
+    (maybe) => {
+      return isSome(maybe) && maybe.value.renderSync;
+    },
   );
   if (isNone(searchOverlayMaybe)) {
     return null;
   }
-  const { calculateMatchInfos, roundCorners } = searchOverlayMaybe.value;
+  const { calculateMatchInfos, roundCorners, onRender } = searchOverlayMaybe.value;
+  onRender?.();
   const matchInfos = calculateMatchInfos();
   const uniqueKeyControl = new UniqueKeyControl();
   return (
@@ -1177,13 +1175,6 @@ function useToggle(initialValue = false): [value: boolean, toggleValue: () => vo
   const [value, setValue] = useState<boolean>(initialValue);
   const toggleValue = useCallback(() => setValue((value) => !value), []);
   return [value, toggleValue];
-}
-function useIsFirstRender(): boolean {
-  const isFirstRender = useRef(true);
-  useEffect(() => {
-    isFirstRender.current = false;
-  }, []);
-  return isFirstRender.current;
 }
 const searchBoxMargin = 8;
 function SearchBox(props: SearchBoxProps): JSX.Element | null {
@@ -1265,20 +1256,17 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const totalMatchesMaybe = use$(totalMatchesMaybe$, Some(totalMatchesMaybe$.currentValue), true).value;
   const [isOptionsShown, toggleIsOptionsShown] = useToggle();
   const tabIndex = position.dropDownPercent < 1 ? -1 : undefined;
-  const [config, setConfig] = useState(initialConfig.config);
-  const isFirstRender = useIsFirstRender();
-  useEffect(() => {
-    if (isFirstRender) {
-      return;
-    }
+  const [config, setConfigState] = useState(initialConfig.config);
+  const setConfig = (newConfig: SingleParagraphPlainTextSearchControlConfig): void => {
+    setConfigState(newConfig);
     configSink(
       Push({
         type: SearchBoxConfigType.SingleParagraphPlainText,
-        config,
+        config: newConfig,
       }),
     );
-  }, [config]);
-  const [query, setQuery] = useState(initialQuery);
+  };
+  const [query, setQueryState] = useState(initialQuery);
   useEffect(() => {
     const sink = Sink<string>((event) => {
       if (event.type === ThrowType) {
@@ -1288,19 +1276,17 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
         return;
       }
       const newQuery = event.value;
-      setQuery(newQuery);
+      setQueryState(newQuery);
     });
     changeQuery$(sink);
     return () => {
       sink.dispose();
     };
   }, [changeQuery$]);
-  useEffect(() => {
-    if (isFirstRender) {
-      return;
-    }
-    querySink(Push(query));
-  }, [query]);
+  const setQuery = (newQuery: string): void => {
+    setQueryState(newQuery);
+    querySink(Push(newQuery));
+  };
   const [loadingIndicatorState, setLoadingIndicatorState] = useState<number | null>(0);
   const isLoading = isSome(totalMatchesMaybe) && !totalMatchesMaybe.value.isComplete;
   useEffect(() => {
@@ -1427,13 +1413,11 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     ['wholeWords', 'Whole Words', false],
     ['searchQueryWordsIndividually', 'Search Query Words Individually', false],
   ];
-  const [goToSearchResultImmediately, setGoToSearchResultsImmediately] = useState<boolean>(initialGoToSearchResultImmediately);
-  useEffect(() => {
-    if (isFirstRender) {
-      return;
-    }
-    goToSearchResultImmediatelySink(Push(goToSearchResultImmediately));
-  }, [goToSearchResultImmediately]);
+  const [goToSearchResultImmediately, setGoToSearchResultsImmediatelyState] = useState<boolean>(initialGoToSearchResultImmediately);
+  const setGoToSearchResultsImmediately = (newGoToSearchResultImmediately: boolean): void => {
+    setGoToSearchResultsImmediatelyState(newGoToSearchResultImmediately);
+    goToSearchResultImmediatelySink(Push(newGoToSearchResultImmediately));
+  };
   if (isOptionsShown) {
     searchBoxChildren.push(
       <div className="search-box__line-container search-box__line-container--options" key="options">
@@ -1446,10 +1430,10 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
                 type="checkbox"
                 onChange={(event) => {
                   const isChecked = getIsChecked(event.target.checked);
-                  setConfig((config) => ({
+                  setConfig({
                     ...config,
                     [configKey]: isChecked,
-                  }));
+                  });
                 }}
                 checked={getIsChecked(config[configKey])}
               />
@@ -4168,7 +4152,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #searchElementContainerElement!: HTMLElement;
   #searchInputRef = createRef<HTMLInputElement>();
   #selectionView$: CurrentValueDistributor<SelectionViewMessage>;
-  #hideSelectionIds$: CurrentValueDistributor<string[]>;
   #searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
   #relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
   #keyCommands: KeyCommands;
@@ -4191,8 +4174,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       viewCursorAndRangeInfos: {
         viewCursorAndRangeInfosForSelectionRanges: [],
       },
+      renderSync: false,
     });
-    this.#hideSelectionIds$ = CurrentValueDistributor<string[]>([]);
     this.#searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
       calculateMatchInfos: () => [],
       renderSync: false,
@@ -4228,7 +4211,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #matchNumberMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
   #totalMatchesMaybe$ = CurrentValueDistributor<Maybe<TotalMatchesMessage>>(None);
   #isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
-  #renderSearchOverlayAsync = false;
+  #renderOverlayAsync = false;
   #changeQuery$ = Distributor<string>();
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
@@ -4967,11 +4950,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }),
       );
     };
-    renderReactNodeIntoHtmlContainerElement(
-      <SelectionView selectionView$={this.#selectionView$} hideSelectionIds$={this.#hideSelectionIds$} />,
-      this.#selectionViewContainerElement,
-      'selection-view-',
-    );
+    renderReactNodeIntoHtmlContainerElement(<SelectionView selectionView$={this.#selectionView$} />, this.#selectionViewContainerElement, 'selection-view-');
     renderReactNodeIntoHtmlContainerElement(<SearchOverlay searchOverlay$={this.#searchOverlay$} />, this.#searchOverlayContainerElement, 'search-overlay-');
     this.#searchElementContainerElement = document.createElement('div');
     this.#containerHtmlElement.style.position = 'relative';
@@ -5049,6 +5028,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       let anchoredStateView: [matita.Selection, matita.StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>] | null =
         null;
       let matchDisposable: Disposable | null = null;
+      let currentTryGoToSearchResultImmediatelyRequestIndex = -1;
       const tryGoToSearchResultImmediately = (): void => {
         if (!goToSearchResultImmediately || !this.#searchElementTrackAllControl) {
           return;
@@ -5104,10 +5084,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         );
         const findFromSelectionRange = matita.getFocusSelectionRangeFromSelection(findFromSelection);
         const match$ = this.#searchElementTrackAllControl.wrapCurrentAlwaysOrFindNextMatch(findFromSelectionRange, matchDisposable);
-        if (isSome(match$.lastValue)) {
-          // TODO: Still render async.
-          this.#renderSearchOverlayAsync = false;
-        }
         pipe(
           match$,
           subscribe((event) => {
@@ -5121,7 +5097,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             if (paragraphMatch === null) {
               return;
             }
-            this.stateControl.queueUpdate(() => {
+            const updateFn: matita.RunUpdateFn = () => {
               const contentReference = matita.makeContentReferenceFromContent(
                 matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphMatch.paragraphReference),
               );
@@ -5134,7 +5110,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
               const selection = matita.makeSelection([selectionRange]);
               this.stateControl.delta.setSelection(selection, undefined, { [SearchQueryGoToSearchResultImmediatelyKey]: true });
-            });
+            };
+            if (this.stateControl.isInUpdate) {
+              this.stateControl.delta.applyUpdate(updateFn);
+            } else {
+              this.#renderOverlayAsync = true;
+              this.stateControl.queueUpdate(updateFn);
+            }
           }, matchDisposable),
         );
       };
@@ -5148,23 +5130,28 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           assertUnreachable(searchBoxControlConfig.type);
         }
         const newConfig = searchBoxControlConfig.config;
-        this.#searchControl.config = newConfig;
+        const requestIndex = ++currentTryGoToSearchResultImmediatelyRequestIndex;
         this.stateControl.queueUpdate(() => {
-          // TODO: This is a hack to queue onFinishedUpdating.
+          this.#renderOverlayAsync = true;
+          this.#searchControl.config = newConfig;
+          if (requestIndex === currentTryGoToSearchResultImmediatelyRequestIndex) {
+            tryGoToSearchResultImmediately();
+          }
         });
-        tryGoToSearchResultImmediately();
       });
       const searchQuerySink = Sink<string>((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
         }
         const query = event.value;
-        this.#searchControl.query = query;
-        this.#renderSearchOverlayAsync = true;
+        const requestIndex = ++currentTryGoToSearchResultImmediatelyRequestIndex;
         this.stateControl.queueUpdate(() => {
-          // TODO: This is a hack to queue onFinishedUpdating.
+          this.#renderOverlayAsync = true;
+          this.#searchControl.query = query;
+          if (requestIndex === currentTryGoToSearchResultImmediatelyRequestIndex) {
+            tryGoToSearchResultImmediately();
+          }
         });
-        tryGoToSearchResultImmediately();
       });
       const closeSearchSink = Sink<undefined>((event) => {
         if (event.type !== PushType) {
@@ -7205,9 +7192,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#matchNumberMaybe$(Push(None));
     }, this.#trackMatchesDisposable);
     if (!this.#isSearchElementContainerVisible$.currentValue) {
-      queueMicrotaskDisposable(() => {
-        this.#hideSelectionIds$(Push([]));
-      }, this.#trackMatchesDisposable);
       return [];
     }
     // TODO: Lag when dragging selection with lots of results.
@@ -7240,7 +7224,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       ) + 1,
     );
     const matchInfos: SearchOverlayMatchInfo[] = [];
-    let hideSelectionRangeIds: string[] = [];
     const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
     if (
       this.#searchElementTrackAllControl &&
@@ -7312,9 +7295,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               ((selectionRange.ranges[0].startPoint.offset === startOffset && selectionRange.ranges[0].endPoint.offset === endOffset) ||
                 (selectionRange.ranges[0].startPoint.offset === endOffset && selectionRange.ranges[0].endPoint.offset === startOffset)),
           );
-        if (hasFocus) {
-          hideSelectionRangeIds = [focusSelectionRange.id];
-        }
         const viewRangeInfos = this.#calculateViewRangeInfosForParagraphAtBlockReference(
           paragraphReference,
           startOffset,
@@ -7330,18 +7310,16 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         });
       }
     }
-    queueMicrotaskDisposable(() => {
-      this.#hideSelectionIds$(Push(hideSelectionRangeIds));
-    }, this.#trackMatchesDisposable);
     return matchInfos;
   };
   #replaceVisibleSearchResults(): void {
-    const renderSearchOverlayAsync = this.#renderSearchOverlayAsync;
-    this.#renderSearchOverlayAsync = false;
     this.#searchOverlay$(
       Push({
         calculateMatchInfos: this.#calculateVisibleSearchResultsMatchInfos.bind(this),
-        renderSync: !renderSearchOverlayAsync,
+        renderSync: !this.#renderOverlayAsync,
+        onRender: () => {
+          this.#renderOverlayAsync = false;
+        },
         roundCorners: true,
       }),
     );
@@ -7370,6 +7348,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           viewCursorAndRangeInfos: {
             viewCursorAndRangeInfosForSelectionRanges: [],
           },
+          renderSync: false,
         }),
       );
       return;
@@ -7383,17 +7362,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       );
       return viewCursorAndRangeInfosForSelectionRange$;
     });
-    const selectionViewMessage$ = pipe(
+    pipe(
       combine(viewCursorAndRangeInfosForSelectionRangeSources),
       map(
-        (viewCursorAndRangeInfosForSelectionRanges): SelectionViewMessage => ({
+        (viewCursorAndRangeInfosForSelectionRanges, i): SelectionViewMessage => ({
           viewCursorAndRangeInfos: {
             viewCursorAndRangeInfosForSelectionRanges,
           },
+          renderSync: !this.#renderOverlayAsync && (!isFirefox || i === 0),
         }),
       ),
+      subscribe(this.#selectionView$),
     );
-    selectionViewMessage$(this.#selectionView$);
   }
   #makeViewCursorAndRangeInfosForSelectionRange(
     selectionRange: matita.SelectionRange,
@@ -7516,9 +7496,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     return viewRangeInfos;
   }
   #getBufferMarginTopBottom(): number {
-    return Math.min(300, window.innerHeight);
+    return Math.min(isFirefox ? 300 : 600, window.innerHeight);
   }
   // TODO: check works when removing paragraphs?
+  // TODO: Batch ranges w/ IntersectionObserver/binary search?
+  // TODO: Make general control for underlays/overlays (combine logic for selection, search, spelling, errors, warnings, conflicts, etc.).
   #makeViewCursorAndRangeInfosForRange(
     range: matita.Range,
     isAnchor: boolean,
@@ -7555,14 +7537,16 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       disposable.add(intersectionObserver);
       return intersectionObserver;
     };
-    let selectionIntersectionObserver = makeIntersectionObserver();
     const observeParagraphs = (): void => {
+      const noTargetsTracked = observingTargets.size === 0;
       for (let i = 0; i < observedParagraphReferences.length; i++) {
         const paragraphReference = observedParagraphReferences[i];
         const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
         const target = paragraphRenderControl.containerHtmlElement;
         selectionIntersectionObserver.observe(target);
-        observingTargets.add(target);
+        if (noTargetsTracked) {
+          observingTargets.add(target);
+        }
       }
       pipe(
         selectionIntersectionObserver.entries$,
@@ -7620,19 +7604,33 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }, disposable),
       );
     };
-    observeParagraphs();
-    // Intersection observer doesn't track correctly, so fix when scroll stops.
-    pipe(
-      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
-      debounce(() => timer(100)),
-      subscribe((event) => {
-        assert(event.type === PushType);
-        viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
-        selectionIntersectionObserver.dispose();
-        selectionIntersectionObserver = makeIntersectionObserver();
-        observeParagraphs();
-      }, disposable),
-    );
+    let selectionIntersectionObserver!: ReactiveIntersectionObserver;
+    if (isSafari) {
+      pipe(
+        fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+        throttle(() => ofEvent(End, scheduleMicrotask)),
+        subscribe((event) => {
+          assert(event.type === PushType);
+          viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
+        }, disposable),
+      );
+    } else {
+      // Safari intersection observer sucks.
+      selectionIntersectionObserver = makeIntersectionObserver();
+      observeParagraphs();
+      // Intersection observer doesn't track correctly, so fix when scroll stops.
+      pipe(
+        fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+        isFirefox || observedParagraphReferences.length < 4000 ? debounce(() => timer(100)) : throttle(() => timer(50)),
+        subscribe((event) => {
+          assert(event.type === PushType);
+          viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
+          selectionIntersectionObserver.dispose();
+          selectionIntersectionObserver = makeIntersectionObserver();
+          observeParagraphs();
+        }, disposable),
+      );
+    }
     const calculateViewRangeInfosForParagraphAtIndex = (
       observedParagraphIndex: number,
       relativeOffsetLeft: number,

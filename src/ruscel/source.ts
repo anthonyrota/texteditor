@@ -858,6 +858,21 @@ function takeWhile<T>(shouldContinue: (value: T, index: number) => unknown, incl
       source(sourceSink);
     });
 }
+const withPrevious = <T>(source: Source<T>): Source<{ previousValueMaybe: Maybe<T>; currentValue: T }> => {
+  return Source((sink) => {
+    let previousValueMaybe: Maybe<T> = None;
+    const sourceSink = Sink<T>((event) => {
+      if (event.type !== PushType) {
+        sink(event);
+        return;
+      }
+      sink(Push({ previousValueMaybe, currentValue: event.value }));
+      previousValueMaybe = Some(event.value);
+    });
+    sink.add(sourceSink);
+    source(sourceSink);
+  });
+};
 const empty$ = ofEvent(End);
 export {
   PushType,
@@ -914,4 +929,5 @@ export {
   takeWhile,
   empty$,
   throttle,
+  withPrevious,
 };
