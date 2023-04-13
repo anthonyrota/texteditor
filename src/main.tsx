@@ -780,15 +780,15 @@ class UniqueKeyControl {
     return JSON.stringify([key, 0]);
   }
 }
-function getCurvedLineRectSpans(
+function pushCurvedLineRectSpans(
+  jsxElements: JSX.Element[],
   previousLineRect: ViewRectangle | undefined,
   currentLineRect: ViewRectangle,
   nextLineRect: ViewRectangle | undefined,
   borderRadius: number,
   key: string,
   backgroundColor: string,
-): JSX.Element[] {
-  const spans: JSX.Element[] = [];
+): void {
   const cssProperties: React.CSSProperties = {
     position: 'absolute',
     top: currentLineRect.top,
@@ -804,7 +804,7 @@ function getCurvedLineRectSpans(
     if (previousLineRect.left !== currentLineRect.left) {
       if (previousLineRect.left < currentLineRect.left && currentLineRect.left <= previousLineRect.right) {
         const restrictedBorderRadiusTopLeft = Math.min(borderRadius, (currentLineRect.left - previousLineRect.left) / 2);
-        spans.push(
+        jsxElements.push(
           <span
             key={key + 'tl'}
             style={{
@@ -827,7 +827,7 @@ function getCurvedLineRectSpans(
     if (previousLineRect.right !== currentLineRect.right) {
       if (previousLineRect.left <= currentLineRect.right && currentLineRect.right < previousLineRect.right) {
         const restrictedBorderRadiusTopRight = Math.min(borderRadius, (previousLineRect.right - currentLineRect.right) / 2);
-        spans.push(
+        jsxElements.push(
           <span
             key={key + 'tr'}
             style={{
@@ -855,7 +855,7 @@ function getCurvedLineRectSpans(
     if (nextLineRect.left !== currentLineRect.left) {
       if (nextLineRect.left < currentLineRect.left && currentLineRect.left <= nextLineRect.right) {
         const restrictedBorderRadiusBottomLeft = Math.min(borderRadius, (currentLineRect.left - nextLineRect.left) / 2);
-        spans.push(
+        jsxElements.push(
           <span
             key={key + 'bl'}
             style={{
@@ -878,7 +878,7 @@ function getCurvedLineRectSpans(
     if (nextLineRect.right !== currentLineRect.right) {
       if (nextLineRect.left <= currentLineRect.right && currentLineRect.right < nextLineRect.right) {
         const restrictedBorderRadiusBottomRight = Math.min(borderRadius, (nextLineRect.right - currentLineRect.right) / 2);
-        spans.push(
+        jsxElements.push(
           <span
             key={key + 'br'}
             style={{
@@ -899,8 +899,7 @@ function getCurvedLineRectSpans(
       }
     }
   }
-  spans.push(<span key={key} style={cssProperties} />);
-  return spans;
+  jsxElements.push(<span key={key} style={cssProperties} />);
 }
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
   const { selectionView$ } = props;
@@ -970,10 +969,6 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
           }
           const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]));
           const backgroundColor = isInComposition ? '#accef766' : hasFocus ? '#accef7cc' : '#d3d3d36c';
-          if (!isInComposition && roundCorners) {
-            fragmentChildren.push(...getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor));
-            continue;
-          }
           if (isInComposition) {
             fragmentChildren.push(
               <span
@@ -988,6 +983,9 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                 }}
               />,
             );
+          } else if (roundCorners) {
+            pushCurvedLineRectSpans(fragmentChildren, previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
+            continue;
           }
           fragmentChildren.push(
             <span
@@ -1115,36 +1113,37 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
   onRender?.();
   const matchInfos = calculateMatchInfos();
   const uniqueKeyControl = new UniqueKeyControl();
-  return (
-    <>
-      {matchInfos.flatMap((matchInfo) => {
-        const { viewRangeInfos, isSelected, hasFocus } = matchInfo;
-        return viewRangeInfos.flatMap((viewRangeInfo, i) => {
-          const { rectangle, paragraphReference, paragraphLineIndex } = viewRangeInfo;
-          const previousLineRect = viewRangeInfos[i - 1]?.rectangle;
-          const nextLineRect = viewRangeInfos[i + 1]?.rectangle;
-          const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]));
-          const backgroundColor = hasFocus ? '#aa77ff' : isSelected ? '#aa77ff77' : '#f5c6ec';
-          if (roundCorners) {
-            return getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
-          }
-          return (
-            <span
-              key={key}
-              style={{
-                position: 'absolute',
-                top: rectangle.top,
-                left: rectangle.left,
-                width: rectangle.width,
-                height: rectangle.height,
-                backgroundColor,
-              }}
-            />
-          );
-        });
-      })}
-    </>
-  );
+  const fragmentChildren: JSX.Element[] = [];
+  for (let i = 0; i < matchInfos.length; i++) {
+    const matchInfo = matchInfos[i];
+    const { viewRangeInfos, isSelected, hasFocus } = matchInfo;
+    for (let j = 0; j < viewRangeInfos.length; j++) {
+      const viewRangeInfo = viewRangeInfos[j];
+      const { rectangle, paragraphReference, paragraphLineIndex } = viewRangeInfo;
+      const previousLineRect = viewRangeInfos[i - 1]?.rectangle;
+      const nextLineRect = viewRangeInfos[i + 1]?.rectangle;
+      const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]));
+      const backgroundColor = hasFocus ? '#aa77ff' : isSelected ? '#aa77ff77' : '#f5c6ec';
+      if (roundCorners) {
+        pushCurvedLineRectSpans(fragmentChildren, previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
+        continue;
+      }
+      return (
+        <span
+          key={key}
+          style={{
+            position: 'absolute',
+            top: rectangle.top,
+            left: rectangle.left,
+            width: rectangle.width,
+            height: rectangle.height,
+            backgroundColor,
+          }}
+        />
+      );
+    }
+  }
+  return <>{fragmentChildren}</>;
 }
 enum SearchBoxConfigType {
   SingleParagraphPlainText = 'SingleParagraphPlainText',
