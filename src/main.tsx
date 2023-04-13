@@ -6742,10 +6742,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const width = measureRangeBoundingRect.width;
         const height = measureRangeBoundingRect.height;
         const characterRectangle = makeViewRectangle(left, top, width, height) as MutableViewRectangle;
-        paragraphCharacterRectangles.push(characterRectangle);
         if (measuredParagraphLineRanges.length === 0) {
           characterRectangle.left = 0;
           characterRectangle.width = characterRectangle.right - characterRectangle.left;
+          paragraphCharacterRectangles.push(characterRectangle);
           measuredParagraphLineRanges.push({
             boundingRect: characterRectangle,
             characterRectangles: [characterRectangle],
@@ -6755,7 +6755,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           });
           return;
         }
-        const previousCharacterRectangle = paragraphCharacterRectangles[paragraphCharacterRectangles.length - 2];
+        const previousCharacterRectangle = paragraphCharacterRectangles[paragraphCharacterRectangles.length - 1];
         const minDifferenceToBeConsideredTheSame = 5;
         const isSameLineSameFontSize =
           previousCharacterRectangle &&
@@ -6779,7 +6779,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               previousCharacterRectangle.width > 1 &&
               characterRectangle.left - previousCharacterRectangle.right < previousCharacterRectangle.width * 2 &&
               characterRectangle.height > previousCharacterRectangle.height &&
-              characterRectangle.width > currentMeasuredParagraphLineRange.boundingRect.width));
+              characterRectangle.width > currentMeasuredParagraphLineRange.boundingRect.width - minDifferenceToBeConsideredTheSame));
         if (!isPreviousLineBreak && !isSafariFirstWrappedCharacter) {
           assertIsNotNullish(previousCharacterRectangle);
           if (isSameLineSameFontSize || isSameLineDifferentFontSize) {
@@ -6798,26 +6798,30 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               currentMeasuredParagraphLineRange.characterRectangles[currentMeasuredParagraphLineRange.characterRectangles.length - 1];
             characterRectangle.left = lastCharacterRectangle.right;
             characterRectangle.width = characterRectangle.right - characterRectangle.left;
+            paragraphCharacterRectangles.push(characterRectangle);
             currentMeasuredParagraphLineRange.characterRectangles.push(characterRectangle);
             currentMeasuredParagraphLineRange.endOffset = textStart + j + 1;
             return;
           }
         }
         isPreviousLineBreak = false;
-        let fixedCharacterRectangle = characterRectangle;
+        let fixedCharacterRectangle: ViewRectangle;
         if (isSafariFirstWrappedCharacter) {
-          const fixedHeight = fixedCharacterRectangle.height / 2;
+          const fixedHeight = characterRectangle.height / 2;
           fixedCharacterRectangle = makeViewRectangle(
-            characterRectangle.left,
+            0,
             characterRectangle.top + fixedHeight,
-            currentMeasuredParagraphLineRange.characterRectangles.length === 0
+            characterRectangle.left + currentMeasuredParagraphLineRange.characterRectangles.length === 0
               ? 9
               : currentMeasuredParagraphLineRange.boundingRect.width / currentMeasuredParagraphLineRange.characterRectangles.length,
             fixedHeight,
           );
+        } else {
+          characterRectangle.left = 0;
+          characterRectangle.width = characterRectangle.right - characterRectangle.left;
+          fixedCharacterRectangle = characterRectangle;
         }
-        characterRectangle.left = 0;
-        characterRectangle.width = characterRectangle.right - characterRectangle.left;
+        paragraphCharacterRectangles.push(fixedCharacterRectangle);
         measuredParagraphLineRanges.push({
           boundingRect: fixedCharacterRectangle,
           characterRectangles: [fixedCharacterRectangle],

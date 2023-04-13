@@ -7740,7 +7740,7 @@ enum RedoUndoUpdateKey {
 }
 let uniqueGroupedChangeType = 0;
 function makeUniqueGroupedChangeType(): string {
-  return `UniqueGrouped.${uniqueGroupedChangeType++}`;
+  return `standard.redoUndoUpdateKey.uniqueGroup.${uniqueGroupedChangeType++}`;
 }
 function getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack: UpdateData[]): Maybe<UpdateData> {
   for (let i = updateDataStack.length - 1; i >= 0; i--) {
