@@ -900,7 +900,6 @@ function getCurvedLineRectSpans(
   spans.push(<span key={key} style={cssProperties} />);
   return spans;
 }
-// TODO: Simplify information passed in.
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
   const { selectionView$, hideSelectionIds$ } = props;
   const renderDataMaybe = use$(
@@ -949,86 +948,88 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
     return null;
   }
   const uniqueKeyControl = new UniqueKeyControl();
-  return (
-    <>
-      {viewCursorAndRangeInfosForSelectionRanges.flatMap((viewCursorAndRangeInfoForSelectionRange) => {
-        const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, selectionRangeId, roundCorners } = viewCursorAndRangeInfoForSelectionRange;
-        return viewCursorAndRangeInfosForRanges.flatMap((viewCursorAndRangeInfosForRange) => {
-          return viewCursorAndRangeInfosForRange.viewParagraphInfos.flatMap((viewCursorAndRangeInfosForParagraphInRange, i) => {
-            const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForParagraphInRange;
-            if (hideSelectionIds.some((selectionId) => selectionRangeId === selectionId)) {
-              return [];
-            }
-            const viewRangeElements = viewRangeInfos.flatMap((viewRangeInfo, j) => {
-              const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
-              const spans: JSX.Element[] = [];
-              const useCompositionStyle = isInComposition;
-              if (useCompositionStyle) {
-                spans.push(
-                  <span
-                    key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
-                    style={{
-                      position: 'absolute',
-                      top: rectangle.bottom - 2,
-                      left: rectangle.left,
-                      width: rectangle.width,
-                      height: 2,
-                      backgroundColor: '#222',
-                    }}
-                  />,
-                );
-              }
-              let previousLineRect = viewRangeInfos[j - 1]?.rectangle as ViewRectangle | undefined;
-              if (previousLineRect === undefined && i > 0) {
-                const previousParagraphViewRangeInfos = viewCursorAndRangeInfosForRange.viewParagraphInfos[i - 1].viewRangeInfos;
-                previousLineRect = previousParagraphViewRangeInfos[previousParagraphViewRangeInfos.length - 1]?.rectangle;
-              }
-              let nextLineRect = viewRangeInfos[j + 1]?.rectangle as ViewRectangle | undefined;
-              if (nextLineRect === undefined && i < viewCursorAndRangeInfosForRange.viewParagraphInfos.length - 1) {
-                const nextParagraphViewRangeInfos = viewCursorAndRangeInfosForRange.viewParagraphInfos[i + 1].viewRangeInfos;
-                nextLineRect = nextParagraphViewRangeInfos[0]?.rectangle;
-              }
-              const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]));
-              const backgroundColor = useCompositionStyle ? '#accef733' : hasFocus ? '#accef799' : '#d3d3d36c';
-              if (roundCorners) {
-                return getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
-              }
-              return [
-                <span
-                  key={key}
-                  style={{
-                    position: 'absolute',
-                    top: rectangle.top,
-                    left: rectangle.left,
-                    width: rectangle.width,
-                    height: rectangle.height,
-                    backgroundColor,
-                  }}
-                />,
-              ];
-            });
-            const viewCursorElements = viewCursorInfos.map((viewCursorInfo) => {
-              const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection, insertTextConfig } = viewCursorInfo;
-              return (
-                <BlinkingCursor
-                  key={uniqueKeyControl.makeUniqueKey(
-                    JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId, insertTextConfig]),
-                  )}
-                  viewCursorInfo={viewCursorInfo}
-                  resetSynchronizedCursorVisibilitySink={resetSynchronizedCursorVisibility$}
-                  synchronizedCursorVisibility$={synchronizedCursorVisibility$}
-                  cursorBlinkSpeed={cursorBlinkSpeed}
-                  hasFocus={hasFocus}
-                  isItalic={isItalic}
-                />
-              );
-            });
-            return viewRangeElements.concat(viewCursorElements);
-          });
-        });
-      })}
-    </>
-  );
+  const fragmentChildren: JSX.Element[] = [];
+  for (let i = 0; i < viewCursorAndRangeInfosForSelectionRanges.length; i++) {
+    const viewCursorAndRangeInfosForSelectionRange = viewCursorAndRangeInfosForSelectionRanges[i];
+    const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, selectionRangeId, roundCorners } = viewCursorAndRangeInfosForSelectionRange;
+    for (let j = 0; j < viewCursorAndRangeInfosForRanges.length; j++) {
+      const viewCursorAndRangeInfosForRange = viewCursorAndRangeInfosForRanges[j];
+      const { viewParagraphInfos } = viewCursorAndRangeInfosForRange;
+      for (let k = 0; k < viewParagraphInfos.length; k++) {
+        const viewCursorAndRangeInfosForParagraphInRange = viewParagraphInfos[k];
+        const { viewCursorInfos, viewRangeInfos } = viewCursorAndRangeInfosForParagraphInRange;
+        if (hideSelectionIds.some((selectionId) => selectionRangeId === selectionId)) {
+          continue;
+        }
+        for (let l = 0; l < viewRangeInfos.length; l++) {
+          const viewRangeInfo = viewRangeInfos[l];
+          const { paragraphLineIndex, paragraphReference, rectangle } = viewRangeInfo;
+          let previousLineRect = viewRangeInfos[l - 1]?.rectangle as ViewRectangle | undefined;
+          if (previousLineRect === undefined && k > 0) {
+            const previousParagraphViewRangeInfos = viewCursorAndRangeInfosForRange.viewParagraphInfos[k - 1].viewRangeInfos;
+            previousLineRect = previousParagraphViewRangeInfos[previousParagraphViewRangeInfos.length - 1]?.rectangle;
+          }
+          let nextLineRect = viewRangeInfos[l + 1]?.rectangle as ViewRectangle | undefined;
+          if (nextLineRect === undefined && k < viewCursorAndRangeInfosForRange.viewParagraphInfos.length - 1) {
+            const nextParagraphViewRangeInfos = viewCursorAndRangeInfosForRange.viewParagraphInfos[k + 1].viewRangeInfos;
+            nextLineRect = nextParagraphViewRangeInfos[0]?.rectangle;
+          }
+          const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]));
+          const backgroundColor = isInComposition ? '#accef766' : hasFocus ? '#accef7cc' : '#d3d3d36c';
+          if (!isInComposition && roundCorners) {
+            fragmentChildren.push(...getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor));
+            continue;
+          }
+          if (isInComposition) {
+            fragmentChildren.push(
+              <span
+                key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
+                style={{
+                  position: 'absolute',
+                  top: rectangle.bottom - 2,
+                  left: rectangle.left,
+                  width: rectangle.width,
+                  height: 2,
+                  backgroundColor: '#222',
+                }}
+              />,
+            );
+          }
+          fragmentChildren.push(
+            <span
+              key={key}
+              style={{
+                position: 'absolute',
+                top: rectangle.top,
+                left: rectangle.left,
+                width: rectangle.width,
+                height: rectangle.height,
+                backgroundColor,
+              }}
+            />,
+          );
+        }
+        for (let l = 0; l < viewCursorInfos.length; l++) {
+          const viewCursorInfo = viewCursorInfos[l];
+          const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection, insertTextConfig } = viewCursorInfo;
+          fragmentChildren.push(
+            <BlinkingCursor
+              key={uniqueKeyControl.makeUniqueKey(
+                JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId, insertTextConfig]),
+              )}
+              viewCursorInfo={viewCursorInfo}
+              resetSynchronizedCursorVisibilitySink={resetSynchronizedCursorVisibility$}
+              synchronizedCursorVisibility$={synchronizedCursorVisibility$}
+              cursorBlinkSpeed={cursorBlinkSpeed}
+              hasFocus={hasFocus}
+              isItalic={isItalic}
+            />,
+          );
+        }
+      }
+    }
+  }
+  return <>{fragmentChildren}</>;
 }
 interface BlinkingCursorProps {
   viewCursorInfo: ViewCursorInfo;
@@ -1125,7 +1126,7 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
           const previousLineRect = viewRangeInfos[i - 1]?.rectangle;
           const nextLineRect = viewRangeInfos[i + 1]?.rectangle;
           const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]));
-          const backgroundColor = hasFocus ? '#aa77ff' : isSelected ? '#aa77ff' : '#f5c6ec';
+          const backgroundColor = hasFocus ? '#aa77ff' : isSelected ? '#aa77ff77' : '#f5c6ec';
           if (roundCorners) {
             return getCurvedLineRectSpans(previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
           }
@@ -4274,8 +4275,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addEventListener(this.#inputTextElement, 'focus', this.#onInputElementFocus.bind(this), this);
     // TODO.
     addEventListener(this.#inputTextElement, 'blur', () => this.#replaceViewSelectionRanges(true), this);
-    addEventListener(this.#inputTextElement, 'compositionstart', this.#onCompositionStart.bind(this), this);
-    addEventListener(this.#inputTextElement, 'compositionend', this.#onCompositionEnd.bind(this), this);
+    addWindowEventListener('compositionstart', this.#onCompositionStart.bind(this), this);
+    addWindowEventListener('compositionend', this.#onCompositionEnd.bind(this), this);
     addWindowEventListener('focus', () => this.#replaceViewSelectionRanges(true), this);
     addWindowEventListener(
       'blur',
