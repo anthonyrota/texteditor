@@ -4066,7 +4066,7 @@ function makeStateControl<
       mutation:
         | Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
         | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-      keepCollapsedSelectionTextConfigWhenSelectionChanges = true,
+      keepCollapsedSelectionTextConfigWhenSelectionChanges = false,
       customTransformStateSelectionRangeFn?: CustomTransformStateSelectionRangeFn,
     ): void {
       assertIsNotNullish(delta);
