@@ -3815,7 +3815,7 @@ interface LocalUndoStateDifference<
   selectionAfter: matita.Selection;
 }
 enum LocalUndoControlLastChangeType {
-  SelectionAfterChange = 'SelectionAfterChange',
+  SelectionOrCustomCollapsedSelectionTextConfigAfterChange = 'SelectionOrCustomCollapsedSelectionTextConfigAfterChange',
   InsertPlainText = 'InsertPlainText',
   RemoveTextBackwards = 'RemoveTextBackwards',
   RemoveTextForwards = 'RemoveTextForwards',
@@ -3849,6 +3849,7 @@ class LocalUndoControl<
     this.#selectionAfter = null;
     this.#forceChange = null;
     pipe(this.#stateControl.selectionChange$, subscribe(this.#onSelectionChange.bind(this), this));
+    pipe(this.#stateControl.customCollapsedSelectionTextConfigChange$, subscribe(this.#onCustomCollapsedSelectionTextConfigChange.bind(this), this));
     pipe(this.#stateControl.afterMutationPart$, subscribe(this.#onAfterMutationPart.bind(this), this));
   }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
@@ -3863,7 +3864,21 @@ class LocalUndoControl<
     if (isSome(updateDataMaybe)) {
       return;
     }
-    this.#lastChangeType = LocalUndoControlLastChangeType.SelectionAfterChange;
+    this.#lastChangeType = LocalUndoControlLastChangeType.SelectionOrCustomCollapsedSelectionTextConfigAfterChange;
+  }
+  #onCustomCollapsedSelectionTextConfigChange(event: Event<matita.CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>): void {
+    if (event.type !== PushType) {
+      throwUnreachable();
+    }
+    if (this.#mutationResults.length === 0) {
+      return;
+    }
+    const { updateDataStack } = event.value;
+    const updateDataMaybe = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
+    if (isSome(updateDataMaybe)) {
+      return;
+    }
+    this.#lastChangeType = LocalUndoControlLastChangeType.SelectionOrCustomCollapsedSelectionTextConfigAfterChange;
   }
   #onAfterMutationPart(
     event: Event<matita.AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>,

@@ -9025,4 +9025,5 @@ export {
   iterateParagraphChildrenWhole,
   iterateParagraphInlineNodesWholeWithStartOffset,
   iterateParagraphChildrenWholeWithStartOffset,
+  type CustomCollapsedSelectionTextConfigChangeMessage,
 };
