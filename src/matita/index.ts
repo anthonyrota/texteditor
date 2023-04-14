@@ -560,6 +560,13 @@ function* iterateParagraphInlineNodesWholeWithStartOffset<TextConfig extends Nod
     yield { inline, startOffset: start };
   }
 }
+function iterateParagraphChildrenWholeWithStartOffset<TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
+  paragraph: Paragraph<NodeConfig, TextConfig, VoidConfig>,
+  fromIndex: number,
+  toIndex: number,
+): Generator<InlineNodeWithStartOffset<TextConfig, VoidConfig>, void> {
+  return iterateParagraphInlineNodesWholeWithStartOffset(paragraph.children, fromIndex, toIndex);
+}
 function getInlineNodeWithStartOffsetBeforeParagraphPoint<TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, TextConfig, VoidConfig>,
   paragraphPoint: ParagraphPoint,
@@ -9014,4 +9021,8 @@ export {
   makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn,
   makeToggleUpdateTextConfigAtSelectionUpdateFn,
   makeToggleUpdateTextConfigAtCurrentSelectionAndCustomCollapsedSelectionTextConfigUpdateFn,
+  iterateParagraphInlineNodesWhole,
+  iterateParagraphChildrenWhole,
+  iterateParagraphInlineNodesWholeWithStartOffset,
+  iterateParagraphChildrenWholeWithStartOffset,
 };

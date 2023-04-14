@@ -253,6 +253,9 @@ interface TextElementInfo {
   textNode: Node;
   endsWithLineBreak: boolean;
 }
+const getTextConfigTextRunSizingKey = (textConfig: TextConfig): string => {
+  return [textConfig.script, textConfig.code].join('|');
+};
 class VirtualizedParagraphRenderControl extends DisposableClass implements matita.ParagraphRenderControl {
   paragraphReference: matita.BlockReference;
   #viewControl: VirtualizedViewControl;
@@ -290,23 +293,41 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     lineTop: number,
     lineHeight: number,
     insertTextConfig: TextConfig,
+    measuredParagraphLineRange: MeasuredParagraphLineRange,
   ): { top: number; height: number } {
+    if (measuredParagraphLineRange.startOffset !== measuredParagraphLineRange.endOffset) {
+      const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
+      const paragraph = matita.accessBlockFromBlockReference(documentRenderControl.stateControl.stateView.document, this.paragraphReference);
+      matita.assertIsParagraph(paragraph);
+      const sizingKey = getTextConfigTextRunSizingKey(insertTextConfig);
+      for (const inlineNodeWithStartOffset of matita.iterateParagraphChildrenWholeWithStartOffset(
+        paragraph,
+        measuredParagraphLineRange.startOffset,
+        measuredParagraphLineRange.endOffset,
+      )) {
+        if (matita.isText(inlineNodeWithStartOffset.inline) && getTextConfigTextRunSizingKey(inlineNodeWithStartOffset.inline.config) === sizingKey) {
+          const characterMeasurementIndex = Math.max(inlineNodeWithStartOffset.startOffset - measuredParagraphLineRange.startOffset, 0);
+          const characterRectangle = measuredParagraphLineRange.characterRectangles[characterMeasurementIndex];
+          assertIsNotNullish(characterRectangle);
+          return { height: characterRectangle.height, top: characterRectangle.top };
+        }
+      }
+    }
     let height: number;
     let top: number;
     if (insertTextConfig.script === undefined) {
       top = lineTop + lineHeight / 2 - this.#fontSize / 2 - this.#fontSize * 0.18;
       height = this.#fontSize * 1.42;
     } else {
-      height = this.#fontSize / this.#scriptFontSizeMultiplier;
+      height = (this.#fontSize / this.#scriptFontSizeMultiplier) * 0.95;
       top = lineTop + lineHeight / 2 - height / 2;
       if (insertTextConfig.script === TextConfigScript.Sub) {
-        top += 0.155 * height;
+        top += 0.175 * height;
       } else {
         top -= 0.23 * height;
       }
-      height *= 1.07;
     }
-    return { height, top };
+    return { top, height };
   }
   #addInlineStylesToTextElement(
     textElement: HTMLElement,
@@ -6036,7 +6057,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #getCursorPositionAndHeightFromParagraphPointFillingLine(
     point: matita.ParagraphPoint,
     isLineWrapToNextLine: boolean,
-  ): { position: ViewPosition; height: number } {
+  ): { position: ViewPosition; height: number; measuredParagraphLineRange: MeasuredParagraphLineRange } {
     // Fix horizontal scroll hidden in safari.
     if (this.#isOverflowClipNotSupported) {
       this.#containerHtmlElement.scrollLeft = 0;
@@ -6059,6 +6080,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   top: nextMeasuredParagraphLineRange.boundingRect.top,
                 },
                 height: nextMeasuredParagraphLineRange.boundingRect.height,
+                measuredParagraphLineRange: nextMeasuredParagraphLineRange,
               };
             }
             return {
@@ -6067,6 +6089,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 top: nextMeasuredParagraphLineRange.boundingRect.top,
               },
               height: nextMeasuredParagraphLineRange.boundingRect.height,
+              measuredParagraphLineRange: nextMeasuredParagraphLineRange,
             };
           }
           if (measuredParagraphLineRange.characterRectangles.length === 0) {
@@ -6076,6 +6099,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 top: measuredParagraphLineRange.boundingRect.top,
               },
               height: measuredParagraphLineRange.boundingRect.height,
+              measuredParagraphLineRange,
             };
           }
           const characterRectangle = paragraphMeasurement.characterRectangles[point.offset - 1];
@@ -6086,6 +6110,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               top: measuredParagraphLineRange.boundingRect.top,
             },
             height: measuredParagraphLineRange.boundingRect.height,
+            measuredParagraphLineRange,
           };
         }
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -6097,6 +6122,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             top: measuredParagraphLineRange.boundingRect.top,
           },
           height: measuredParagraphLineRange.boundingRect.height,
+          measuredParagraphLineRange,
         };
       }
     }
@@ -7725,6 +7751,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           cursorPositionAndHeight.position.top,
           cursorPositionAndHeight.height,
           insertTextConfig,
+          cursorPositionAndHeight.measuredParagraphLineRange,
         );
         cursorTop = cursorTopAndHeight.top;
         cursorHeight = cursorTopAndHeight.height;
