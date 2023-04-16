@@ -3697,11 +3697,25 @@ function omit<T extends object, K extends keyof T>(value: T, keys: K[]): Omit<T,
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   return newValue;
 }
+interface AdditionalMargins {
+  visible: {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+  };
+  notVisible: {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+  };
+}
 function scrollCursorRectIntoView(
   cursorRect: ViewRectangle,
   scrollElement: HTMLElement,
   isScrollable: (element: Element) => boolean,
-  getScrollElementAdditionalTopMargin: (element: Element) => number,
+  getScrollElementAdditionalMargins: (element: Element) => AdditionalMargins,
   nestedCall?: boolean,
 ) {
   if (!nestedCall) {
@@ -3710,7 +3724,7 @@ function scrollCursorRectIntoView(
       let s = scrollElement;
       while (true) {
         s = findScrollContainer(s, isScrollable);
-        scrollCursorRectIntoView(cursorRect, s, isScrollable, getScrollElementAdditionalTopMargin, true);
+        scrollCursorRectIntoView(cursorRect, s, isScrollable, getScrollElementAdditionalMargins, true);
         if (s === document.body || s === document.documentElement) {
           break;
         }
@@ -3762,21 +3776,31 @@ function scrollCursorRectIntoView(
     yOffset = scrollElement.scrollTop;
     xOffset = scrollElement.scrollLeft;
   }
-  scrollElementPaddingTop += getScrollElementAdditionalTopMargin(scrollElement);
+  const additionalMarginsAll = getScrollElementAdditionalMargins(scrollElement);
   const cursorTop = cursorRect.top + yOffset - scrollElementTop;
   const cursorLeft = cursorRect.left + xOffset - scrollElementLeft;
-  let x = xOffset;
-  let y = yOffset;
-  // TODO.
-  if (cursorLeft < xOffset) {
-    x = cursorLeft - scrollElementPaddingLeft;
-  } else if (cursorLeft + cursorRect.width + scrollElementBordersX > xOffset + width) {
-    x = cursorLeft + scrollElementBordersX + scrollElementPaddingRight - width;
+  const isVisible = !(
+    cursorLeft < xOffset ||
+    cursorLeft + cursorRect.width + scrollElementBordersX > xOffset + width ||
+    cursorTop < yOffset ||
+    cursorTop + cursorRect.height + scrollElementBordersY > yOffset + height
+  );
+  const additionalMargins = isVisible ? additionalMarginsAll.visible : additionalMarginsAll.notVisible;
+  let x: number;
+  let y: number;
+  if (cursorLeft - additionalMargins.left < xOffset) {
+    x = cursorLeft - scrollElementPaddingLeft - additionalMargins.left;
+  } else if (cursorLeft + cursorRect.width + scrollElementBordersX + additionalMargins.right > xOffset + width) {
+    x = cursorLeft + scrollElementBordersX + scrollElementPaddingRight + additionalMargins.right - width;
+  } else {
+    x = xOffset;
   }
-  if (cursorTop - scrollElementPaddingTop < yOffset) {
-    y = cursorTop - scrollElementPaddingTop;
-  } else if (cursorTop + cursorRect.height + scrollElementBordersY > yOffset + height) {
-    y = cursorTop + scrollElementBordersY + scrollElementPaddingBottom + cursorRect.height - height;
+  if (cursorTop - additionalMargins.top < yOffset) {
+    y = cursorTop - scrollElementPaddingTop - additionalMargins.top;
+  } else if (cursorTop + cursorRect.height + scrollElementBordersY + additionalMargins.bottom > yOffset + height) {
+    y = cursorTop + scrollElementBordersY + scrollElementPaddingBottom + additionalMargins.bottom + cursorRect.height - height;
+  } else {
+    y = yOffset;
   }
   if (x === xOffset && y === yOffset) {
     return;
@@ -6061,13 +6085,43 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       ),
       this.#getScrollContainer(),
       this.#isElementScrollable,
-      this.#getScrollElementAdditionalTopMargin,
+      this.#getScrollElementAdditionalNonVisibleMargins,
     );
   }
-  #getScrollElementAdditionalTopMargin = (element: Element): number => {
-    return this.#isSearchElementContainerVisible$.currentValue && element === this.#getScrollContainer()
-      ? ((this.#searchElementContainerElement.firstChild as HTMLElement | null)?.getBoundingClientRect().height ?? 0) + searchBoxMargin * 2
-      : 0;
+  #getScrollElementAdditionalNonVisibleMargins = (element: Element): AdditionalMargins => {
+    let visibleTop: number;
+    let visibleBottom: number;
+    let notVisibleTop: number;
+    let notVisibleBottom: number;
+    if (this.#isSearchElementContainerVisible$.currentValue && element === this.#getScrollContainer()) {
+      const searchElementPaddingTop =
+        ((this.#searchElementContainerElement.firstChild as HTMLElement | null)?.getBoundingClientRect().height ?? 0) + searchBoxMargin * 2;
+      const visibleTopAndBottom = this.#getVisibleTopAndBottom();
+      const visibleHeight = visibleTopAndBottom.visibleBottom - visibleTopAndBottom.visibleTop;
+      visibleTop = searchElementPaddingTop;
+      visibleBottom = visibleHeight / 5;
+      notVisibleTop = Math.max(searchElementPaddingTop, searchElementPaddingTop + visibleHeight / 4);
+      notVisibleBottom = Math.min((visibleHeight * 3) / 5, visibleHeight - searchElementPaddingTop);
+    } else {
+      visibleTop = 0;
+      visibleBottom = 0;
+      notVisibleTop = 0;
+      notVisibleBottom = 0;
+    }
+    return {
+      visible: {
+        top: visibleTop,
+        bottom: visibleBottom,
+        left: 0,
+        right: 0,
+      },
+      notVisible: {
+        top: notVisibleTop,
+        bottom: notVisibleBottom,
+        left: 0,
+        right: 0,
+      },
+    };
   };
   #isElementScrollable = (element: Element): boolean => {
     // TODO: Figure this out without forcing style calculation.
