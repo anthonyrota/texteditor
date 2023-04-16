@@ -6732,7 +6732,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   customCollapsedSelectionTextConfig,
                   matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId()),
                 ),
-                undefined,
                 (selectionRange) => {
                   if (selectionRange.ranges.length > 1) {
                     return false;

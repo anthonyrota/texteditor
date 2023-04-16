@@ -4532,39 +4532,27 @@ function makeMoveBlocksAtEndMutation(startBlockPoint: BlockPoint, endBlockPoint:
     contentReference,
   };
 }
-interface SplitParagraphBackwardsMutation<ParagraphConfig extends NodeConfig> {
+interface SplitParagraphBackwardsMutation {
   type: MutationType.SplitParagraphBackwards;
   splitAtParagraphPoint: ParagraphPoint;
-  newParagraphConfig: ParagraphConfig;
   newParagraphId: string;
 }
-function makeSplitParagraphBackwardsMutation<ParagraphConfig extends NodeConfig>(
-  splitAtParagraphPoint: ParagraphPoint,
-  newParagraphConfig: ParagraphConfig,
-  newParagraphId: string,
-): SplitParagraphBackwardsMutation<ParagraphConfig> {
+function makeSplitParagraphBackwardsMutation(splitAtParagraphPoint: ParagraphPoint, newParagraphId: string): SplitParagraphBackwardsMutation {
   return {
     type: MutationType.SplitParagraphBackwards,
     splitAtParagraphPoint,
-    newParagraphConfig,
     newParagraphId,
   };
 }
-interface SplitParagraphForwardsMutation<ParagraphConfig extends NodeConfig> {
+interface SplitParagraphForwardsMutation {
   type: MutationType.SplitParagraphForwards;
   splitAtParagraphPoint: ParagraphPoint;
-  newParagraphConfig: ParagraphConfig;
   newParagraphId: string;
 }
-function makeSplitParagraphForwardsMutation<ParagraphConfig extends NodeConfig>(
-  splitAtParagraphPoint: ParagraphPoint,
-  newParagraphConfig: ParagraphConfig,
-  newParagraphId: string,
-): SplitParagraphForwardsMutation<ParagraphConfig> {
+function makeSplitParagraphForwardsMutation(splitAtParagraphPoint: ParagraphPoint, newParagraphId: string): SplitParagraphForwardsMutation {
   return {
     type: MutationType.SplitParagraphForwards,
     splitAtParagraphPoint,
-    newParagraphConfig,
     newParagraphId,
   };
 }
@@ -4663,24 +4651,6 @@ function makeUpdateParagraphConfigBetweenBlockPointsMutation<ParagraphConfig ext
     endBlockPoint,
   };
 }
-interface ChangeParagraphConfigBetweenBlockPointsMutation<ParagraphConfig extends NodeConfig> {
-  type: MutationType.ChangeParagraphConfigBetweenBlockPoints;
-  startBlockPoint: BlockPoint;
-  endBlockPoint: BlockPoint;
-  paragraphConfig: ParagraphConfig;
-}
-function makeChangeParagraphConfigBetweenBlockPointsMutation<ParagraphConfig extends NodeConfig>(
-  startBlockPoint: BlockPoint,
-  endBlockPoint: BlockPoint,
-  paragraphConfig: ParagraphConfig,
-): ChangeParagraphConfigBetweenBlockPointsMutation<ParagraphConfig> {
-  return {
-    type: MutationType.ChangeParagraphConfigBetweenBlockPoints,
-    startBlockPoint,
-    endBlockPoint,
-    paragraphConfig,
-  };
-}
 interface UpdateDocumentConfigMutation<DocumentConfig extends NodeConfig> {
   type: MutationType.UpdateDocumentConfig;
 }
@@ -4717,61 +4687,6 @@ function makeUpdateVoidConfigMutation<VoidConfig extends NodeConfig>(voidStartPa
   return {
     type: MutationType.UpdateVoidConfig,
     voidStartParagraphPoint,
-  };
-}
-interface ChangeDocumentConfigMutation<DocumentConfig extends NodeConfig> {
-  type: MutationType.ChangeDocumentConfig;
-  newDocumentConfig: DocumentConfig;
-}
-function makeChangeDocumentConfigMutation<DocumentConfig extends NodeConfig>(newDocumentConfig: DocumentConfig): ChangeDocumentConfigMutation<DocumentConfig> {
-  return {
-    type: MutationType.ChangeDocumentConfig,
-    newDocumentConfig,
-  };
-}
-interface ChangeContentConfigMutation<ContentConfig extends NodeConfig> {
-  type: MutationType.ChangeContentConfig;
-  contentReference: ContentReference;
-  newContentConfig: ContentConfig;
-}
-function makeChangeContentConfigMutation<ContentConfig extends NodeConfig>(
-  contentReference: ContentReference,
-  newContentConfig: ContentConfig,
-): ChangeContentConfigMutation<ContentConfig> {
-  return {
-    type: MutationType.ChangeContentConfig,
-    contentReference,
-    newContentConfig,
-  };
-}
-interface ChangeEmbedConfigMutation<EmbedConfig extends NodeConfig> {
-  type: MutationType.ChangeEmbedConfig;
-  embedBlockPoint: BlockPoint;
-  newEmbedConfig: EmbedConfig;
-}
-function makeChangeEmbedConfigMutation<EmbedConfig extends NodeConfig>(
-  embedBlockPoint: BlockPoint,
-  newEmbedConfig: EmbedConfig,
-): ChangeEmbedConfigMutation<EmbedConfig> {
-  return {
-    type: MutationType.ChangeEmbedConfig,
-    embedBlockPoint,
-    newEmbedConfig,
-  };
-}
-interface ChangeVoidConfigMutation<VoidConfig extends NodeConfig> {
-  type: MutationType.ChangeVoidConfig;
-  voidStartParagraphPoint: ParagraphPoint;
-  newVoidConfig: VoidConfig;
-}
-function makeChangeVoidConfigMutation<VoidConfig extends NodeConfig>(
-  voidStartParagraphPoint: ParagraphPoint,
-  newVoidConfig: VoidConfig,
-): ChangeVoidConfigMutation<VoidConfig> {
-  return {
-    type: MutationType.ChangeVoidConfig,
-    voidStartParagraphPoint,
-    newVoidConfig,
   };
 }
 interface RegisterTopLevelContentMutation<
@@ -4821,8 +4736,8 @@ type Mutation<
   | MoveBlocksBeforeMutation
   | MoveBlocksAfterMutation
   | MoveBlocksAtEndMutation
-  | SplitParagraphBackwardsMutation<ParagraphConfig>
-  | SplitParagraphForwardsMutation<ParagraphConfig>
+  | SplitParagraphBackwardsMutation
+  | SplitParagraphForwardsMutation
   | JoinParagraphsBackwardsMutation
   | JoinParagraphsForwardsMutation
   | RemoveContentsMutation
@@ -4830,15 +4745,10 @@ type Mutation<
   | SpliceParagraphMutation<TextConfig, VoidConfig>
   | UpdateTextConfigBetweenParagraphPointsMutation<TextConfig>
   | UpdateParagraphConfigBetweenBlockPointsMutation<ParagraphConfig>
-  | ChangeParagraphConfigBetweenBlockPointsMutation<ParagraphConfig>
   | UpdateDocumentConfigMutation<DocumentConfig>
   | UpdateContentConfigMutation<ContentConfig>
   | UpdateEmbedConfigMutation<EmbedConfig>
   | UpdateVoidConfigMutation<VoidConfig>
-  | ChangeDocumentConfigMutation<DocumentConfig>
-  | ChangeContentConfigMutation<ContentConfig>
-  | ChangeEmbedConfigMutation<EmbedConfig>
-  | ChangeVoidConfigMutation<VoidConfig>
   | RegisterTopLevelContentMutation<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
 const BatchMutationBrandSymbol = Symbol('BatchMutationBrand');
 interface BatchMutation<
@@ -5748,12 +5658,12 @@ function applyMutation<
       );
     }
     case MutationType.SplitParagraphBackwards: {
-      const { splitAtParagraphPoint, newParagraphConfig, newParagraphId } = mutation;
+      const { splitAtParagraphPoint, newParagraphId } = mutation;
       const content = accessContentFromParagraphPoint(document, splitAtParagraphPoint);
       const paragraphIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromParagraphPoint(splitAtParagraphPoint));
       const paragraph = accessParagraphFromParagraphPoint(document, splitAtParagraphPoint);
       const paragraphChildrenBeforePoint = sliceParagraphChildren(paragraph, 0, splitAtParagraphPoint.offset);
-      const newParagraph = makeParagraph(newParagraphConfig, paragraphChildrenBeforePoint, newParagraphId);
+      const newParagraph = makeParagraph(paragraph.config, paragraphChildrenBeforePoint, newParagraphId);
       const contentReference = makeContentReferenceFromContent(content);
       if (viewDeltaControl) {
         const paragraphReference = makeBlockReferenceFromBlock(paragraph);
@@ -5837,13 +5747,13 @@ function applyMutation<
       return makeChangedMutationResult(makeBatchMutation([makeJoinParagraphsForwardsMutation(splitAtParagraphPoint)]), transformSelectionRange);
     }
     case MutationType.SplitParagraphForwards: {
-      const { splitAtParagraphPoint, newParagraphConfig, newParagraphId } = mutation;
+      const { splitAtParagraphPoint, newParagraphId } = mutation;
       const content = accessContentFromParagraphPoint(document, splitAtParagraphPoint);
       const paragraphIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromParagraphPoint(splitAtParagraphPoint));
       const paragraph = accessParagraphFromParagraphPoint(document, splitAtParagraphPoint);
       const paragraphLength = getParagraphLength(paragraph);
       const paragraphChildrenAfterPoint = sliceParagraphChildren(paragraph, splitAtParagraphPoint.offset, paragraphLength);
-      const newParagraph = makeParagraph(newParagraphConfig, paragraphChildrenAfterPoint, newParagraphId);
+      const newParagraph = makeParagraph(paragraph.config, paragraphChildrenAfterPoint, newParagraphId);
       const contentReference = makeContentReferenceFromContent(content);
       if (viewDeltaControl) {
         const paragraphReference = makeBlockReferenceFromBlock(paragraph);
@@ -5982,7 +5892,6 @@ function applyMutation<
         makeBatchMutation([
           makeSplitParagraphForwardsMutation(
             makeParagraphPointFromParagraphBlockReferenceAndOffset(makeBlockReferenceFromBlock(firstParagraph), firstParagraphLength),
-            cloneNodeConfig(secondParagraph.config),
             secondParagraph.id,
           ),
         ]),
@@ -6055,7 +5964,6 @@ function applyMutation<
         makeBatchMutation([
           makeSplitParagraphBackwardsMutation(
             makeParagraphPointFromParagraphBlockReferenceAndOffset(makeBlockReferenceFromBlock(secondParagraph), firstParagraphLength),
-            cloneNodeConfig(firstParagraph.config),
             firstParagraph.id,
           ),
         ]),
@@ -6419,137 +6327,11 @@ function applyMutation<
     case MutationType.UpdateParagraphConfigBetweenBlockPoints: {
       throwNotImplemented();
     }
-    case MutationType.ChangeParagraphConfigBetweenBlockPoints: {
-      const { startBlockPoint, endBlockPoint, paragraphConfig } = mutation;
-      const contentReference = makeContentReferenceFromContent(accessContentFromBlockPoint(document, startBlockPoint));
-      const startBlockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(startBlockPoint));
-      const endBlockIndex = getIndexOfBlockInContentFromBlockReference(document, makeBlockReferenceFromBlockPoint(endBlockPoint));
-      if (endBlockIndex < startBlockIndex) {
-        throw new MutationNodeEndBeforeStartError({
-          cause: {
-            document,
-            mutation,
-          },
-        });
-      }
-      if (viewDeltaControl) {
-        for (let i = startBlockIndex; i <= endBlockIndex; i++) {
-          const block = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
-          if (isParagraph(block) && !areNodeConfigsEqual(block.config, paragraphConfig)) {
-            viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(makeBlockReferenceFromBlock(block), false, false);
-          }
-        }
-        viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
-      }
-      type ChangedGroupInfo = {
-        didChange: true;
-        config: ParagraphConfig;
-        blockPoint: BlockPoint;
-      };
-      type NotChangedGroupInfo = {
-        didChange: false;
-      };
-      const reverseMutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = groupConsecutiveItemsInArray<
-        number,
-        ChangedGroupInfo | NotChangedGroupInfo
-      >(
-        makeArrayWithNumbersFromStartToEndInclusive(startBlockIndex, endBlockIndex),
-        (i) => {
-          const block = accessBlockAtIndexInContentAtContentReference(document, contentReference, i);
-          if (isParagraph(block) && !areNodeConfigsEqual(block.config, paragraphConfig)) {
-            block.config = cloneNodeConfig(paragraphConfig);
-            return {
-              didChange: true,
-              config: block.config,
-              blockPoint: makeBlockPointFromBlock(block),
-            };
-          }
-          return {
-            didChange: false,
-          };
-        },
-        (a, b) => (!a.didChange && !b.didChange) || (a.didChange && b.didChange && areNodeConfigsEqual(a.config, b.config)),
-      )
-        .filter((group): group is GroupConsecutiveItemsInArrayGroup<number, ChangedGroupInfo> => group.groupInfos[0].didChange)
-        .map((group) => {
-          return makeChangeParagraphConfigBetweenBlockPointsMutation(
-            group.groupInfos[0].blockPoint,
-            group.groupInfos[group.groupInfos.length - 1].blockPoint,
-            cloneNodeConfig(group.groupInfos[0].config),
-          );
-        });
-      return reverseMutations.length === 0 ? makeNoChangeMutationResult() : makeChangedMutationResult(makeBatchMutation(reverseMutations), null);
-    }
     case MutationType.UpdateDocumentConfig:
     case MutationType.UpdateContentConfig:
     case MutationType.UpdateEmbedConfig:
     case MutationType.UpdateVoidConfig: {
       throwNotImplemented();
-    }
-    case MutationType.ChangeDocumentConfig: {
-      const { newDocumentConfig } = mutation;
-      const previousDocumentConfig = document.config;
-      if (!areNodeConfigsEqual(previousDocumentConfig, newDocumentConfig)) {
-        if (viewDeltaControl) {
-          viewDeltaControl.markDocumentConfigUpdated();
-          viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
-        }
-        document.config = cloneNodeConfig(newDocumentConfig);
-        return makeChangedMutationResult(makeBatchMutation([makeChangeDocumentConfigMutation(cloneNodeConfig(previousDocumentConfig))]), null);
-      }
-      return makeNoChangeMutationResult();
-    }
-    case MutationType.ChangeContentConfig: {
-      const { contentReference, newContentConfig } = mutation;
-      const content = accessContentFromContentReference(document, contentReference);
-      const previousContentConfig = content.config;
-      if (!areNodeConfigsEqual(previousContentConfig, newContentConfig)) {
-        if (viewDeltaControl) {
-          viewDeltaControl.markContentAtContentReferenceConfigUpdated(contentReference);
-          viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
-        }
-        content.config = cloneNodeConfig(newContentConfig);
-        return makeChangedMutationResult(makeBatchMutation([makeChangeContentConfigMutation(contentReference, cloneNodeConfig(previousContentConfig))]), null);
-      }
-      return makeNoChangeMutationResult();
-    }
-    case MutationType.ChangeEmbedConfig: {
-      const { embedBlockPoint, newEmbedConfig } = mutation;
-      const embed = accessBlockFromBlockPoint(document, embedBlockPoint);
-      assertIsEmbed(embed);
-      const previousEmbedConfig = embed.config;
-      if (!areNodeConfigsEqual(previousEmbedConfig, newEmbedConfig)) {
-        if (viewDeltaControl) {
-          viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(makeBlockReferenceFromBlockPoint(embedBlockPoint), false, false);
-          viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
-        }
-        embed.config = cloneNodeConfig(newEmbedConfig);
-        return makeChangedMutationResult(makeBatchMutation([makeChangeEmbedConfigMutation(embedBlockPoint, cloneNodeConfig(previousEmbedConfig))]), null);
-      }
-      return makeNoChangeMutationResult();
-    }
-    case MutationType.ChangeVoidConfig: {
-      const { newVoidConfig, voidStartParagraphPoint } = mutation;
-      const nextInlineWithStartOffset = getInlineNodeWithStartOffsetAfterParagraphPoint(document, voidStartParagraphPoint);
-      if (nextInlineWithStartOffset === null || !isVoid(nextInlineWithStartOffset.inline)) {
-        throw new NodeNotOfTypeError(NodeType.Void, {
-          cause: { document, voidStartParagraphPoint, nextInlineWithStartOffset },
-        });
-      }
-      const previousVoidConfig = nextInlineWithStartOffset.inline.config;
-      if (!areNodeConfigsEqual(previousVoidConfig, newVoidConfig)) {
-        if (viewDeltaControl) {
-          viewDeltaControl.markBlockAtBlockReferenceConfigOrParagraphChildrenUpdated(
-            makeBlockReferenceFromParagraphPoint(voidStartParagraphPoint),
-            true,
-            false,
-          );
-          viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
-        }
-        nextInlineWithStartOffset.inline.config = cloneNodeConfig(newVoidConfig);
-        return makeChangedMutationResult(makeBatchMutation([makeChangeVoidConfigMutation(voidStartParagraphPoint, cloneNodeConfig(previousVoidConfig))]), null);
-      }
-      return makeNoChangeMutationResult();
     }
     case MutationType.RegisterTopLevelContent: {
       const { contentId, contentConfig, contentFragment } = mutation;
@@ -6727,11 +6509,6 @@ function makeRemoveRangeContentsUpdateFn<
     delta.applyMutation(makeBatchMutation(mutations));
   };
 }
-enum EdgeParagraphSide {
-  Start = 'Start',
-  End = 'End',
-  Only = 'Only',
-}
 function makeInsertContentFragmentAtRangeUpdateFn<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -6743,13 +6520,6 @@ function makeInsertContentFragmentAtRangeUpdateFn<
   stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   range: Range,
   contentFragment: ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  getShouldReplaceEdgeParagraphConfig?: (
-    edgeParagraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
-    insertParagraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
-    insertStartOffset: number,
-    insertEndOffset: number,
-    startOrEndOfBoth: EdgeParagraphSide,
-  ) => boolean,
   shouldTransformStateSelectionRangeToEndPredicateFn?: (selectionRange: SelectionRange) => boolean,
 ): RunUpdateFn {
   return (): void => {
@@ -6961,17 +6731,6 @@ function makeInsertContentFragmentAtRangeUpdateFn<
               makeSpliceParagraphMutation(firstParagraphPoint, secondParagraphPoint.offset - firstParagraphPoint.offset, firstContentFragmentBlock.children),
             );
           }
-          if (
-            getShouldReplaceEdgeParagraphConfig?.(
-              dummyParagraph,
-              firstContentFragmentBlock,
-              firstParagraphPoint.offset,
-              contentFragmentBlocks.length === 1 ? secondParagraphPoint.offset : getParagraphLength(dummyParagraph),
-              contentFragmentBlocks.length === 1 ? EdgeParagraphSide.Only : EdgeParagraphSide.Start,
-            )
-          ) {
-            mutations.push(makeChangeParagraphConfigBetweenBlockPointsMutation(paragraphBlockPoint, paragraphBlockPoint, firstContentFragmentBlock.config));
-          }
           if (contentFragmentBlocks.length === 1) {
             if (shouldTransformStateSelectionRangeToEndPredicateFn) {
               const endPoint = changeParagraphPointOffset(secondParagraphPoint, firstParagraphPoint.offset + firstContentFragmentBlockLength);
@@ -6984,15 +6743,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             if (newParagraphId === null) {
               newParagraphId = generateId();
             }
-            mutations.push(
-              makeSplitParagraphForwardsMutation(
-                splitAt,
-                getShouldReplaceEdgeParagraphConfig?.(dummyParagraph, lastContentFragmentBlock, 0, secondParagraphPoint.offset, EdgeParagraphSide.End)
-                  ? lastContentFragmentBlock.config
-                  : dummyParagraph.config,
-                newParagraphId,
-              ),
-            );
+            mutations.push(makeSplitParagraphForwardsMutation(splitAt, newParagraphId));
             const lastContentFragmentBlockLength = getParagraphLength(lastContentFragmentBlock);
             if (lastContentFragmentBlockLength > 0) {
               mutations.push(
@@ -7017,7 +6768,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             }
           } else {
             if (secondParagraphPoint.offset < getParagraphLength(dummyParagraph)) {
-              mutations.push(makeSplitParagraphForwardsMutation(splitAt, dummyParagraph.config, generateId()));
+              mutations.push(makeSplitParagraphForwardsMutation(splitAt, generateId()));
             }
             mutations.push(makeInsertBlocksAfterMutation(paragraphBlockPoint, makeContentFragment(contentFragmentBlocks.slice(1))));
             if (shouldTransformStateSelectionRangeToEndPredicateFn) {
@@ -7034,15 +6785,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             if (newParagraphId === null) {
               newParagraphId = generateId();
             }
-            mutations.push(
-              makeSplitParagraphForwardsMutation(
-                splitAt,
-                getShouldReplaceEdgeParagraphConfig?.(dummyParagraph, lastContentFragmentBlock, 0, secondParagraphPoint.offset, EdgeParagraphSide.End)
-                  ? lastContentFragmentBlock.config
-                  : dummyParagraph.config,
-                newParagraphId,
-              ),
-            );
+            mutations.push(makeSplitParagraphForwardsMutation(splitAt, newParagraphId));
             const lastContentFragmentBlockLength = getParagraphLength(lastContentFragmentBlock);
             if (lastContentFragmentBlockLength > 0) {
               mutations.push(
@@ -7065,7 +6808,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             }
           } else {
             if (secondParagraphPoint.offset < getParagraphLength(dummyParagraph)) {
-              mutations.push(makeSplitParagraphForwardsMutation(splitAt, dummyParagraph.config, generateId()));
+              mutations.push(makeSplitParagraphForwardsMutation(splitAt, generateId()));
             }
             mutations.push(makeInsertBlocksAfterMutation(paragraphBlockPoint, contentFragment));
             if (shouldTransformStateSelectionRangeToEndPredicateFn) {
@@ -7977,13 +7720,6 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
     selectionRange: SelectionRange,
   ) => ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selection?: Selection,
-  getShouldReplaceEdgeParagraphConfig?: (
-    edgeParagraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
-    insertParagraph: Paragraph<ParagraphConfig, TextConfig, VoidConfig>,
-    insertStartOffset: number,
-    insertEndOffset: number,
-    startOrEndOfBoth: EdgeParagraphSide,
-  ) => boolean,
   treatAsSelection?: boolean,
 ): RunUpdateFn {
   return (updateDataStack) => {
@@ -8031,7 +7767,6 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
           lastRangeWithSelectionRange.range,
           // TODO: Calculate this beforehand or this won't work.
           getContentFragmentFromSelectionRange(lastRangeWithSelectionRange.selectionRange),
-          getShouldReplaceEdgeParagraphConfig,
           selection && !treatAsSelection
             ? undefined
             : (selectionRange) => {
@@ -8741,12 +8476,7 @@ export {
   type BlockPoint,
   type BlockReference,
   type BlockStore,
-  type ChangeContentConfigMutation,
   type ChangedMutationResult,
-  type ChangeDocumentConfigMutation,
-  type ChangeEmbedConfigMutation,
-  type ChangeParagraphConfigBetweenBlockPointsMutation,
-  type ChangeVoidConfigMutation,
   type Content,
   type ContentFragment,
   type ContentFragmentBlock,
@@ -8984,12 +8714,7 @@ export {
   makeBlockReferenceFromBlockId,
   makeBlockReferenceFromBlockPoint,
   makeBlockReferenceFromParagraphPoint,
-  makeChangeContentConfigMutation,
   makeChangedMutationResult,
-  makeChangeDocumentConfigMutation,
-  makeChangeEmbedConfigMutation,
-  makeChangeParagraphConfigBetweenBlockPointsMutation,
-  makeChangeVoidConfigMutation,
   makeContent,
   makeContentFragment,
   makeContentFragmentEmbed,
@@ -9100,7 +8825,6 @@ export {
   CompareKeysResult,
   MutationSelectionTransformFixWhen,
   MutationType,
-  EdgeParagraphSide,
   MovementGranularity,
   PointMovement,
   type SelectionChangeMessage,
