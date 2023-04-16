@@ -741,6 +741,7 @@ interface HitPosition {
   pointWithContentReference: matita.PointWithContentReference;
   isPastPreviousCharacterHalfPoint: boolean;
   isWrappedLineStart: boolean;
+  isWrappedLinePreviousEnd: boolean;
 }
 interface ViewPosition {
   readonly left: number;
@@ -1546,9 +1547,7 @@ enum StandardCommand {
   MoveSelectionSoftLineEnd = 'standard.moveSelectionSoftLineEnd',
   MoveSelectionSoftLineDown = 'standard.moveSelectionSoftLineDown',
   MoveSelectionSoftLineUp = 'standard.moveSelectionSoftLineUp',
-  MoveSelectionStartOfPage = 'standard.moveSelectionStartOfPage',
   MoveSelectionStartOfDocument = 'standard.moveSelectionStartOfDocument',
-  MoveSelectionEndOfPage = 'standard.moveSelectionEndOfPage',
   MoveSelectionEndOfDocument = 'standard.moveSelectionEndOfDocument',
   ExtendSelectionGraphemeBackwards = 'standard.extendSelectionGraphemeBackwards',
   ExtendSelectionWordBackwards = 'standard.extendSelectionWordBackwards',
@@ -1562,9 +1561,7 @@ enum StandardCommand {
   ExtendSelectionSoftLineEnd = 'standard.extendSelectionSoftLineEnd',
   ExtendSelectionSoftLineDown = 'standard.extendSelectionSoftLineDown',
   ExtendSelectionSoftLineUp = 'standard.extendSelectionSoftLineUp',
-  ExtendSelectionStartOfPage = 'standard.extendSelectionStartOfPage',
   ExtendSelectionStartOfDocument = 'standard.extendSelectionStartOfDocument',
-  ExtendSelectionEndOfPage = 'standard.extendSelectionEndOfPage',
   ExtendSelectionEndOfDocument = 'standard.extendSelectionEndOfDocument',
   RemoveSelectionGraphemeBackwards = 'standard.removeSelectionGraphemeBackwards',
   RemoveSelectionWordBackwards = 'standard.removeSelectionWordBackwards',
@@ -2205,7 +2202,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
         ),
       );
@@ -2217,7 +2214,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
         ),
       );
@@ -2229,7 +2226,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
         ),
       );
@@ -2241,7 +2238,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.PreviousBoundByEdge),
         ),
       );
@@ -2253,7 +2250,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
         ),
       );
@@ -2265,7 +2262,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
         ),
       );
@@ -2277,7 +2274,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
         ),
       );
@@ -2289,7 +2286,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.NextBoundByEdge),
         ),
       );
@@ -2301,7 +2298,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Previous),
         ),
       );
@@ -2313,7 +2310,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeExtendSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Next),
         ),
       );
@@ -2325,7 +2322,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
         ),
         { [matita.RedoUndoUpdateKey.RemoveTextBackwards]: true },
@@ -2338,7 +2335,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
         ),
         { [matita.RedoUndoUpdateKey.RemoveTextBackwards]: true },
@@ -2351,7 +2348,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
         ),
       );
@@ -2363,7 +2360,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
         ),
         { [matita.RedoUndoUpdateKey.RemoveTextForwards]: true },
@@ -2376,7 +2373,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
         ),
         { [matita.RedoUndoUpdateKey.RemoveTextForwards]: true },
@@ -2389,7 +2386,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
         matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          matita.noopPointTransformFn,
+          undefined,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
         ),
       );
@@ -2535,189 +2532,594 @@ type VirtualizedCommandRegister = CommandRegister<
   matita.EmbedRenderControl
 >;
 enum VirtualizedDataKey {
-  MoveSelectionSoftLineUpDownCursorOffsetLeft = 'virtualized.moveSelectionSoftLineUpDownCursorOffsetLeft',
-  ExtendSelectionSoftLineUpDownCursorOffsetLeft = 'virtualized.extendSelectionSoftLineUpDownCursorOffsetLeft',
-  LineWrapFocusCursorWrapToNextLine = 'virtualized.lineWrapFocusCursorWrapToNextLine',
-  IgnoreRecursiveUpdate = 'virtualized.ignoreRecursiveUpdate',
+  SelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft = 'virtualized.selectionChangeData.preserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft',
+  SelectionRangeDataMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationId = 'virtualized.selectionRangeData.moveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationId',
+  SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds = 'virtualized.selectionChangeData.preserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds',
+  SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId = 'virtualized.selectionRangeData.lineWrapFocusCursorWrapToNextLineWithExpirationId',
+  SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds = 'virtualized.selectionChangeData.preserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds',
+  SelectionRangeDataLineWrapAnchorCursorWrapToNextLineWithExpirationId = 'virtualized.selectionRangeData.lineWrapAnchorCursorWrapToNextLineWithExpirationId',
+}
+function isSelectionChangeDataPreservingMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft(selectionChangeData: matita.SelectionChangeData): boolean {
+  if (VirtualizedDataKey.SelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft in selectionChangeData) {
+    const value = selectionChangeData[VirtualizedDataKey.SelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft];
+    assert(value === true);
+    return true;
+  }
+  return false;
+}
+function makeSelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftDataValue(): true {
+  return true;
+}
+interface MoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue {
+  cursorOffsetLeft: number;
+  expirationId: number;
+}
+function getMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(
+  selectionRangeData: matita.SelectionRangeData,
+): MoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue | undefined {
+  if (!(VirtualizedDataKey.SelectionRangeDataMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationId in selectionRangeData)) {
+    return;
+  }
+  const value = selectionRangeData[VirtualizedDataKey.SelectionRangeDataMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationId];
+  assert(
+    value != null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      'cursorOffsetLeft' in value &&
+      typeof value.cursorOffsetLeft === 'number' &&
+      'expirationId' in value &&
+      typeof value.expirationId === 'number',
+  );
+  return value as MoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue;
+}
+function makeMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(
+  cursorOffsetLeft: number,
+  expirationId: number,
+): MoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue {
+  return {
+    cursorOffsetLeft,
+    expirationId,
+  };
+}
+interface LineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue {
+  expirationId: number;
+}
+function getSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+  selectionChangeData: matita.SelectionChangeData,
+): string[] {
+  if (VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds in selectionChangeData) {
+    const value = selectionChangeData[VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds];
+    assert(Array.isArray(value) && value.every((item) => typeof item === 'string'));
+    return value as string[];
+  }
+  return [];
+}
+function makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+  preservedSelectionRangeIds: string[],
+): string[] {
+  return preservedSelectionRangeIds;
+}
+function getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+  selectionRangeData: matita.SelectionRangeData,
+): LineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue | undefined {
+  if (!(VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId in selectionRangeData)) {
+    return;
+  }
+  const value = selectionRangeData[VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId];
+  assert(value != null && typeof value === 'object' && !Array.isArray(value) && 'expirationId' in value && typeof value.expirationId === 'number');
+  return value as LineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue;
+}
+function makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+  expirationId: number,
+): LineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue {
+  return {
+    expirationId,
+  };
+}
+interface LineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue {
+  expirationId: number;
+}
+function getSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+  selectionChangeData: matita.SelectionChangeData,
+): string[] {
+  if (VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds in selectionChangeData) {
+    const value = selectionChangeData[VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds];
+    assert(Array.isArray(value) && value.every((item) => typeof item === 'string'));
+    return value as string[];
+  }
+  return [];
+}
+function makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+  preservedSelectionRangeIds: string[],
+): string[] {
+  return preservedSelectionRangeIds;
+}
+function getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+  selectionRangeData: matita.SelectionRangeData,
+): LineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue | undefined {
+  if (!(VirtualizedDataKey.SelectionRangeDataLineWrapAnchorCursorWrapToNextLineWithExpirationId in selectionRangeData)) {
+    return;
+  }
+  const value = selectionRangeData[VirtualizedDataKey.SelectionRangeDataLineWrapAnchorCursorWrapToNextLineWithExpirationId];
+  assert(value != null && typeof value === 'object' && !Array.isArray(value) && 'expirationId' in value && typeof value.expirationId === 'number');
+  return value as LineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue;
+}
+function makeLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+  expirationId: number,
+): LineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue {
+  return {
+    expirationId,
+  };
+}
+function makeVirtualizedMoveSelectionBackwardsByPointTransformFnThroughFocusPointUpdateFn(
+  documentRenderControl: VirtualizedDocumentRenderControl,
+  shouldSelectionRangeCollapse: matita.ShouldSelectionRangeCollapseFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  pointTransformFn: matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): matita.RunUpdateFn {
+  return () => {
+    const preserveAnchorLineWrapSelectionRangeIds: string[] = [];
+    const preserveFocusLineWrapSelectionRangeIds: string[] = [];
+    documentRenderControl.stateControl.delta.applyUpdate(
+      matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
+        documentRenderControl.stateControl,
+        shouldSelectionRangeCollapse,
+        pointTransformFn,
+        (_oldSelectionRange, newSelectionRange) => {
+          const newFocusPoint = matita.getFocusPointFromRange(matita.getFocusRangeFromSelectionRange(newSelectionRange));
+          if (matita.isParagraphPoint(newFocusPoint) && documentRenderControl.isParagraphPointAtWrappedLineWrapPoint(newFocusPoint)) {
+            preserveAnchorLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            preserveFocusLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            return {
+              ...newSelectionRange.data,
+              [VirtualizedDataKey.SelectionRangeDataLineWrapAnchorCursorWrapToNextLineWithExpirationId]:
+                makeLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                  documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+                ),
+              [VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId]:
+                makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                  documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+                ),
+            };
+          }
+          return undefined;
+        },
+        (_oldSelection, _newSelection) => ({
+          [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+            makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+              preserveAnchorLineWrapSelectionRangeIds,
+            ),
+          [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+            makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(preserveFocusLineWrapSelectionRangeIds),
+        }),
+      ),
+    );
+  };
+}
+function makeVirtualizedMoveSelectionSoftLineUpDownUpdateFn(
+  documentRenderControl: VirtualizedDocumentRenderControl,
+  pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
+): matita.RunUpdateFn {
+  return () => {
+    const preserveAnchorLineWrapSelectionRangeIds: string[] = [];
+    const preserveFocusLineWrapSelectionRangeIds: string[] = [];
+    let horizontalOffset!: number;
+    let isWrappedLineStart!: boolean;
+    documentRenderControl.stateControl.delta.applyUpdate(
+      matita.makeMoveSelectionByPointTransformFnThroughAnchorPointUpdateFn(
+        documentRenderControl.stateControl,
+        (_document, _stateControlConfig, _selectionRange) => false,
+        (_document, _stateControlConfig, selectionRangeIntention, range, anchorPoint, selectionRange) => {
+          const isAnchorAfterFocus = matita.getIsSelectionRangeAnchorAfterFocus(documentRenderControl.stateControl.stateView.document, selectionRange);
+          let cursorOffsetLeft: number | undefined;
+          const cursorOffsetLeftDataValue = getMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+          if (
+            cursorOffsetLeftDataValue !== undefined &&
+            documentRenderControl.isSelectionSecondaryDataExpirationIdActive(cursorOffsetLeftDataValue.expirationId)
+          ) {
+            cursorOffsetLeft = cursorOffsetLeftDataValue.cursorOffsetLeft;
+          }
+          let result: ReturnType<(typeof documentRenderControl)['transformPointSoftLineUpDownWithOffsetLeft']>;
+          if (pointMovement === matita.PointMovement.Previous ? isAnchorAfterFocus : !isAnchorAfterFocus) {
+            const focusPoint = matita.getFocusPointFromRange(range);
+            result = documentRenderControl.transformPointSoftLineUpDownWithOffsetLeft(
+              pointMovement,
+              selectionRangeIntention,
+              range,
+              focusPoint,
+              selectionRange,
+              cursorOffsetLeft,
+              false,
+            );
+          } else {
+            result = documentRenderControl.transformPointSoftLineUpDownWithOffsetLeft(
+              pointMovement,
+              selectionRangeIntention,
+              range,
+              anchorPoint,
+              selectionRange,
+              cursorOffsetLeft,
+              true,
+            );
+          }
+          horizontalOffset = result.horizontalOffset;
+          isWrappedLineStart = result.isWrappedLineStart;
+          return result.pointWithContentReference;
+        },
+        (_oldSelectionRange, newSelectionRange) => {
+          const newSelectionRangeData: matita.SelectionRangeData = {
+            ...newSelectionRange.data,
+            [VirtualizedDataKey.SelectionRangeDataMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationId]:
+              makeMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(
+                horizontalOffset,
+                documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+              ),
+          };
+          if (isWrappedLineStart) {
+            preserveAnchorLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            preserveFocusLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            newSelectionRangeData[VirtualizedDataKey.SelectionRangeDataLineWrapAnchorCursorWrapToNextLineWithExpirationId] =
+              makeLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+              );
+            newSelectionRangeData[VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId] =
+              makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+              );
+          }
+          return newSelectionRangeData;
+        },
+        (_oldSelection, _newSelection) => {
+          return {
+            [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+              makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+                preserveAnchorLineWrapSelectionRangeIds,
+              ),
+            [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+              makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+                preserveFocusLineWrapSelectionRangeIds,
+              ),
+            [VirtualizedDataKey.SelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft]:
+              makeSelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftDataValue(),
+          };
+        },
+      ),
+    );
+  };
+}
+function makeVirtualizedExtendSelectionSoftLineUpDownUpdateFn(
+  documentRenderControl: VirtualizedDocumentRenderControl,
+  pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
+): matita.RunUpdateFn {
+  return () => {
+    const preserveAnchorLineWrapSelectionRangeIds: string[] = [];
+    const preserveFocusLineWrapSelectionRangeIds: string[] = [];
+    let horizontalOffset!: number;
+    let isWrappedLineStart!: boolean;
+    documentRenderControl.stateControl.delta.applyUpdate(
+      matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+        documentRenderControl.stateControl,
+        (_document, _stateControlConfig, _selectionRange) => true,
+        undefined,
+        (_document, _stateControlConfig, selectionRangeIntention, range, focusPoint, selectionRange) => {
+          let cursorOffsetLeft: number | undefined;
+          const cursorOffsetLeftDataValue = getMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+          if (
+            cursorOffsetLeftDataValue !== undefined &&
+            documentRenderControl.isSelectionSecondaryDataExpirationIdActive(cursorOffsetLeftDataValue.expirationId)
+          ) {
+            cursorOffsetLeft = cursorOffsetLeftDataValue.cursorOffsetLeft;
+          }
+          const result = documentRenderControl.transformPointSoftLineUpDownWithOffsetLeft(
+            pointMovement,
+            selectionRangeIntention,
+            range,
+            focusPoint,
+            selectionRange,
+            cursorOffsetLeft,
+            false,
+          );
+          horizontalOffset = result.horizontalOffset;
+          isWrappedLineStart = result.isWrappedLineStart;
+          return result.pointWithContentReference;
+        },
+        (oldSelectionRange, newSelectionRange) => {
+          const newSelectionRangeData: matita.SelectionRangeData = {
+            ...newSelectionRange.data,
+            [VirtualizedDataKey.SelectionRangeDataMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationId]:
+              makeMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(
+                horizontalOffset,
+                documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+              ),
+          };
+          const oldAnchorPoint = matita.getAnchorPointFromRange(matita.getAnchorRangeFromSelectionRange(oldSelectionRange));
+          if (matita.isParagraphPoint(oldAnchorPoint)) {
+            const lineWrapAnchorCursorWrapToNextLineDataValue = getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+              oldSelectionRange.data,
+            );
+            if (
+              lineWrapAnchorCursorWrapToNextLineDataValue &&
+              documentRenderControl.isSelectionSecondaryDataExpirationIdActive(lineWrapAnchorCursorWrapToNextLineDataValue.expirationId)
+            ) {
+              preserveAnchorLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            }
+          }
+          if (isWrappedLineStart) {
+            preserveFocusLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            newSelectionRangeData[VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId] =
+              makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+              );
+          }
+          return newSelectionRangeData;
+        },
+        (_oldSelection, _newSelection) => {
+          return {
+            [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+              makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+                preserveAnchorLineWrapSelectionRangeIds,
+              ),
+            [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+              makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+                preserveFocusLineWrapSelectionRangeIds,
+              ),
+            [VirtualizedDataKey.SelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft]:
+              makeSelectionChangeDataPreserveMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftDataValue(),
+          };
+        },
+      ),
+    );
+  };
+}
+function makeVirtualizedExtendSelectionBackwardsByFocusPointTransformFnUpdateFn(
+  documentRenderControl: VirtualizedDocumentRenderControl,
+  shouldExtendSelectionRange: matita.ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  pointTransformFn: matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): matita.RunUpdateFn {
+  return () => {
+    const preserveAnchorLineWrapSelectionRangeIds: string[] = [];
+    const preserveFocusLineWrapSelectionRangeIds: string[] = [];
+    documentRenderControl.stateControl.delta.applyUpdate(
+      matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+        documentRenderControl.stateControl,
+        shouldExtendSelectionRange,
+        undefined,
+        pointTransformFn,
+        (oldSelectionRange, newSelectionRange) => {
+          const newSelectionRangeData = { ...newSelectionRange.data };
+          const oldAnchorPoint = matita.getAnchorPointFromRange(matita.getAnchorRangeFromSelectionRange(oldSelectionRange));
+          if (matita.isParagraphPoint(oldAnchorPoint)) {
+            const newAnchorPoint = matita.getAnchorPointFromRange(matita.getAnchorRangeFromSelectionRange(newSelectionRange));
+            if (matita.arePointsEqual(oldAnchorPoint, newAnchorPoint)) {
+              const lineWrapAnchorCursorWrapToNextLineDataValue = getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                oldSelectionRange.data,
+              );
+              if (
+                lineWrapAnchorCursorWrapToNextLineDataValue &&
+                documentRenderControl.isSelectionSecondaryDataExpirationIdActive(lineWrapAnchorCursorWrapToNextLineDataValue.expirationId)
+              ) {
+                preserveAnchorLineWrapSelectionRangeIds.push(newSelectionRange.id);
+              }
+            }
+          }
+          const newFocusPoint = matita.getFocusPointFromRange(matita.getFocusRangeFromSelectionRange(newSelectionRange));
+          if (matita.isParagraphPoint(newFocusPoint) && documentRenderControl.isParagraphPointAtWrappedLineWrapPoint(newFocusPoint)) {
+            preserveFocusLineWrapSelectionRangeIds.push(newSelectionRange.id);
+            newSelectionRangeData[VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId] =
+              makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                documentRenderControl.makeActivatedSelectionSecondaryDataExpirationId(),
+              );
+          }
+          return newSelectionRangeData;
+        },
+        (_oldSelection, _newSelection) => ({
+          [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+            makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+              preserveAnchorLineWrapSelectionRangeIds,
+            ),
+          [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+            makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(preserveFocusLineWrapSelectionRangeIds),
+        }),
+      ),
+    );
+  };
+}
+function makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+  documentRenderControl: VirtualizedDocumentRenderControl,
+  shouldExtendSelectionRange: matita.ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  pointTransformFn: matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): matita.RunUpdateFn {
+  return () => {
+    const preserveAnchorLineWrapSelectionRangeIds: string[] = [];
+    documentRenderControl.stateControl.delta.applyUpdate(
+      matita.makeExtendSelectionByPointTransformFnsUpdateFn(
+        documentRenderControl.stateControl,
+        shouldExtendSelectionRange,
+        undefined,
+        pointTransformFn,
+        (oldSelectionRange, newSelectionRange) => {
+          const oldAnchorPoint = matita.getAnchorPointFromRange(matita.getAnchorRangeFromSelectionRange(oldSelectionRange));
+          if (matita.isParagraphPoint(oldAnchorPoint)) {
+            const newAnchorPoint = matita.getAnchorPointFromRange(matita.getAnchorRangeFromSelectionRange(newSelectionRange));
+            if (matita.arePointsEqual(oldAnchorPoint, newAnchorPoint)) {
+              const lineWrapAnchorCursorWrapToNextLineDataValue = getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                oldSelectionRange.data,
+              );
+              if (
+                lineWrapAnchorCursorWrapToNextLineDataValue &&
+                documentRenderControl.isSelectionSecondaryDataExpirationIdActive(lineWrapAnchorCursorWrapToNextLineDataValue.expirationId)
+              ) {
+                preserveAnchorLineWrapSelectionRangeIds.push(newSelectionRange.id);
+              }
+            }
+          }
+          return undefined;
+        },
+        (_oldSelection, _newSelection) => ({
+          [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+            makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(
+              preserveAnchorLineWrapSelectionRangeIds,
+            ),
+        }),
+      ),
+    );
+  };
 }
 const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredCommand> = {
   [StandardCommand.MoveSelectionGraphemeBackwards]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      const pointTransformFn = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous);
-      stateControl.queueUpdate(() => {
-        const cursorWrappedIds: string[] = [];
-        const newSelection = matita.transformSelectionByTransformingSelectionRanges(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
-          (selectionRange) => {
-            if (shouldCollapseSelectionRangeInTextCommand(stateControl.stateView.document, selectionRange)) {
-              const { anchorPointWithContentReference, focusPointWithContentReference } =
-                matita.getSelectionRangeAnchorAndFocusPointWithContentReferences(selectionRange);
-              const newPointWithContentReference = matita.getIsSelectionRangeAnchorAfterFocus(stateControl.stateView.document, selectionRange)
-                ? focusPointWithContentReference
-                : anchorPointWithContentReference;
-              const rangeId = matita.generateId();
-              if (matita.isParagraphPoint(newPointWithContentReference.point)) {
-                const cursorWrapped = documentRenderControl.isParagraphPointAtWrappedLineWrapPoint(newPointWithContentReference.point);
-                if (cursorWrapped) {
-                  cursorWrappedIds.push(selectionRange.id);
-                }
-                return matita.makeSelectionRange(
-                  [
-                    matita.makeRange(
-                      newPointWithContentReference.contentReference,
-                      newPointWithContentReference.point,
-                      newPointWithContentReference.point,
-                      rangeId,
-                    ),
-                  ],
-                  rangeId,
-                  rangeId,
-                  selectionRange.intention,
-                  cursorWrapped ? { ...selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : selectionRange.data,
-                  selectionRange.id,
-                );
-              }
-              return matita.makeSelectionRange(
-                [
-                  matita.makeRange(
-                    newPointWithContentReference.contentReference,
-                    newPointWithContentReference.point,
-                    newPointWithContentReference.point,
-                    rangeId,
-                  ),
-                ],
-                rangeId,
-                rangeId,
-                selectionRange.intention,
-                selectionRange.data,
-                selectionRange.id,
-              );
-            }
-            let cursorWrapped: boolean | undefined;
-            const newRanges = selectionRange.ranges.flatMap((range) => {
-              if (range.id !== selectionRange.focusRangeId) {
-                return [];
-              }
-              const focusPoint = matita.getFocusPointFromRange(range);
-              const { contentReference, point } = pointTransformFn(
-                stateControl.stateView.document,
-                stateControl.stateControlConfig,
-                selectionRange.intention,
-                range,
-                focusPoint,
-                selectionRange,
-              );
-              matita.assertIsParagraphPoint(point);
-              const isWrapped = documentRenderControl.isParagraphPointAtWrappedLineWrapPoint(point);
-              cursorWrapped = isWrapped;
-              return [matita.makeRange(contentReference, point, point, range.id)];
-            });
-            assertIsNotNullish(cursorWrapped);
-            if (cursorWrapped) {
-              cursorWrappedIds.push(selectionRange.id);
-            }
-            return matita.makeSelectionRange(
-              newRanges,
-              selectionRange.focusRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              cursorWrapped ? { ...selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : selectionRange.data,
-              selectionRange.id,
-            );
-          },
-        );
-        stateControl.delta.setSelection(
-          newSelection,
-          undefined,
-          cursorWrappedIds.length === 0 ? undefined : { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds },
-        );
-      });
+      stateControl.queueUpdate(
+        makeVirtualizedMoveSelectionBackwardsByPointTransformFnThroughFocusPointUpdateFn(
+          documentRenderControl,
+          (document, _stateControlConfig, selectionRange) =>
+            shouldCollapseSelectionRangeInTextCommand(document, selectionRange) ? collapseSelectionRangeBackwards(document, selectionRange) : false,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
+        ),
+      );
     },
   },
   [StandardCommand.MoveSelectionWordBackwards]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      const pointTransformFn = matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous);
-      stateControl.queueUpdate(() => {
-        const cursorWrappedIds: string[] = [];
-        const newSelection = matita.transformSelectionByTransformingSelectionRanges(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
-          (selectionRange) => {
-            let cursorWrapped: boolean | undefined;
-            const newRanges = selectionRange.ranges.flatMap((range) => {
-              if (range.id !== selectionRange.focusRangeId) {
-                return [];
-              }
-              const focusPoint = matita.getFocusPointFromRange(range);
-              const { contentReference, point } = pointTransformFn(
-                stateControl.stateView.document,
-                stateControl.stateControlConfig,
-                selectionRange.intention,
-                range,
-                focusPoint,
-                selectionRange,
-              );
-              matita.assertIsParagraphPoint(point);
-              const isWrapped = documentRenderControl.isParagraphPointAtWrappedLineWrapPoint(point);
-              cursorWrapped = isWrapped;
-              return [matita.makeRange(contentReference, point, point, range.id)];
-            });
-            assertIsNotNullish(cursorWrapped);
-            if (cursorWrapped) {
-              cursorWrappedIds.push(selectionRange.id);
-            }
-            return matita.makeSelectionRange(
-              newRanges,
-              selectionRange.focusRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              cursorWrapped ? { ...selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : selectionRange.data,
-              selectionRange.id,
-            );
-          },
-        );
-        stateControl.delta.setSelection(
-          newSelection,
-          undefined,
-          cursorWrappedIds.length === 0 ? undefined : { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds },
-        );
-      });
+      stateControl.queueUpdate(
+        makeVirtualizedMoveSelectionBackwardsByPointTransformFnThroughFocusPointUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => false,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionGraphemeBackwards]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionBackwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionWordBackwards]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionBackwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionParagraphBackwards]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionBackwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionParagraphStart]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionBackwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.PreviousBoundByEdge),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionGraphemeForwards]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Next),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionWordForwards]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionParagraphForwards]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionParagraphEnd]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.NextBoundByEdge),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionStartOfDocument]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Previous),
+        ),
+      );
+    },
+  },
+  [StandardCommand.ExtendSelectionEndOfDocument]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
+          (_document, _stateControlConfig, _selectionRange) => true,
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Next),
+        ),
+      );
     },
   },
   [StandardCommand.MoveSelectionSoftLineStart]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(() => {
-        const movedSelection = matita.moveSelectionByPointTransformFnThroughFocusPoint(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
+      stateControl.queueUpdate(
+        makeVirtualizedMoveSelectionBackwardsByPointTransformFnThroughFocusPointUpdateFn(
+          documentRenderControl,
           (_document, _stateControlConfig, _selectionRange) => false,
-          documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Previous),
-        );
-        const cursorWrappedIds = stateControl.stateView.selection.selectionRanges.map((selectionRange) => selectionRange.id);
-        stateControl.delta.setSelection(
-          matita.makeSelection(
-            movedSelection.selectionRanges.map((selectionRange) =>
-              matita.makeSelectionRange(
-                selectionRange.ranges,
-                selectionRange.anchorRangeId,
-                selectionRange.focusRangeId,
-                selectionRange.intention,
-                { ...selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true },
-                selectionRange.id,
-              ),
-            ),
-          ),
-          undefined,
-          { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds },
-        );
-      });
+          documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Previous),
+        ),
+      );
     },
   },
   [StandardCommand.MoveSelectionSoftLineEnd]: {
@@ -2727,7 +3129,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
         matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
           stateControl,
           (_document, _stateControlConfig, _selectionRange) => false,
-          documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
+          documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Next),
         ),
       );
     },
@@ -2735,298 +3137,35 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.MoveSelectionSoftLineDown]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Next);
-      stateControl.queueUpdate(() => {
-        if (stateControl.stateView.selection.selectionRanges.length === 0) {
-          return;
-        }
-        const cursorWrappedIds: string[] = [];
-        const newSelection = matita.transformSelectionByTransformingSelectionRanges(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
-          (selectionRange) => {
-            if (matita.getIsSelectionRangeAnchorAfterFocus(stateControl.stateView.document, selectionRange)) {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-              let cursorOffsetLeft = selectionRange.data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft] as number | undefined;
-              let cursorDidFindVerticalPlacement: boolean | undefined;
-              let cursorWrapped: boolean | undefined;
-              const newRanges = selectionRange.ranges.flatMap((range) => {
-                if (range.id !== selectionRange.anchorRangeId) {
-                  return [];
-                }
-                const anchorPoint = matita.getAnchorPointFromRange(range);
-                const {
-                  pointWithContentReference: { contentReference, point },
-                  offsetLeft,
-                  didFindVerticalPlacement,
-                  isWrappedLineStart,
-                } = pointTransformFn(selectionRange.intention, range, anchorPoint, selectionRange, cursorOffsetLeft);
-                if (cursorOffsetLeft === undefined) {
-                  cursorOffsetLeft = offsetLeft;
-                }
-                cursorDidFindVerticalPlacement = didFindVerticalPlacement;
-                cursorWrapped = !!isWrappedLineStart;
-                return [matita.makeRange(contentReference, point, point, range.id)];
-              });
-              assertIsNotNullish(cursorOffsetLeft);
-              assertIsNotNullish(cursorDidFindVerticalPlacement);
-              assertIsNotNullish(cursorWrapped);
-              if (cursorWrapped) {
-                cursorWrappedIds.push(selectionRange.id);
-              }
-              return matita.makeSelectionRange(
-                newRanges,
-                selectionRange.anchorRangeId,
-                selectionRange.anchorRangeId,
-                selectionRange.intention,
-                Object.assign(
-                  {},
-                  cursorDidFindVerticalPlacement
-                    ? {
-                        ...selectionRange.data,
-                        [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]: cursorOffsetLeft,
-                      }
-                    : omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-                  cursorWrapped ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
-                ),
-                selectionRange.id,
-              );
-            }
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            let cursorOffsetLeft = selectionRange.data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft] as number | undefined;
-            let cursorDidFindVerticalPlacement: boolean | undefined;
-            let cursorWrapped: boolean | undefined;
-            const newRanges = selectionRange.ranges.flatMap((range) => {
-              if (range.id !== selectionRange.focusRangeId) {
-                return [];
-              }
-              const focusPoint = matita.getFocusPointFromRange(range);
-              const {
-                pointWithContentReference: { contentReference, point },
-                offsetLeft,
-                didFindVerticalPlacement,
-                isWrappedLineStart,
-              } = pointTransformFn(selectionRange.intention, range, focusPoint, selectionRange, cursorOffsetLeft);
-              if (cursorOffsetLeft === undefined) {
-                cursorOffsetLeft = offsetLeft;
-              }
-              cursorDidFindVerticalPlacement = didFindVerticalPlacement;
-              cursorWrapped = !!isWrappedLineStart;
-              return [matita.makeRange(contentReference, point, point, range.id)];
-            });
-            assertIsNotNullish(cursorOffsetLeft);
-            assertIsNotNullish(cursorDidFindVerticalPlacement);
-            assertIsNotNullish(cursorWrapped);
-            if (cursorWrapped) {
-              cursorWrappedIds.push(selectionRange.id);
-            }
-            return matita.makeSelectionRange(
-              newRanges,
-              selectionRange.focusRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              Object.assign(
-                {},
-                cursorDidFindVerticalPlacement
-                  ? {
-                      ...selectionRange.data,
-                      [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]: cursorOffsetLeft,
-                    }
-                  : omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-                cursorWrapped ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
-              ),
-              selectionRange.id,
-            );
-          },
-        );
-        stateControl.delta.setSelection(newSelection, undefined, {
-          [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]: true,
-          [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds.length > 0 ? cursorWrappedIds : undefined,
-        });
-      });
+      stateControl.queueUpdate(makeVirtualizedMoveSelectionSoftLineUpDownUpdateFn(documentRenderControl, matita.PointMovement.Next));
     },
   },
   [StandardCommand.MoveSelectionSoftLineUp]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Previous);
-      stateControl.queueUpdate(() => {
-        if (stateControl.stateView.selection.selectionRanges.length === 0) {
-          return;
-        }
-        const cursorWrappedIds: string[] = [];
-        const newSelection = matita.transformSelectionByTransformingSelectionRanges(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
-          (selectionRange) => {
-            if (!matita.getIsSelectionRangeAnchorAfterFocus(stateControl.stateView.document, selectionRange)) {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-              let cursorOffsetLeft = selectionRange.data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft] as number | undefined;
-              let cursorDidFindVerticalPlacement: boolean | undefined;
-              let cursorWrapped: boolean | undefined;
-              const newRanges = selectionRange.ranges.flatMap((range) => {
-                if (range.id !== selectionRange.anchorRangeId) {
-                  return [];
-                }
-                const anchorPoint = matita.getAnchorPointFromRange(range);
-                const {
-                  pointWithContentReference: { contentReference, point },
-                  offsetLeft,
-                  didFindVerticalPlacement,
-                  isWrappedLineStart,
-                } = pointTransformFn(selectionRange.intention, range, anchorPoint, selectionRange, cursorOffsetLeft);
-                if (cursorOffsetLeft === undefined) {
-                  cursorOffsetLeft = offsetLeft;
-                }
-                cursorDidFindVerticalPlacement = didFindVerticalPlacement;
-                cursorWrapped = !!isWrappedLineStart;
-                return [matita.makeRange(contentReference, point, point, range.id)];
-              });
-              assertIsNotNullish(cursorOffsetLeft);
-              assertIsNotNullish(cursorDidFindVerticalPlacement);
-              assertIsNotNullish(cursorWrapped);
-              if (cursorWrapped) {
-                cursorWrappedIds.push(selectionRange.id);
-              }
-              return matita.makeSelectionRange(
-                newRanges,
-                selectionRange.anchorRangeId,
-                selectionRange.anchorRangeId,
-                selectionRange.intention,
-                Object.assign(
-                  {},
-                  cursorDidFindVerticalPlacement
-                    ? {
-                        ...selectionRange.data,
-                        [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]: cursorOffsetLeft,
-                      }
-                    : omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-                  cursorWrapped ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
-                ),
-                selectionRange.id,
-              );
-            }
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            let cursorOffsetLeft = selectionRange.data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft] as number | undefined;
-            let cursorDidFindVerticalPlacement: boolean | undefined;
-            let cursorWrapped: boolean | undefined;
-            const newRanges = selectionRange.ranges.flatMap((range) => {
-              if (range.id !== selectionRange.focusRangeId) {
-                return [];
-              }
-              const focusPoint = matita.getFocusPointFromRange(range);
-              const {
-                pointWithContentReference: { contentReference, point },
-                offsetLeft,
-                didFindVerticalPlacement,
-                isWrappedLineStart,
-              } = pointTransformFn(selectionRange.intention, range, focusPoint, selectionRange, cursorOffsetLeft);
-              if (cursorOffsetLeft === undefined) {
-                cursorOffsetLeft = offsetLeft;
-              }
-              cursorDidFindVerticalPlacement = didFindVerticalPlacement;
-              cursorWrapped = !!isWrappedLineStart;
-              return [matita.makeRange(contentReference, point, point, range.id)];
-            });
-            assertIsNotNullish(cursorOffsetLeft);
-            assertIsNotNullish(cursorDidFindVerticalPlacement);
-            assertIsNotNullish(cursorWrapped);
-            if (cursorWrapped) {
-              cursorWrappedIds.push(selectionRange.id);
-            }
-            return matita.makeSelectionRange(
-              newRanges,
-              selectionRange.focusRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              Object.assign(
-                {},
-                cursorDidFindVerticalPlacement
-                  ? {
-                      ...selectionRange.data,
-                      [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]: cursorOffsetLeft,
-                    }
-                  : omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-                cursorWrapped ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
-              ),
-              selectionRange.id,
-            );
-          },
-        );
-        stateControl.delta.setSelection(newSelection, undefined, {
-          [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]: true,
-          [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds.length > 0 ? cursorWrappedIds : undefined,
-        });
-      });
-    },
-  },
-  [StandardCommand.MoveSelectionStartOfPage]: {
-    execute(stateControl, viewControl): void {
-      const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(
-        matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
-          stateControl,
-          (_document, _stateControlConfig, _selectionRange) => false,
-          documentRenderControl.makePagePointTransformFn(matita.PointMovement.Previous),
-        ),
-      );
-    },
-  },
-  [StandardCommand.MoveSelectionEndOfPage]: {
-    execute(stateControl, viewControl): void {
-      const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(
-        matita.makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn(
-          stateControl,
-          (_document, _stateControlConfig, _selectionRange) => false,
-          documentRenderControl.makePagePointTransformFn(matita.PointMovement.Previous),
-        ),
-      );
+      stateControl.queueUpdate(makeVirtualizedMoveSelectionSoftLineUpDownUpdateFn(documentRenderControl, matita.PointMovement.Previous));
     },
   },
   [StandardCommand.ExtendSelectionSoftLineStart]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(() => {
-        const movedSelection = matita.extendSelectionByPointTransformFns(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
+      stateControl.queueUpdate(
+        makeVirtualizedExtendSelectionBackwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
-          documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Previous),
-        );
-        const cursorWrappedIds = stateControl.stateView.selection.selectionRanges.map((selectionRange) => selectionRange.id);
-        stateControl.delta.setSelection(
-          matita.makeSelection(
-            movedSelection.selectionRanges.map((selectionRange) =>
-              matita.makeSelectionRange(
-                selectionRange.ranges,
-                selectionRange.anchorRangeId,
-                selectionRange.focusRangeId,
-                selectionRange.intention,
-                { ...selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true },
-                selectionRange.id,
-              ),
-            ),
-          ),
-          undefined,
-          { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds },
-        );
-      });
+          documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Previous),
+        ),
+      );
     },
   },
   [StandardCommand.ExtendSelectionSoftLineEnd]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
-        matita.makeExtendSelectionByPointTransformFnsUpdateFn(
-          stateControl,
+        makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
+          documentRenderControl,
           (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
-          documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
+          documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Next),
         ),
       );
     },
@@ -3034,173 +3173,13 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.ExtendSelectionSoftLineDown]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Next);
-      stateControl.queueUpdate(() => {
-        if (stateControl.stateView.selection.selectionRanges.length === 0) {
-          return;
-        }
-        const cursorWrappedIds: string[] = [];
-        const newSelection = matita.transformSelectionByTransformingSelectionRanges(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
-          (selectionRange) => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            let cursorOffsetLeft = selectionRange.data[VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft] as number | undefined;
-            let cursorDidFindVerticalPlacement: boolean | undefined;
-            let cursorWrapped: boolean | undefined;
-            const newRanges = selectionRange.ranges.flatMap((range) => {
-              if (range.id !== selectionRange.focusRangeId) {
-                if (range.id === selectionRange.anchorRangeId) {
-                  return [range];
-                }
-                return [];
-              }
-              const focusPoint = matita.getFocusPointFromRange(range);
-              const {
-                pointWithContentReference: { contentReference, point },
-                offsetLeft,
-                didFindVerticalPlacement,
-                isWrappedLineStart,
-              } = pointTransformFn(selectionRange.intention, range, focusPoint, selectionRange, cursorOffsetLeft);
-              if (cursorOffsetLeft === undefined) {
-                cursorOffsetLeft = offsetLeft;
-              }
-              cursorDidFindVerticalPlacement = didFindVerticalPlacement;
-              cursorWrapped = !!isWrappedLineStart;
-              return [
-                matita.makeRange(contentReference, range.id === selectionRange.anchorRangeId ? matita.getAnchorPointFromRange(range) : point, point, range.id),
-              ];
-            });
-            assertIsNotNullish(cursorOffsetLeft);
-            assertIsNotNullish(cursorDidFindVerticalPlacement);
-            assertIsNotNullish(cursorWrapped);
-            if (cursorWrapped) {
-              cursorWrappedIds.push(selectionRange.id);
-            }
-            return matita.makeSelectionRange(
-              newRanges,
-              selectionRange.anchorRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              Object.assign(
-                {},
-                cursorDidFindVerticalPlacement
-                  ? {
-                      ...selectionRange.data,
-                      [VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft]: cursorOffsetLeft,
-                    }
-                  : omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-                cursorWrapped ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
-              ),
-              selectionRange.id,
-            );
-          },
-        );
-        stateControl.delta.setSelection(newSelection, undefined, {
-          [VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft]: true,
-          [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds.length > 0 ? cursorWrappedIds : undefined,
-        });
-      });
+      stateControl.queueUpdate(makeVirtualizedExtendSelectionSoftLineUpDownUpdateFn(documentRenderControl, matita.PointMovement.Next));
     },
   },
   [StandardCommand.ExtendSelectionSoftLineUp]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      const pointTransformFn = documentRenderControl.makeSoftLineUpDownPointTransformFnWithOffsetLeft(matita.PointMovement.Previous);
-      stateControl.queueUpdate(() => {
-        if (stateControl.stateView.selection.selectionRanges.length === 0) {
-          return;
-        }
-        const cursorWrappedIds: string[] = [];
-        const newSelection = matita.transformSelectionByTransformingSelectionRanges(
-          stateControl.stateView.document,
-          stateControl.stateControlConfig,
-          stateControl.stateView.selection,
-          (selectionRange) => {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            let cursorOffsetLeft = selectionRange.data[VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft] as number | undefined;
-            let cursorDidFindVerticalPlacement: boolean | undefined;
-            let cursorWrapped: boolean | undefined;
-            const newRanges = selectionRange.ranges.flatMap((range) => {
-              if (range.id !== selectionRange.focusRangeId) {
-                if (range.id === selectionRange.anchorRangeId) {
-                  return [range];
-                }
-                return [];
-              }
-              const focusPoint = matita.getFocusPointFromRange(range);
-              const {
-                pointWithContentReference: { contentReference, point },
-                offsetLeft,
-                didFindVerticalPlacement,
-                isWrappedLineStart,
-              } = pointTransformFn(selectionRange.intention, range, focusPoint, selectionRange, cursorOffsetLeft);
-              if (cursorOffsetLeft === undefined) {
-                cursorOffsetLeft = offsetLeft;
-              }
-              cursorDidFindVerticalPlacement = didFindVerticalPlacement;
-              cursorWrapped = !!isWrappedLineStart;
-              return [
-                matita.makeRange(contentReference, range.id === selectionRange.anchorRangeId ? matita.getAnchorPointFromRange(range) : point, point, range.id),
-              ];
-            });
-            assertIsNotNullish(cursorOffsetLeft);
-            assertIsNotNullish(cursorDidFindVerticalPlacement);
-            assertIsNotNullish(cursorWrapped);
-            if (cursorWrapped) {
-              cursorWrappedIds.push(selectionRange.id);
-            }
-            return matita.makeSelectionRange(
-              newRanges,
-              selectionRange.anchorRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              Object.assign(
-                {},
-                cursorDidFindVerticalPlacement
-                  ? {
-                      ...selectionRange.data,
-                      [VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft]: cursorOffsetLeft,
-                    }
-                  : omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-                cursorWrapped ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
-              ),
-              selectionRange.id,
-            );
-          },
-        );
-        stateControl.delta.setSelection(newSelection, undefined, {
-          [VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft]: true,
-          [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: cursorWrappedIds.length > 0 ? cursorWrappedIds : undefined,
-        });
-      });
-    },
-  },
-  [StandardCommand.ExtendSelectionStartOfPage]: {
-    execute(stateControl, viewControl): void {
-      const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(
-        matita.makeExtendSelectionByPointTransformFnsUpdateFn(
-          stateControl,
-          (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
-          documentRenderControl.makePagePointTransformFn(matita.PointMovement.Previous),
-        ),
-      );
-    },
-  },
-  [StandardCommand.ExtendSelectionEndOfPage]: {
-    execute(stateControl, viewControl): void {
-      const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(
-        matita.makeExtendSelectionByPointTransformFnsUpdateFn(
-          stateControl,
-          (_document, _stateControlConfig, _selectionRange) => true,
-          matita.noopPointTransformFn,
-          documentRenderControl.makePagePointTransformFn(matita.PointMovement.Next),
-        ),
-      );
+      stateControl.queueUpdate(makeVirtualizedExtendSelectionSoftLineUpDownUpdateFn(documentRenderControl, matita.PointMovement.Previous));
     },
   },
   [StandardCommand.RemoveSelectionSoftLineStart]: {
@@ -3211,8 +3190,8 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           stateControl,
           (document, _stateControlConfig, selectionRange) =>
             !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) || matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
-          matita.noopPointTransformFn,
-          documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Previous),
+          undefined,
+          documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Previous),
         ),
       );
     },
@@ -3225,13 +3204,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           stateControl,
           (document, _stateControlConfig, selectionRange) =>
             !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) || !matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
-          matita.noopPointTransformFn,
-          documentRenderControl.makeSoftLineStartEndPointTransformFn(matita.PointMovement.Next),
+          undefined,
+          documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Next),
         ),
       );
     },
   },
-  // TODO.
   [StandardCommand.OpenSearch]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
@@ -3408,6 +3386,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       const { insertText } = data;
       const lineTexts = insertText.split(/\r?\n/g).map((line) => line.replaceAll('\r', ''));
       const getContentFragmentFromSelectionRange = (
+        customCollapsedSelectionTextConfig: TextConfig | null,
         selectionRange: matita.SelectionRange,
       ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
         return matita.makeContentFragment(
@@ -3419,11 +3398,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
                   ? []
                   : [
                       matita.makeText(
-                        getInsertTextConfigAtSelectionRange(
-                          stateControl.stateView.document,
-                          stateControl.stateView.customCollapsedSelectionTextConfig,
-                          selectionRange,
-                        ),
+                        getInsertTextConfigAtSelectionRange(stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
                         lineText,
                       ),
                     ],
@@ -3435,7 +3410,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       };
       stateControl.queueUpdate(
         () => {
-          stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, getContentFragmentFromSelectionRange));
+          const { customCollapsedSelectionTextConfig } = stateControl.stateView;
+          stateControl.delta.applyUpdate(
+            matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, (selectionRange) =>
+              getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+            ),
+          );
         },
         { [matita.RedoUndoUpdateKey.InsertText]: true },
       );
@@ -3446,6 +3426,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       const { pasteText } = data;
       const lineTexts = pasteText.split(/\r?\n/g).map((line) => line.replaceAll('\r', ''));
       const getContentFragmentFromSelectionRange = (
+        customCollapsedSelectionTextConfig: TextConfig | null,
         selectionRange: matita.SelectionRange,
       ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
         return matita.makeContentFragment(
@@ -3457,11 +3438,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
                   ? []
                   : [
                       matita.makeText(
-                        getInsertTextConfigAtSelectionRange(
-                          stateControl.stateView.document,
-                          stateControl.stateView.customCollapsedSelectionTextConfig,
-                          selectionRange,
-                        ),
+                        getInsertTextConfigAtSelectionRange(stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
                         lineText,
                       ),
                     ],
@@ -3471,9 +3448,17 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           ),
         );
       };
-      stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, getContentFragmentFromSelectionRange));
-      });
+      stateControl.queueUpdate(
+        () => {
+          const { customCollapsedSelectionTextConfig } = stateControl.stateView;
+          stateControl.delta.applyUpdate(
+            matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, (selectionRange) =>
+              getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+            ),
+          );
+        },
+        { [matita.RedoUndoUpdateKey.InsertText]: true },
+      );
     },
   },
   [StandardCommand.InsertDroppedPlainText]: {
@@ -3481,6 +3466,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       const { dropText } = data;
       const lineTexts = dropText.split(/\r?\n/g).map((line) => line.replaceAll('\r', ''));
       const getContentFragmentFromSelectionRange = (
+        customCollapsedSelectionTextConfig: TextConfig | null,
         selectionRange: matita.SelectionRange,
       ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
         return matita.makeContentFragment(
@@ -3492,11 +3478,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
                   ? []
                   : [
                       matita.makeText(
-                        getInsertTextConfigAtSelectionRange(
-                          stateControl.stateView.document,
-                          stateControl.stateView.customCollapsedSelectionTextConfig,
-                          selectionRange,
-                        ),
+                        getInsertTextConfigAtSelectionRange(stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
                         lineText,
                       ),
                     ],
@@ -3506,9 +3488,17 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           ),
         );
       };
-      stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, getContentFragmentFromSelectionRange));
-      });
+      stateControl.queueUpdate(
+        () => {
+          const { customCollapsedSelectionTextConfig } = stateControl.stateView;
+          stateControl.delta.applyUpdate(
+            matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, (selectionRange) =>
+              getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+            ),
+          );
+        },
+        { [matita.RedoUndoUpdateKey.InsertText]: true },
+      );
     },
   },
   [StandardCommand.InsertLineBreak]: {
@@ -4341,6 +4331,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     ];
     dragElements.forEach((element) => {
       element.classList.add('hidden-selection');
+      element.style.userSelect = 'none';
       element.style.cursor = 'text';
       pipe(
         fromReactiveValue<[PointerEvent]>((callback, disposable) => addEventListener(element, 'pointerdown', callback, disposable)),
@@ -4455,7 +4446,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               left: pointerEvent.x,
               top: pointerEvent.y,
             };
-            const position = this.#calculatePositionFromViewPosition(viewPosition);
+            const position = this.#calculatePositionFromViewPosition(viewPosition, false);
             if (!dragState && !position) {
               return;
             }
@@ -4537,7 +4528,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   left: pointerEvent.x,
                   top: pointerEvent.y,
                 };
-                const position = this.#calculatePositionFromViewPosition(viewPosition);
+                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold);
                 queueSelectionUpdate(
                   position && {
                     position,
@@ -4589,6 +4580,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 return null;
               }
               const originalIsWrappedLineStart = (endPointInfo ?? dragState.lastPointInfo).position.isWrappedLineStart;
+              const originalIsWrappedLinePreviousEnd = (endPointInfo ?? dragState.lastPointInfo).position.isWrappedLinePreviousEnd;
               endPointInfo = null;
               let extendedSelectionRangeIdMaybe: Maybe<string>;
               if (dragState.isExtendSelection && transformedBeforeSelection.selectionRanges.length > 0) {
@@ -4608,9 +4600,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   selectionRangeToExtend = matita.getAnchorSelectionRangeFromSelection(transformedBeforeSelection);
                   assertIsNotNullish(selectionRangeToExtend);
                 }
-                const anchorRangeId = selectionRangeToExtend.anchorRangeId;
-                const anchorRange = selectionRangeToExtend.ranges.find((range) => range.id === anchorRangeId);
-                assertIsNotNullish(anchorRange);
+                const anchorRange = matita.getAnchorRangeFromSelectionRange(selectionRangeToExtend);
                 originalStartPointWithContentReference = {
                   contentReference: anchorRange.contentReference,
                   point: matita.getAnchorPointFromRange(anchorRange),
@@ -4754,11 +4744,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   ) {
                     isBackward = false;
                   }
-                  isWrappedLineStart =
-                    originalIsWrappedLineStart &&
-                    (isBackward
+                  isWrappedLineStart = originalIsWrappedLineStart
+                    ? isBackward
                       ? matita.arePointWithContentReferencesEqual(originalFirstPointWithContentReference, firstPointWithContentReference)
-                      : matita.arePointWithContentReferencesEqual(originalSecondPointWithContentReference, secondPointWithContentReference));
+                      : matita.arePointWithContentReferencesEqual(originalSecondPointWithContentReference, secondPointWithContentReference)
+                    : isBackward && !originalIsWrappedLinePreviousEnd;
                 } else {
                   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
                   if (dragState.selectionType !== 'paragraph') {
@@ -4833,7 +4823,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 matita.SelectionRangeIntention.Text,
                 Object.assign(
                   {},
-                  isWrappedLineStart ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: true } : undefined,
+                  isWrappedLineStart
+                    ? {
+                        [VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId]:
+                          makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(this.makeActivatedSelectionSecondaryDataExpirationId()),
+                      }
+                    : undefined,
                   isSome(dragState.separateSelectionId) ? { [SeparateSelectionIdKey]: dragState.separateSelectionId.value } : undefined,
                 ),
                 isSome(extendedSelectionRangeIdMaybe) ? extendedSelectionRangeIdMaybe.value : matita.generateId(),
@@ -4883,14 +4878,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   endPointInfo = null;
                   return;
                 }
+                let selectionChangeData: matita.SelectionChangeData | undefined;
                 const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(newSelection);
-                this.stateControl.delta.setSelection(
-                  newSelection,
-                  undefined,
-                  focusSelectionRange?.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]
-                    ? { [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]: [focusSelectionRange.id] }
-                    : undefined,
-                );
+                if (focusSelectionRange !== null) {
+                  const lineWrapFocusCursorWrapToNextLineDataValue = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
+                    focusSelectionRange.data,
+                  );
+                  if (
+                    lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
+                    this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId)
+                  ) {
+                    selectionChangeData = {
+                      [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+                        makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue([focusSelectionRange.id]),
+                    };
+                  }
+                }
+                this.stateControl.delta.setSelection(newSelection, undefined, selectionChangeData);
                 endPointInfo = null;
               });
             };
@@ -4932,7 +4936,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   top: pointerEvent.y,
                 };
                 dragState.lastViewPosition = viewPosition;
-                const position = this.#calculatePositionFromViewPosition(viewPosition);
+                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold);
                 if (position) {
                   dragState.lastPointInfo = {
                     position,
@@ -5581,8 +5585,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (!focusSelectionRange || focusSelectionRange.ranges.length > 1) {
       return null;
     }
-    const focusRange = focusSelectionRange.ranges.find((range) => range.id === focusSelectionRange.focusRangeId);
-    assertIsNotNullish(focusRange);
+    const focusRange = matita.getFocusRangeFromSelectionRange(focusSelectionRange);
     return this.#getNearestWordToRangeInSelectionRangeIfCollapsedElseFocusSelectionRangeText(focusRange, focusSelectionRange);
   }
   selectAllInstancesOfWord(): matita.RunUpdateFn {
@@ -5742,121 +5745,194 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     // TODO.
     this.#replaceViewSelectionRanges(true);
   }
-  makePagePointTransformFn(
-    pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
-  ): matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
-    return (document, _stateControlConfig, _selectionRangeIntention, _range, _point) => {
-      // TODO: Use viewport coordinates?
-      const paragraphReferences = matita
-        .accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference)
-        .blockIds.toArray()
-        .map(matita.makeBlockReferenceFromBlockId);
-      const { visibleTop, visibleBottom } = this.#getVisibleTopAndBottom();
-      if (pointMovement === matita.PointMovement.Previous) {
-        const startIndex = Math.max(0, indexOfNearestLessThan(paragraphReferences, visibleTop, this.#compareParagraphTopToOffsetTop.bind(this)) - 1);
-        const startParagraphReference = paragraphReferences[startIndex];
-        return {
-          contentReference: matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(document, startParagraphReference)),
-          point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(startParagraphReference, 0),
-        };
-      }
-      const endIndex = Math.min(
-        paragraphReferences.length - 1,
-        indexOfNearestLessThan(paragraphReferences, visibleBottom, this.#compareParagraphTopToOffsetTop.bind(this)) + 1,
-      );
-      const endParagraphReference = paragraphReferences[endIndex];
-      return {
-        contentReference: matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(document, endParagraphReference)),
-        point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(endParagraphReference, 0),
-      };
-    };
-  }
-  makeSoftLineStartEndPointTransformFn(
+  makeSoftLineStartEndFocusPointTransformFn(
     pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
   ): matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
     return (document, _stateControlConfig, _selectionRangeIntention, range, point, selectionRange) => {
-      const isLineWrapToNextLine = !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine];
       if (point.type !== matita.PointType.Paragraph) {
         return {
           contentReference: range.contentReference,
           point,
         };
       }
-      const paragraph = matita.accessParagraphFromParagraphPoint(document, point);
+      const lineWrapFocusCursorWrapToNextLineDataValue = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+      const isLineWrapToNextLine =
+        lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
+        this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId) &&
+        this.isParagraphPointAtWrappedLineWrapPoint(point);
       const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
-      const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
-      for (let i = 0; i < paragraphMeasurement.measuredParagraphLineRanges.length; i++) {
-        const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[i];
-        if (
-          measuredParagraphLineRange.startOffset <= point.offset &&
-          point.offset <= measuredParagraphLineRange.endOffset &&
-          !(point.offset === measuredParagraphLineRange.endOffset && isLineWrapToNextLine && i !== paragraphMeasurement.measuredParagraphLineRanges.length - 1)
-        ) {
-          const newPoint = matita.changeParagraphPointOffset(
-            point,
-            pointMovement === matita.PointMovement.Previous ? measuredParagraphLineRange.startOffset : measuredParagraphLineRange.endOffset,
-          );
-          return {
-            contentReference: range.contentReference,
-            point: newPoint,
-          };
-        }
-      }
+      const { relativeParagraphMeasurement } = this.#getRelativeParagraphMeasurementAtParagraphReference(paragraphReference);
+      const measuredParagraphLineRangeIndex = this.#getIndexOfMeasuredParagraphLineRangeInParagraphMeasurementAtParagraphPoint(
+        relativeParagraphMeasurement,
+        point,
+        isLineWrapToNextLine,
+      );
+      const measuredParagraphLineRange = relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex];
       return {
         contentReference: range.contentReference,
-        point: matita.changeParagraphPointOffset(point, pointMovement === matita.PointMovement.Previous ? 0 : matita.getParagraphLength(paragraph)),
+        point: matita.changeParagraphPointOffset(
+          point,
+          pointMovement === matita.PointMovement.Previous ? measuredParagraphLineRange.startOffset : measuredParagraphLineRange.endOffset,
+        ),
       };
     };
   }
-  makeSoftLineUpDownPointTransformFnWithOffsetLeft(
+  #getIndexOfMeasuredParagraphLineRangeInParagraphMeasurementAtParagraphPoint(
+    relativeParagraphMeasurement: RelativeParagraphMeasureCacheValue,
+    point: matita.ParagraphPoint,
+    isLineWrapToNextLine: boolean,
+  ): number {
+    for (let i = 0; i < relativeParagraphMeasurement.measuredParagraphLineRanges.length; i++) {
+      const measuredParagraphLineRange = relativeParagraphMeasurement.measuredParagraphLineRanges[i];
+      if (
+        measuredParagraphLineRange.startOffset <= point.offset &&
+        point.offset <= measuredParagraphLineRange.endOffset &&
+        !(
+          point.offset === measuredParagraphLineRange.endOffset &&
+          isLineWrapToNextLine &&
+          i !== relativeParagraphMeasurement.measuredParagraphLineRanges.length - 1
+        )
+      ) {
+        return i;
+      }
+    }
+    throwUnreachable();
+  }
+  transformPointSoftLineUpDownWithOffsetLeft(
     pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
-  ): (
     selectionRangeIntention: matita.SelectionRangeIntention,
     range: matita.Range,
     point: matita.Point,
     selectionRange: matita.SelectionRange,
-    overrideCursorOffsetLeft?: number,
-  ) => { pointWithContentReference: matita.PointWithContentReference; offsetLeft: number; didFindVerticalPlacement: boolean; isWrappedLineStart?: boolean } {
-    return (selectionRangeIntention, range, point, selectionRange, overrideCursorOffsetLeft) => {
-      const isLineWrapToNextLine = !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine];
-      const { document } = this.stateControl.stateView;
-      matita.assertIsParagraphPoint(point);
-      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(point, isLineWrapToNextLine);
-      for (let i = 0; i < 16; i++) {
-        const verticalDelta = (i + 1) * cursorPositionAndHeight.height;
-        const position = this.#calculatePositionFromViewPosition({
-          left: overrideCursorOffsetLeft ?? cursorPositionAndHeight.position.left,
-          top:
-            pointMovement === matita.PointMovement.Previous
-              ? cursorPositionAndHeight.position.top + cursorPositionAndHeight.height / 2 - verticalDelta
-              : cursorPositionAndHeight.position.top + cursorPositionAndHeight.height / 2 + verticalDelta,
-        });
-        if (!position) {
-          break;
-        }
-        if (
-          !matita.areContentReferencesAtSameContent(range.contentReference, position.pointWithContentReference.contentReference) ||
-          !matita.arePointsEqual(point, position.pointWithContentReference.point)
-        ) {
+    overrideCursorOffsetLeft: number | undefined,
+    isAnchor: boolean,
+  ): { pointWithContentReference: matita.PointWithContentReference; isWrappedLineStart: boolean; horizontalOffset: number } {
+    if (!matita.isParagraphPoint(point) || selectionRangeIntention === matita.SelectionRangeIntention.Block) {
+      throwUnreachable();
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    if (selectionRangeIntention !== matita.SelectionRangeIntention.Text) {
+      assertUnreachable(selectionRangeIntention);
+    }
+    const lineWrapFocusCursorWrapToNextLineDataValue = isAnchor
+      ? getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data)
+      : getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+    const isLineWrapToNextLine =
+      lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
+      this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId) &&
+      this.isParagraphPointAtWrappedLineWrapPoint(point);
+    const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
+    const paragraphMeasurement = this.#measureParagraphAtParagraphReference(paragraphReference);
+    const measuredParagraphLineRangeIndex = this.#getIndexOfMeasuredParagraphLineRangeInParagraphMeasurementAtParagraphPoint(
+      paragraphMeasurement,
+      point,
+      isLineWrapToNextLine,
+    );
+    const horizontalOffset =
+      overrideCursorOffsetLeft ?? this.#getCursorPositionAndHeightFromParagraphPointFillingLine(point, isLineWrapToNextLine).position.left;
+    if (pointMovement === matita.PointMovement.Previous) {
+      if (measuredParagraphLineRangeIndex === 0) {
+        const paragraphIndex = matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+        if (paragraphIndex === 0) {
           return {
-            pointWithContentReference: position.pointWithContentReference,
-            offsetLeft: cursorPositionAndHeight.position.left,
-            didFindVerticalPlacement: true,
-            isWrappedLineStart: position.isWrappedLineStart,
+            pointWithContentReference: {
+              contentReference: range.contentReference,
+              point: matita.changeParagraphPointOffset(point, 0),
+            },
+            isWrappedLineStart: false,
+            horizontalOffset,
           };
         }
+        const previousBlock = matita.accessBlockAtIndexInContentAtContentReference(
+          this.stateControl.stateView.document,
+          range.contentReference,
+          paragraphIndex - 1,
+        );
+        if (matita.isEmbed(previousBlock)) {
+          return {
+            pointWithContentReference: {
+              contentReference: range.contentReference,
+              point: matita.makeBlockPointFromBlock(previousBlock),
+            },
+            isWrappedLineStart: false,
+            horizontalOffset,
+          };
+        }
+        const previousParagraphReference = matita.makeBlockReferenceFromBlock(previousBlock);
+        const previousParagraphMeasurement = this.#measureParagraphAtParagraphReference(previousParagraphReference);
+        const position = this.#calculatePositionInRelativeParagraphMeasurementInParagraphReferenceAtMeasuredParagraphLineRangeIndexAtHorizontalOffset(
+          previousParagraphMeasurement,
+          previousParagraphReference,
+          previousParagraphMeasurement.measuredParagraphLineRanges.length - 1,
+          horizontalOffset,
+        );
+        return {
+          pointWithContentReference: position.pointWithContentReference,
+          isWrappedLineStart: position.isWrappedLineStart,
+          horizontalOffset,
+        };
       }
+      const position = this.#calculatePositionInRelativeParagraphMeasurementInParagraphReferenceAtMeasuredParagraphLineRangeIndexAtHorizontalOffset(
+        paragraphMeasurement,
+        paragraphReference,
+        measuredParagraphLineRangeIndex - 1,
+        horizontalOffset,
+      );
       return {
-        pointWithContentReference: {
-          contentReference: range.contentReference,
-          point: matita.changeParagraphPointOffset(
-            point,
-            pointMovement === matita.PointMovement.Previous ? 0 : matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(document, point)),
-          ),
-        },
-        offsetLeft: cursorPositionAndHeight.position.left,
-        didFindVerticalPlacement: false,
+        pointWithContentReference: position.pointWithContentReference,
+        isWrappedLineStart: position.isWrappedLineStart,
+        horizontalOffset,
       };
+    }
+    if (measuredParagraphLineRangeIndex === paragraphMeasurement.measuredParagraphLineRanges.length - 1) {
+      const paragraphIndex = matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+      if (paragraphIndex === matita.getNumberOfBlocksInContentAtContentReference(this.stateControl.stateView.document, range.contentReference) - 1) {
+        const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+        matita.assertIsParagraph(paragraph);
+        return {
+          pointWithContentReference: {
+            contentReference: range.contentReference,
+            point: matita.changeParagraphPointOffset(point, matita.getParagraphLength(paragraph)),
+          },
+          isWrappedLineStart: false,
+          horizontalOffset,
+        };
+      }
+      const nextBlock = matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, range.contentReference, paragraphIndex + 1);
+      if (matita.isEmbed(nextBlock)) {
+        return {
+          pointWithContentReference: {
+            contentReference: range.contentReference,
+            point: matita.makeBlockPointFromBlock(nextBlock),
+          },
+          isWrappedLineStart: false,
+          horizontalOffset,
+        };
+      }
+      const nextParagraphReference = matita.makeBlockReferenceFromBlock(nextBlock);
+      const nextParagraphMeasurement = this.#measureParagraphAtParagraphReference(nextParagraphReference);
+      const position = this.#calculatePositionInRelativeParagraphMeasurementInParagraphReferenceAtMeasuredParagraphLineRangeIndexAtHorizontalOffset(
+        nextParagraphMeasurement,
+        nextParagraphReference,
+        0,
+        horizontalOffset,
+      );
+      return {
+        pointWithContentReference: position.pointWithContentReference,
+        isWrappedLineStart: position.isWrappedLineStart,
+        horizontalOffset,
+      };
+    }
+    const position = this.#calculatePositionInRelativeParagraphMeasurementInParagraphReferenceAtMeasuredParagraphLineRangeIndexAtHorizontalOffset(
+      paragraphMeasurement,
+      paragraphReference,
+      measuredParagraphLineRangeIndex + 1,
+      horizontalOffset,
+    );
+    return {
+      pointWithContentReference: position.pointWithContentReference,
+      isWrappedLineStart: position.isWrappedLineStart,
+      horizontalOffset,
     };
   }
   #scrollSelectionIntoViewWhenFinishedUpdating = false;
@@ -5869,8 +5945,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #isInSearchBox(): boolean {
     return !!document.activeElement && this.#searchElementContainerElement.contains(document.activeElement);
   }
+  #activeSelectionSecondaryDataExpirationIds = new Set<number>();
+  #activeSelectionSecondaryDataExpirationIdCounter = 0;
+  makeActivatedSelectionSecondaryDataExpirationId(): number {
+    const id = this.#activeSelectionSecondaryDataExpirationIdCounter++;
+    this.#activeSelectionSecondaryDataExpirationIds.add(id);
+    return id;
+  }
+  isSelectionSecondaryDataExpirationIdActive(expirationId: number): boolean {
+    return this.#activeSelectionSecondaryDataExpirationIds.has(expirationId);
+  }
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
-    // TODO: Can't do this with multiple selectionChange$ listeners, change to using a map with selection range id as key.
     if (event.type !== PushType) {
       throwUnreachable();
     }
@@ -5901,107 +5986,48 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         });
       }
     }
-    if (data && !!data[VirtualizedDataKey.IgnoreRecursiveUpdate]) {
-      return;
-    }
-    let newSelection = this.stateControl.stateView.selection;
-    if (data && !!data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]) {
-      const cursorWrappedIds = data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine] as string[];
-      if (
-        newSelection.selectionRanges.some(
-          (selectionRange) => !cursorWrappedIds.includes(selectionRange.id) && !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
-        )
-      ) {
-        newSelection = matita.makeSelection(
-          newSelection.selectionRanges.map((selectionRange) =>
-            cursorWrappedIds.includes(selectionRange.id)
-              ? selectionRange
-              : matita.makeSelectionRange(
-                  selectionRange.ranges,
-                  selectionRange.anchorRangeId,
-                  selectionRange.focusRangeId,
-                  selectionRange.intention,
-                  omit(selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]),
-                  selectionRange.id,
-                ),
-          ),
-        );
-      }
-    } else if (newSelection.selectionRanges.some((selectionRange) => !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine])) {
-      newSelection = matita.makeSelection(
-        newSelection.selectionRanges.map((selectionRange) =>
-          matita.makeSelectionRange(
-            selectionRange.ranges,
-            selectionRange.anchorRangeId,
-            selectionRange.focusRangeId,
-            selectionRange.intention,
-            omit(selectionRange.data, [VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine]),
-            selectionRange.id,
-          ),
-        ),
+    const preserveSelectionSecondaryDataExpirationIds = new Set<number>();
+    if (data !== undefined) {
+      const preserveLineWrapFocusCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds = new Set(
+        getSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(data),
       );
-    }
-    if (data && !!data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]) {
-      if (
-        newSelection.selectionRanges.some(
-          (selectionRange) => selectionRange.data[VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft] !== undefined,
-        )
-      ) {
-        newSelection = matita.makeSelection(
-          newSelection.selectionRanges.map((selectionRange) =>
-            matita.makeSelectionRange(
-              selectionRange.ranges,
-              selectionRange.anchorRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              omit(selectionRange.data, [VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft]),
-              selectionRange.id,
-            ),
-          ),
-        );
+      for (let i = 0; i < this.stateControl.stateView.selection.selectionRanges.length; i++) {
+        const selectionRange = this.stateControl.stateView.selection.selectionRanges[i];
+        if (preserveLineWrapFocusCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.has(selectionRange.id)) {
+          const lineWrapSelectionRangeData = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+          if (lineWrapSelectionRangeData !== undefined) {
+            preserveSelectionSecondaryDataExpirationIds.add(lineWrapSelectionRangeData.expirationId);
+          }
+        }
       }
-    } else if (data && !!data[VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft]) {
-      if (
-        newSelection.selectionRanges.some((selectionRange) => selectionRange.data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft] !== undefined)
-      ) {
-        newSelection = matita.makeSelection(
-          newSelection.selectionRanges.map((selectionRange) =>
-            matita.makeSelectionRange(
-              selectionRange.ranges,
-              selectionRange.anchorRangeId,
-              selectionRange.focusRangeId,
-              selectionRange.intention,
-              omit(selectionRange.data, [VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft]),
-              selectionRange.id,
-            ),
-          ),
-        );
-      }
-    } else if (
-      newSelection.selectionRanges.some(
-        (selectionRange) =>
-          selectionRange.data[VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft] !== undefined ||
-          selectionRange.data[VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft] !== undefined,
-      )
-    ) {
-      newSelection = matita.makeSelection(
-        newSelection.selectionRanges.map((selectionRange) =>
-          matita.makeSelectionRange(
-            selectionRange.ranges,
-            selectionRange.anchorRangeId,
-            selectionRange.focusRangeId,
-            selectionRange.intention,
-            omit(selectionRange.data, [
-              VirtualizedDataKey.MoveSelectionSoftLineUpDownCursorOffsetLeft,
-              VirtualizedDataKey.ExtendSelectionSoftLineUpDownCursorOffsetLeft,
-            ]),
-            selectionRange.id,
-          ),
-        ),
+      const preserveLineWrapAnchorCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds = new Set(
+        getSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(data),
       );
+      for (let i = 0; i < this.stateControl.stateView.selection.selectionRanges.length; i++) {
+        const selectionRange = this.stateControl.stateView.selection.selectionRanges[i];
+        if (preserveLineWrapAnchorCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.has(selectionRange.id)) {
+          const lineWrapSelectionRangeData = getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+          if (lineWrapSelectionRangeData !== undefined) {
+            preserveSelectionSecondaryDataExpirationIds.add(lineWrapSelectionRangeData.expirationId);
+          }
+        }
+      }
+      if (isSelectionChangeDataPreservingMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeft(data)) {
+        for (let i = 0; i < this.stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = this.stateControl.stateView.selection.selectionRanges[i];
+          const moveOrExtendCursorOffsetData = getMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(
+            selectionRange.data,
+          );
+          if (moveOrExtendCursorOffsetData !== undefined) {
+            preserveSelectionSecondaryDataExpirationIds.add(moveOrExtendCursorOffsetData.expirationId);
+          }
+        }
+      }
     }
-    if (newSelection !== this.stateControl.stateView.selection) {
-      this.stateControl.delta.setSelection(newSelection, undefined, { [VirtualizedDataKey.IgnoreRecursiveUpdate]: true });
+    for (const activeExpirationId of this.#activeSelectionSecondaryDataExpirationIds) {
+      if (!preserveSelectionSecondaryDataExpirationIds.has(activeExpirationId)) {
+        this.#activeSelectionSecondaryDataExpirationIds.delete(activeExpirationId);
+      }
     }
   }
   #onAfterMutationPart(
@@ -6020,13 +6046,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (!focusSelectionRange) {
       return;
     }
-    const focusRange = focusSelectionRange.ranges.find((range) => range.id === focusSelectionRange.focusRangeId);
-    assertIsNotNullish(focusRange);
-    const focusPoint = matita.getFocusPointFromRange(focusRange);
+    const focusPoint = matita.getFocusPointFromRange(matita.getFocusRangeFromSelectionRange(focusSelectionRange));
     matita.assertIsParagraphPoint(focusPoint);
+    const lineWrapFocusCursorWrapToNextLineDataValue = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(focusSelectionRange.data);
     const cursorPositionAndHeightFromParagraphPoint = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(
       focusPoint,
-      !!focusSelectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
+      lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
+        this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId),
     );
     // TODO: Fix in case of multiple selections.
     scrollCursorRectIntoView(
@@ -6071,8 +6097,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   #getCursorPositionAndHeightFromParagraphPointFillingLine(
     point: matita.ParagraphPoint,
-    isLineWrapToNextLine: boolean,
+    isMarkedLineWrapToNextLine: boolean,
   ): { position: ViewPosition; height: number; measuredParagraphLineRange: MeasuredParagraphLineRange } {
+    const isLineWrapToNextLine = isMarkedLineWrapToNextLine && this.isParagraphPointAtWrappedLineWrapPoint(point);
     // Fix horizontal scroll hidden in safari.
     if (this.#isOverflowClipNotSupported) {
       this.#containerHtmlElement.scrollLeft = 0;
@@ -6574,6 +6601,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
         const lineTexts = text.split(/\r?\n/g).map((line) => line.replaceAll('\r', ''));
         const getContentFragmentFromSelectionRange = (
+          customCollapsedSelectionTextConfig: TextConfig | null,
           selectionRange: matita.SelectionRange,
         ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
           return matita.makeContentFragment(
@@ -6585,11 +6613,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                     ? []
                     : [
                         matita.makeText(
-                          getInsertTextConfigAtSelectionRange(
-                            this.stateControl.stateView.document,
-                            this.stateControl.stateView.customCollapsedSelectionTextConfig,
-                            selectionRange,
-                          ),
+                          getInsertTextConfigAtSelectionRange(this.stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
                           lineText,
                         ),
                       ],
@@ -6602,6 +6626,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const originalTextContent = this.#inputTextElement.childNodes[0].nodeValue || '';
         this.stateControl.queueUpdate(
           () => {
+            const { customCollapsedSelectionTextConfig } = this.stateControl.stateView;
             if (
               inputType === 'insertText' &&
               (this.stateControl.stateView.selection.selectionRanges.length > 1 ||
@@ -6609,7 +6634,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   shouldCollapseSelectionRangeInTextCommand(this.stateControl.stateView.document, this.stateControl.stateView.selection.selectionRanges[0])))
             ) {
               // 'insertText' only is handled using the native selection when it is collapsed, as this is for compatibility with composition in chrome/firefox.
-              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, getContentFragmentFromSelectionRange));
+              this.stateControl.delta.applyUpdate(
+                matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, (selectionRange) =>
+                  getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+                ),
+              );
               return;
             }
             let paragraph: matita.Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -6619,13 +6648,21 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               if (!(error instanceof matita.BlockNotInBlockStoreError)) {
                 throw error;
               }
-              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, getContentFragmentFromSelectionRange));
+              this.stateControl.delta.applyUpdate(
+                matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, (selectionRange) =>
+                  getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+                ),
+              );
               return;
             }
             matita.assertIsParagraph(paragraph);
             const currentTextContent = this.#getDomInputTextFromParagraph(paragraph);
             if (originalTextContent !== currentTextContent) {
-              this.stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, getContentFragmentFromSelectionRange));
+              this.stateControl.delta.applyUpdate(
+                matita.makeInsertContentFragmentAtSelectionUpdateFn(this.stateControl, (selectionRange) =>
+                  getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+                ),
+              );
               return;
             }
             assert(startOffset <= endOffset);
@@ -6641,6 +6678,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 this.stateControl,
                 range,
                 getContentFragmentFromSelectionRange(
+                  customCollapsedSelectionTextConfig,
                   matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId()),
                 ),
                 undefined,
@@ -6694,7 +6732,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       });
     }
   }
-  #measureParagraphAtParagraphReference(paragraphReference: matita.BlockReference): AbsoluteParagraphMeasurement {
+  #getRelativeParagraphMeasurementAtParagraphReference(paragraphReference: matita.BlockReference): {
+    relativeParagraphMeasurement: RelativeParagraphMeasureCacheValue;
+    containerHtmlElementBoundingRect?: DOMRect;
+  } {
+    const cachedMeasurement = this.#relativeParagraphMeasurementCache.get(paragraphReference.blockId);
+    if (cachedMeasurement) {
+      return { relativeParagraphMeasurement: cachedMeasurement };
+    }
     // TODO: Graphemes instead of characters.
     // TODO: Rtl.
     // Fix horizontal scroll hidden in safari.
@@ -6704,35 +6749,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
     const containerHtmlElement = paragraphRenderControl.containerHtmlElement;
     const containerHtmlElementBoundingRect = containerHtmlElement.getBoundingClientRect();
-    const shiftCachedMeasurement = (cachedMeasurement: RelativeParagraphMeasureCacheValue): AbsoluteParagraphMeasurement => {
-      function shiftRelativeCharacterRectangle(relativeCharacterRectangle: ViewRectangle): ViewRectangle {
-        return shiftViewRectangle(relativeCharacterRectangle, containerHtmlElementBoundingRect.left, containerHtmlElementBoundingRect.top);
-      }
-      return {
-        characterRectangles: cachedMeasurement.characterRectangles.map(
-          (characterRectangle) => characterRectangle && shiftRelativeCharacterRectangle(characterRectangle),
-        ),
-        measuredParagraphLineRanges: cachedMeasurement.measuredParagraphLineRanges.map((measuredParagraphLineRange) => {
-          return {
-            boundingRect: shiftRelativeCharacterRectangle(measuredParagraphLineRange.boundingRect),
-            characterRectangles: measuredParagraphLineRange.characterRectangles.map(shiftRelativeCharacterRectangle),
-            startOffset: measuredParagraphLineRange.startOffset,
-            endOffset: measuredParagraphLineRange.endOffset,
-            endsWithLineBreak: measuredParagraphLineRange.endsWithLineBreak,
-          };
-        }),
-        boundingRect: makeViewRectangle(
-          containerHtmlElementBoundingRect.left,
-          containerHtmlElementBoundingRect.top,
-          containerHtmlElementBoundingRect.width,
-          containerHtmlElementBoundingRect.height,
-        ),
-      };
-    };
-    const cachedMeasurement = this.#relativeParagraphMeasurementCache.get(paragraphReference.blockId);
-    if (cachedMeasurement) {
-      return shiftCachedMeasurement(cachedMeasurement);
-    }
     const measureRange = document.createRange();
     const measuredParagraphLineRanges: MeasuredParagraphLineRange[] = [];
     const paragraphCharacterRectangles: (ViewRectangle | null)[] = [];
@@ -6925,7 +6941,38 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       measuredParagraphLineRanges,
     };
     this.#relativeParagraphMeasurementCache.set(paragraphReference.blockId, newCachedMeasurement);
-    return shiftCachedMeasurement(newCachedMeasurement);
+    return { relativeParagraphMeasurement: newCachedMeasurement, containerHtmlElementBoundingRect };
+  }
+  #measureParagraphAtParagraphReference(paragraphReference: matita.BlockReference): AbsoluteParagraphMeasurement {
+    const {
+      relativeParagraphMeasurement,
+      containerHtmlElementBoundingRect = this.viewControl
+        .accessParagraphRenderControlAtBlockReference(paragraphReference)
+        .containerHtmlElement.getBoundingClientRect(),
+    } = this.#getRelativeParagraphMeasurementAtParagraphReference(paragraphReference);
+    function shiftRelativeCharacterRectangle(relativeCharacterRectangle: ViewRectangle): ViewRectangle {
+      return shiftViewRectangle(relativeCharacterRectangle, containerHtmlElementBoundingRect.left, containerHtmlElementBoundingRect.top);
+    }
+    return {
+      characterRectangles: relativeParagraphMeasurement.characterRectangles.map(
+        (characterRectangle) => characterRectangle && shiftRelativeCharacterRectangle(characterRectangle),
+      ),
+      measuredParagraphLineRanges: relativeParagraphMeasurement.measuredParagraphLineRanges.map((measuredParagraphLineRange) => {
+        return {
+          boundingRect: shiftRelativeCharacterRectangle(measuredParagraphLineRange.boundingRect),
+          characterRectangles: measuredParagraphLineRange.characterRectangles.map(shiftRelativeCharacterRectangle),
+          startOffset: measuredParagraphLineRange.startOffset,
+          endOffset: measuredParagraphLineRange.endOffset,
+          endsWithLineBreak: measuredParagraphLineRange.endsWithLineBreak,
+        };
+      }),
+      boundingRect: makeViewRectangle(
+        containerHtmlElementBoundingRect.left,
+        containerHtmlElementBoundingRect.top,
+        containerHtmlElementBoundingRect.width,
+        containerHtmlElementBoundingRect.height,
+      ),
+    };
   }
   #compareParagraphTopToOffsetTop(paragraphReference: matita.BlockReference, needle: number): number {
     // Fix horizontal scroll hidden in safari.
@@ -6936,7 +6983,83 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const boundingBox = paragraphNodeControl.containerHtmlElement.getBoundingClientRect();
     return boundingBox.top - needle;
   }
-  #calculatePositionFromViewPosition(viewPosition: ViewPosition): HitPosition | null {
+  #positionCalculationEpsilon = 1;
+  #calculatePositionInMeasuredParagraphLineRangeInParagraphReferenceAtHorizontalOffset(
+    measuredParagraphLineRange: MeasuredParagraphLineRange,
+    paragraphReference: matita.BlockReference,
+    horizontalOffset: number,
+    isFirstInParagraphOrIsPreviousLineEndingWithLineBreak: boolean,
+    isLastInParagraph: boolean,
+  ): HitPosition {
+    if (measuredParagraphLineRange.characterRectangles.length === 0) {
+      return {
+        pointWithContentReference: {
+          contentReference: matita.makeContentReferenceFromContent(
+            matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+          ),
+          point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, measuredParagraphLineRange.startOffset),
+        },
+        isPastPreviousCharacterHalfPoint: false,
+        isWrappedLineStart: false,
+        isWrappedLinePreviousEnd: false,
+      };
+    }
+    for (let j = 0; j < measuredParagraphLineRange.characterRectangles.length; j++) {
+      const characterRectangle = measuredParagraphLineRange.characterRectangles[j];
+      const previousCharacterRightWithoutInfinity =
+        j === 0 ? 0 : Math.min(measuredParagraphLineRange.characterRectangles[j - 1].right, characterRectangle.left);
+      const previousCharacterRight = j === 0 ? -Infinity : Math.min(measuredParagraphLineRange.characterRectangles[j - 1].right, characterRectangle.left);
+      const characterRight = j === measuredParagraphLineRange.characterRectangles.length - 1 ? Infinity : characterRectangle.right;
+      if (
+        !(
+          previousCharacterRight - this.#positionCalculationEpsilon <= horizontalOffset && horizontalOffset <= characterRight + this.#positionCalculationEpsilon
+        )
+      ) {
+        continue;
+      }
+      const isPastPreviousCharacterHalfPoint = horizontalOffset > (characterRectangle.right + previousCharacterRightWithoutInfinity) / 2;
+      if (isPastPreviousCharacterHalfPoint) {
+        j += 1;
+      }
+      // In Safari some malformed character measurements are negative???
+      while (j > 0 && measuredParagraphLineRange.characterRectangles[j - 1].width <= 0) {
+        // The preceding character has a width of 0, so it combines with the current character.
+        j--;
+      }
+      const pointOffset = measuredParagraphLineRange.startOffset + j;
+      return {
+        pointWithContentReference: {
+          contentReference: matita.makeContentReferenceFromContent(
+            matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+          ),
+          point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, pointOffset),
+        },
+        isPastPreviousCharacterHalfPoint,
+        isWrappedLineStart: !isFirstInParagraphOrIsPreviousLineEndingWithLineBreak && pointOffset === measuredParagraphLineRange.startOffset,
+        isWrappedLinePreviousEnd: !isLastInParagraph && !measuredParagraphLineRange.endsWithLineBreak && pointOffset === measuredParagraphLineRange.endOffset,
+      };
+    }
+    throwUnreachable();
+  }
+  #calculatePositionInRelativeParagraphMeasurementInParagraphReferenceAtMeasuredParagraphLineRangeIndexAtHorizontalOffset(
+    relativeParagraphMeasurement: RelativeParagraphMeasureCacheValue,
+    paragraphReference: matita.BlockReference,
+    measuredParagraphLineRangeIndex: number,
+    horizontalOffset: number,
+  ): HitPosition {
+    const measuredParagraphLineRange = relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex];
+    const isFirstInParagraphOrIsPreviousLineEndingWithLineBreak =
+      measuredParagraphLineRangeIndex === 0 || relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex - 1].endsWithLineBreak;
+    const isLastInParagraph = measuredParagraphLineRangeIndex === relativeParagraphMeasurement.measuredParagraphLineRanges.length - 1;
+    return this.#calculatePositionInMeasuredParagraphLineRangeInParagraphReferenceAtHorizontalOffset(
+      measuredParagraphLineRange,
+      paragraphReference,
+      horizontalOffset,
+      isFirstInParagraphOrIsPreviousLineEndingWithLineBreak,
+      isLastInParagraph,
+    );
+  }
+  #calculatePositionFromViewPosition(viewPosition: ViewPosition, isExtend: boolean): HitPosition | null {
     const hitElements = document.elementsFromPoint(viewPosition.left, viewPosition.top);
     const firstContentHitElement = hitElements.find(
       (hitElement) => hitElement === this.#topLevelContentViewContainerElement || this.#topLevelContentViewContainerElement.contains(hitElement),
@@ -6970,6 +7093,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       paragraphReference: matita.BlockReference;
       measuredParagraphLineRange: MeasuredParagraphLineRange;
       isFirstInParagraph: boolean;
+      isLastInParagraph: boolean;
     }[] = [];
     for (let i = startIndex; i <= endIndex; i++) {
       const paragraphReference = paragraphReferences[i];
@@ -6980,103 +7104,69 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           paragraphReference,
           measuredParagraphLineRange,
           isFirstInParagraph: j === 0,
+          isLastInParagraph: j === paragraphMeasurement.measuredParagraphLineRanges.length - 1,
         });
       }
     }
-    const epsilon = 1;
     for (let i = 0; i < possibleLines.length; i++) {
       const possibleLine = possibleLines[i];
-      const { paragraphReference, measuredParagraphLineRange, isFirstInParagraph } = possibleLine;
-      const { startOffset, characterRectangles, boundingRect } = measuredParagraphLineRange;
+      const { paragraphReference, measuredParagraphLineRange, isFirstInParagraph, isLastInParagraph } = possibleLine;
+      const { boundingRect } = measuredParagraphLineRange;
       const lineTop = i === 0 ? -Infinity : boundingRect.top;
       const lineBottom =
         i === possibleLines.length - 1 ? Infinity : Math.max(possibleLines[i + 1].measuredParagraphLineRange.boundingRect.top, boundingRect.bottom);
-      if (!(lineTop - epsilon <= viewPosition.top && viewPosition.top <= lineBottom + epsilon)) {
+      if (!(lineTop - this.#positionCalculationEpsilon <= viewPosition.top && viewPosition.top <= lineBottom + this.#positionCalculationEpsilon)) {
         continue;
       }
-      if (characterRectangles.length === 0) {
-        return {
-          pointWithContentReference: {
-            contentReference: matita.makeContentReferenceFromContent(
-              matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
-            ),
-            point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, startOffset),
-          },
-          isPastPreviousCharacterHalfPoint: false,
-          isWrappedLineStart: false,
-        };
-      }
-      if (i === 0 && viewPosition.top < possibleLine.measuredParagraphLineRange.boundingRect.top) {
-        const contentReference = matita.makeContentReferenceFromContent(
-          matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
-        );
-        if (matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference) === 0) {
-          const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
-          matita.assertIsParagraph(paragraph);
-          return {
-            pointWithContentReference: {
-              contentReference,
-              point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, 0),
-            },
-            isPastPreviousCharacterHalfPoint: false,
-            isWrappedLineStart: false,
-          };
+      if (isExtend) {
+        if (i === 0 && viewPosition.top < possibleLine.measuredParagraphLineRange.boundingRect.top) {
+          const contentReference = matita.makeContentReferenceFromContent(
+            matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+          );
+          if (matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference) === 0) {
+            const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+            matita.assertIsParagraph(paragraph);
+            return {
+              pointWithContentReference: {
+                contentReference,
+                point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, 0),
+              },
+              isPastPreviousCharacterHalfPoint: false,
+              isWrappedLineStart: false,
+              isWrappedLinePreviousEnd: false,
+            };
+          }
+        }
+        if (i > 0 && i === possibleLines.length - 1 && viewPosition.top > possibleLine.measuredParagraphLineRange.boundingRect.bottom) {
+          const contentReference = matita.makeContentReferenceFromContent(
+            matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
+          );
+          if (
+            matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference) ===
+            matita.getNumberOfBlocksInContentAtContentReference(this.stateControl.stateView.document, contentReference) - 1
+          ) {
+            const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+            matita.assertIsParagraph(paragraph);
+            const paragraphLength = matita.getParagraphLength(paragraph);
+            return {
+              pointWithContentReference: {
+                contentReference,
+                point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, paragraphLength),
+              },
+              isPastPreviousCharacterHalfPoint: paragraphLength > 0,
+              isWrappedLineStart: false,
+              isWrappedLinePreviousEnd: false,
+            };
+          }
         }
       }
-      if (i > 0 && i === possibleLines.length - 1 && viewPosition.top > possibleLine.measuredParagraphLineRange.boundingRect.bottom) {
-        const contentReference = matita.makeContentReferenceFromContent(
-          matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
-        );
-        if (
-          matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, paragraphReference) ===
-          matita.getNumberOfBlocksInContentAtContentReference(this.stateControl.stateView.document, contentReference) - 1
-        ) {
-          const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
-          matita.assertIsParagraph(paragraph);
-          return {
-            pointWithContentReference: {
-              contentReference,
-              point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, matita.getParagraphLength(paragraph)),
-            },
-            isPastPreviousCharacterHalfPoint: true,
-            isWrappedLineStart: false,
-          };
-        }
-      }
-      for (let j = 0; j < characterRectangles.length; j++) {
-        const characterRectangle = characterRectangles[j];
-        const previousCharacterRightWithoutInfinity = j === 0 ? 0 : Math.min(characterRectangles[j - 1].right, characterRectangle.left);
-        const previousCharacterRight = j === 0 ? -Infinity : Math.min(characterRectangles[j - 1].right, characterRectangle.left);
-        const characterRight = j === characterRectangles.length - 1 ? Infinity : characterRectangle.right;
-        if (!(previousCharacterRight - epsilon <= viewPosition.left && viewPosition.left <= characterRight + epsilon)) {
-          continue;
-        }
-        const isPastPreviousCharacterHalfPoint = viewPosition.left > (characterRectangle.right + previousCharacterRightWithoutInfinity) / 2;
-        if (isPastPreviousCharacterHalfPoint) {
-          j += 1;
-        }
-        // In Safari some malformed character measurements are negative???
-        while (j > 0 && characterRectangles[j - 1].width <= 0) {
-          // The preceding character has a width of 0, so it combines with the current character.
-          j--;
-        }
-        const pointStartOffset = startOffset + j;
-        return {
-          pointWithContentReference: {
-            contentReference: matita.makeContentReferenceFromContent(
-              matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
-            ),
-            point: matita.makeParagraphPointFromParagraphBlockReferenceAndOffset(paragraphReference, pointStartOffset),
-          },
-          isPastPreviousCharacterHalfPoint,
-          isWrappedLineStart:
-            !isFirstInParagraph &&
-            !possibleLines[i - 1].measuredParagraphLineRange.endsWithLineBreak &&
-            j === 0 &&
-            startOffset !== 0 &&
-            pointStartOffset - startOffset === 0,
-        };
-      }
+      return this.#calculatePositionInMeasuredParagraphLineRangeInParagraphReferenceAtHorizontalOffset(
+        measuredParagraphLineRange,
+        paragraphReference,
+        viewPosition.left,
+        isFirstInParagraph || possibleLines[i - 1].measuredParagraphLineRange.endsWithLineBreak,
+        isLastInParagraph,
+      );
     }
     return null;
   }
@@ -7147,8 +7237,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#inputTextElement.replaceChildren();
       return;
     }
-    const focusRange = focusSelectionRange.ranges.find((range) => range.id === focusSelectionRange.focusRangeId);
-    assertIsNotNullish(focusRange);
+    const focusRange = matita.getFocusRangeFromSelectionRange(focusSelectionRange);
     const anchorPoint = matita.getAnchorPointFromRange(focusRange);
     const focusPoint = matita.getFocusPointFromRange(focusRange);
     matita.assertIsParagraphPoint(anchorPoint);
@@ -7425,12 +7514,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     disposable: Disposable,
   ): Source<ViewCursorAndRangeInfosForSelectionRange> {
     const viewCursorAndRangeInfoForRangeSources = selectionRange.ranges.map((range) => {
+      const lineWrapFocusCursorWrapToNextLineDataValue = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
       const viewCursorAndRangeInfosForRange$ = this.#makeViewCursorAndRangeInfosForRange(
         range,
         range.id === selectionRange.anchorRangeId,
         range.id === selectionRange.focusRangeId,
         isFocusSelectionRange,
-        !!selectionRange.data[VirtualizedDataKey.LineWrapFocusCursorWrapToNextLine],
+        lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
+          this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId),
         disposable,
         selectionRange,
       );
@@ -7550,7 +7641,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     isAnchor: boolean,
     isFocus: boolean,
     isFocusSelectionRange: boolean,
-    isLineWrapFocusCursorWrapToNextLine: boolean,
+    isMarkedLineWrapFocusCursorWrapToNextLine: boolean,
     disposable: Disposable,
     selectionRange?: matita.SelectionRange,
   ): Source<ViewCursorAndRangeInfosForRange> {
@@ -7715,7 +7806,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       const anchorPoint = matita.getAnchorPointFromRange(range);
       matita.assertIsParagraphPoint(anchorPoint);
-      const anchorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(anchorPoint, isLineWrapFocusCursorWrapToNextLine);
+      const anchorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(anchorPoint, isMarkedLineWrapFocusCursorWrapToNextLine);
       const minTop = Math.min(cursorPositionAndHeight.position.top, anchorPositionAndHeight.position.top);
       const maxBottom = Math.max(
         cursorPositionAndHeight.position.top + cursorPositionAndHeight.height,
@@ -7750,7 +7841,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     };
     const calculateViewCursorInfoForFocusPoint = (relativeOffsetLeft: number, relativeOffsetTop: number): ViewCursorInfo => {
       const cursorOffset = focusPoint.offset;
-      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(focusPoint, isLineWrapFocusCursorWrapToNextLine);
+      const cursorPositionAndHeight = this.#getCursorPositionAndHeightFromParagraphPointFillingLine(focusPoint, isMarkedLineWrapFocusCursorWrapToNextLine);
       assertIsNotNullish(selectionRange);
       const insertTextConfig = getInsertTextConfigAtSelectionRange(
         this.stateControl.stateView.document,

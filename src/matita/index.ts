@@ -2179,6 +2179,16 @@ function regenerateSelectionRangeCreatedAtTimestamp(selectionRange: SelectionRan
     true,
   );
 }
+function getAnchorRangeFromSelectionRange(selectionRange: SelectionRange): Range {
+  const anchorRange = selectionRange.ranges.find((range) => range.id === selectionRange.anchorRangeId);
+  assertIsNotNullish(anchorRange);
+  return anchorRange;
+}
+function getFocusRangeFromSelectionRange(selectionRange: SelectionRange): Range {
+  const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
+  assertIsNotNullish(focusRange);
+  return focusRange;
+}
 function getAnchorPointFromRange(anchorRange: Range): StartOfContentPoint | BlockPoint | ParagraphPoint {
   return isStartOfContentPoint(anchorRange.startPoint) && !isEndOfContentPoint(anchorRange.endPoint) ? anchorRange.endPoint : anchorRange.startPoint;
 }
@@ -3013,10 +3023,8 @@ function getIsSelectionRangeAnchorAfterFocus(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
   selectionRange: SelectionRange,
 ): boolean {
-  const anchorRange = selectionRange.ranges.find((range) => range.id === selectionRange.anchorRangeId);
-  const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-  assertIsNotNullish(anchorRange);
-  assertIsNotNullish(focusRange);
+  const anchorRange = getAnchorRangeFromSelectionRange(selectionRange);
+  const focusRange = getFocusRangeFromSelectionRange(selectionRange);
   const anchorPoint = getAnchorPointFromRange(anchorRange);
   const focusPoint = getFocusPointFromRange(focusRange);
   const anchorPointKey = makePointKeyFromPoint(document, anchorRange.contentReference, anchorPoint);
@@ -3027,10 +3035,8 @@ function getSelectionRangeAnchorAndFocusPointWithContentReferences(selectionRang
   anchorPointWithContentReference: PointWithContentReference;
   focusPointWithContentReference: PointWithContentReference;
 } {
-  const anchorRange = selectionRange.ranges.find((range) => range.id === selectionRange.anchorRangeId);
-  const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-  assertIsNotNullish(anchorRange);
-  assertIsNotNullish(focusRange);
+  const anchorRange = getAnchorRangeFromSelectionRange(selectionRange);
+  const focusRange = getFocusRangeFromSelectionRange(selectionRange);
   const anchorPoint = getAnchorPointFromRange(anchorRange);
   const focusPoint = getFocusPointFromRange(focusRange);
   return {
@@ -7451,13 +7457,6 @@ function makeDefaultPointTransformFn<
     });
   };
 }
-const noopPointTransformFn: PointTransformFn<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig> = (
-  _document,
-  _stateControlConfig,
-  _selectionRangeIntention,
-  range,
-  point,
-) => ({ contentReference: range.contentReference, point });
 type PointTransformFn<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -7485,6 +7484,7 @@ type ShouldSelectionRangeCollapseFn<
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selectionRange: SelectionRange,
 ) => SelectionRange | false;
+type UpdateSelectionRangeDataFn = (oldSelectionRange: SelectionRange, newSelectionRange: SelectionRange) => SelectionRangeData | undefined;
 function moveSelectionByPointTransformFnThroughAnchorPoint<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -7498,11 +7498,25 @@ function moveSelectionByPointTransformFnThroughAnchorPoint<
   selection: Selection,
   shouldSelectionRangeCollapse: ShouldSelectionRangeCollapseFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   pointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  updateSelectionRangeData?: UpdateSelectionRangeDataFn,
 ): Selection {
   return transformSelectionByTransformingSelectionRanges(document, stateControlConfig, selection, (selectionRange) => {
     const collapsedSelectionRange = shouldSelectionRangeCollapse(document, stateControlConfig, selectionRange);
     if (collapsedSelectionRange) {
       assert(collapsedSelectionRange.id === selectionRange.id, 'shouldSelectionRangeCollapse must preserve SelectionRange#id.');
+      if (updateSelectionRangeData) {
+        const updatedSelectionRangeData = updateSelectionRangeData(selectionRange, collapsedSelectionRange);
+        if (updatedSelectionRangeData !== undefined) {
+          return makeSelectionRange(
+            collapsedSelectionRange.ranges,
+            collapsedSelectionRange.anchorRangeId,
+            collapsedSelectionRange.focusRangeId,
+            collapsedSelectionRange.intention,
+            updatedSelectionRangeData,
+            collapsedSelectionRange.id,
+          );
+        }
+      }
       return collapsedSelectionRange;
     }
     const newRanges = selectionRange.ranges.flatMap((range) => {
@@ -7513,7 +7527,7 @@ function moveSelectionByPointTransformFnThroughAnchorPoint<
       const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, anchorPoint, selectionRange);
       return [makeRange(contentReference, point, point, range.id)];
     });
-    return makeSelectionRange(
+    const newSelectionRange = makeSelectionRange(
       newRanges,
       selectionRange.anchorRangeId,
       selectionRange.anchorRangeId,
@@ -7521,6 +7535,20 @@ function moveSelectionByPointTransformFnThroughAnchorPoint<
       selectionRange.data,
       selectionRange.id,
     );
+    if (updateSelectionRangeData) {
+      const updatedSelectionRangeData = updateSelectionRangeData(selectionRange, newSelectionRange);
+      if (updatedSelectionRangeData !== undefined) {
+        return makeSelectionRange(
+          newSelectionRange.ranges,
+          newSelectionRange.anchorRangeId,
+          newSelectionRange.focusRangeId,
+          newSelectionRange.intention,
+          updatedSelectionRangeData,
+          newSelectionRange.id,
+        );
+      }
+    }
+    return newSelectionRange;
   });
 }
 function moveSelectionByPointTransformFnThroughFocusPoint<
@@ -7536,11 +7564,25 @@ function moveSelectionByPointTransformFnThroughFocusPoint<
   selection: Selection,
   shouldSelectionRangeCollapse: ShouldSelectionRangeCollapseFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   pointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  updateSelectionRangeData?: UpdateSelectionRangeDataFn,
 ): Selection {
   return transformSelectionByTransformingSelectionRanges(document, stateControlConfig, selection, (selectionRange) => {
     const collapsedSelectionRange = shouldSelectionRangeCollapse(document, stateControlConfig, selectionRange);
     if (collapsedSelectionRange) {
       assert(collapsedSelectionRange.id === selectionRange.id, 'shouldSelectionRangeCollapse must preserve SelectionRange#id.');
+      if (updateSelectionRangeData) {
+        const updatedSelectionRangeData = updateSelectionRangeData(selectionRange, collapsedSelectionRange);
+        if (updatedSelectionRangeData !== undefined) {
+          return makeSelectionRange(
+            collapsedSelectionRange.ranges,
+            collapsedSelectionRange.anchorRangeId,
+            collapsedSelectionRange.focusRangeId,
+            collapsedSelectionRange.intention,
+            updatedSelectionRangeData,
+            collapsedSelectionRange.id,
+          );
+        }
+      }
       return collapsedSelectionRange;
     }
     const newRanges = selectionRange.ranges.flatMap((range) => {
@@ -7551,7 +7593,7 @@ function moveSelectionByPointTransformFnThroughFocusPoint<
       const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint, selectionRange);
       return [makeRange(contentReference, point, point, range.id)];
     });
-    return makeSelectionRange(
+    const newSelectionRange = makeSelectionRange(
       newRanges,
       selectionRange.focusRangeId,
       selectionRange.focusRangeId,
@@ -7559,6 +7601,20 @@ function moveSelectionByPointTransformFnThroughFocusPoint<
       selectionRange.data,
       selectionRange.id,
     );
+    if (updateSelectionRangeData) {
+      const updatedSelectionRangeData = updateSelectionRangeData(selectionRange, newSelectionRange);
+      if (updatedSelectionRangeData !== undefined) {
+        return makeSelectionRange(
+          newSelectionRange.ranges,
+          newSelectionRange.anchorRangeId,
+          newSelectionRange.focusRangeId,
+          newSelectionRange.intention,
+          updatedSelectionRangeData,
+          newSelectionRange.id,
+        );
+      }
+    }
+    return newSelectionRange;
   });
 }
 type ShouldExtendSelectionRangeFn<
@@ -7585,8 +7641,9 @@ function extendSelectionByPointTransformFns<
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selection: Selection,
   shouldExtendSelectionRange: ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  anchorPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  focusPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  anchorPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | undefined,
+  focusPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | undefined,
+  updateSelectionRangeData?: UpdateSelectionRangeDataFn,
 ): Selection {
   assert(
     anchorPointTransformFn !== undefined || focusPointTransformFn !== undefined,
@@ -7594,6 +7651,19 @@ function extendSelectionByPointTransformFns<
   );
   return transformSelectionByTransformingSelectionRanges(document, stateControlConfig, selection, (selectionRange) => {
     if (!shouldExtendSelectionRange(document, stateControlConfig, selectionRange)) {
+      if (updateSelectionRangeData) {
+        const updatedSelectionRangeData = updateSelectionRangeData(selectionRange, selectionRange);
+        if (updatedSelectionRangeData !== undefined) {
+          return makeSelectionRange(
+            selectionRange.ranges,
+            selectionRange.anchorRangeId,
+            selectionRange.focusRangeId,
+            selectionRange.intention,
+            updatedSelectionRangeData,
+            selectionRange.id,
+          );
+        }
+      }
       return selectionRange;
     }
     let newAnchorRangeId = selectionRange.anchorRangeId;
@@ -7640,9 +7710,31 @@ function extendSelectionByPointTransformFns<
       }
       return replacedRanges;
     });
-    return makeSelectionRange(newRanges, newAnchorRangeId, selectionRange.focusRangeId, selectionRange.intention, selectionRange.data, selectionRange.id);
+    const newSelectionRange = makeSelectionRange(
+      newRanges,
+      newAnchorRangeId,
+      selectionRange.focusRangeId,
+      selectionRange.intention,
+      selectionRange.data,
+      selectionRange.id,
+    );
+    if (updateSelectionRangeData) {
+      const updatedSelectionRangeData = updateSelectionRangeData(selectionRange, newSelectionRange);
+      if (updatedSelectionRangeData !== undefined) {
+        return makeSelectionRange(
+          newSelectionRange.ranges,
+          newSelectionRange.anchorRangeId,
+          newSelectionRange.focusRangeId,
+          newSelectionRange.intention,
+          updatedSelectionRangeData,
+          newSelectionRange.id,
+        );
+      }
+    }
+    return newSelectionRange;
   });
 }
+type GetSelectionChangeDataFn = (oldSelection: Selection, newSelection: Selection) => SelectionChangeData | undefined;
 function makeMoveSelectionByPointTransformFnThroughAnchorPointUpdateFn<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -7654,6 +7746,8 @@ function makeMoveSelectionByPointTransformFnThroughAnchorPointUpdateFn<
   stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   shouldSelectionRangeCollapse: ShouldSelectionRangeCollapseFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   pointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  updateSelectionRangeData?: UpdateSelectionRangeDataFn,
+  getSelectionChangeData?: GetSelectionChangeDataFn,
   selection?: Selection,
 ): RunUpdateFn {
   return () => {
@@ -7669,8 +7763,9 @@ function makeMoveSelectionByPointTransformFnThroughAnchorPointUpdateFn<
       selectionToMove,
       shouldSelectionRangeCollapse,
       pointTransformFn,
+      updateSelectionRangeData,
     );
-    delta.setSelection(movedSelection);
+    delta.setSelection(movedSelection, undefined, getSelectionChangeData?.(selectionToMove, movedSelection));
   };
 }
 function makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn<
@@ -7684,6 +7779,8 @@ function makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn<
   stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   shouldSelectionRangeCollapse: ShouldSelectionRangeCollapseFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   pointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  updateSelectionRangeData?: UpdateSelectionRangeDataFn,
+  getSelectionChangeData?: GetSelectionChangeDataFn,
   selection?: Selection,
 ): RunUpdateFn {
   return () => {
@@ -7699,8 +7796,9 @@ function makeMoveSelectionByPointTransformFnThroughFocusPointUpdateFn<
       selectionToMove,
       shouldSelectionRangeCollapse,
       pointTransformFn,
+      updateSelectionRangeData,
     );
-    delta.setSelection(movedSelection);
+    delta.setSelection(movedSelection, undefined, getSelectionChangeData?.(selectionToMove, movedSelection));
   };
 }
 function makeExtendSelectionByPointTransformFnsUpdateFn<
@@ -7713,8 +7811,10 @@ function makeExtendSelectionByPointTransformFnsUpdateFn<
 >(
   stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   shouldExtendSelectionRange: ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  anchorPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  focusPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  anchorPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  focusPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  updateSelectionRangeData?: UpdateSelectionRangeDataFn,
+  getSelectionChangeData?: GetSelectionChangeDataFn,
   selection?: Selection,
 ): RunUpdateFn {
   return () => {
@@ -7723,16 +7823,17 @@ function makeExtendSelectionByPointTransformFnsUpdateFn<
       stateControlConfig,
       stateView: { document },
     } = stateControl;
-    const selectionToExtendAndRemove = selection ?? stateControl.stateView.selection;
+    const selectionToExtend = selection ?? stateControl.stateView.selection;
     const extendedSelection = extendSelectionByPointTransformFns(
       document,
       stateControlConfig,
-      selectionToExtendAndRemove,
+      selectionToExtend,
       shouldExtendSelectionRange,
       anchorPointTransformFn,
       focusPointTransformFn,
+      updateSelectionRangeData,
     );
-    delta.setSelection(extendedSelection);
+    delta.setSelection(extendedSelection, undefined, getSelectionChangeData?.(selectionToExtend, extendedSelection));
   };
 }
 enum RedoUndoUpdateKey {
@@ -7833,8 +7934,8 @@ function makeRemoveSelectionByPointTransformFnsUpdateFn<
 >(
   stateControl: StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   shouldExtendSelectionRange: ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  anchorPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  focusPointTransformFn: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  anchorPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  focusPointTransformFn?: PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selection?: Selection,
 ): RunUpdateFn {
   return () => {
@@ -7884,8 +7985,7 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
     let selectionToTransform = selection ?? stateControl.stateView.selection;
     while (true) {
       const rangesToRemoveWithSelectionRange = selectionToTransform.selectionRanges.flatMap((selectionRange) => {
-        const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-        assertIsNotNullish(focusRange);
+        const focusRange = getFocusRangeFromSelectionRange(selectionRange);
         return [...selectionRange.ranges.filter((range) => range.id !== selectionRange.focusRangeId), focusRange].map((range) => ({
           range,
           selectionRange,
@@ -8147,8 +8247,7 @@ function makeInsertParagraphBelowOrAboveAtSelectionUpdateFn<
     const affectedSelectionRangeInfos: [contentReference: ContentReference, blockId: string, selectionRange: SelectionRange, index: number][] = [];
     for (let i = 0; i < selectionAt.selectionRanges.length; i++) {
       const selectionRange = selectionAt.selectionRanges[i];
-      const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-      assertIsNotNullish(focusRange);
+      const focusRange = getFocusRangeFromSelectionRange(selectionRange);
       const focusPoint = getFocusPointFromRange(focusRange);
       if (isBlockPoint(focusPoint)) {
         const blockId = getBlockIdFromBlockPoint(focusPoint);
@@ -8227,10 +8326,8 @@ function makeSwitchOrCloneCurrentBlocksBelowOrAboveAtSelectionUpdateFn<
     const affectedBlockReferences: BlockReference[] = [];
     selectionRangesLoop: for (let i = 0; i < selectionAt.selectionRanges.length; i++) {
       const selectionRange = selectionAt.selectionRanges[i];
-      const anchorRange = selectionRange.ranges.find((range) => range.id === selectionRange.anchorRangeId);
-      assertIsNotNullish(anchorRange);
-      const focusRange = selectionRange.ranges.find((range) => range.id === selectionRange.focusRangeId);
-      assertIsNotNullish(focusRange);
+      const anchorRange = getAnchorRangeFromSelectionRange(selectionRange);
+      const focusRange = getFocusRangeFromSelectionRange(selectionRange);
       const anchorPoint = getAnchorPointFromRange(anchorRange);
       const focusPoint = getFocusPointFromRange(focusRange);
       if (isStartOfContentPoint(anchorPoint) || isEndOfContentPoint(anchorPoint) || isStartOfContentPoint(focusPoint) || isEndOfContentPoint(focusPoint)) {
@@ -8998,7 +9095,6 @@ export {
   EdgeParagraphSide,
   MovementGranularity,
   PointMovement,
-  noopPointTransformFn,
   type SelectionChangeMessage,
   type AfterMutationPartMessage,
   arePointWithContentReferencesEqual,
@@ -9026,4 +9122,9 @@ export {
   iterateParagraphInlineNodesWholeWithStartOffset,
   iterateParagraphChildrenWholeWithStartOffset,
   type CustomCollapsedSelectionTextConfigChangeMessage,
+  type SelectionRangeData,
+  type UpdateData,
+  type SelectionChangeData,
+  getAnchorRangeFromSelectionRange,
+  getFocusRangeFromSelectionRange,
 };
