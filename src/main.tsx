@@ -6011,24 +6011,26 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const preserveLineWrapFocusCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds = new Set(
         getSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(data),
       );
-      for (let i = 0; i < this.stateControl.stateView.selection.selectionRanges.length; i++) {
-        const selectionRange = this.stateControl.stateView.selection.selectionRanges[i];
-        if (preserveLineWrapFocusCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.has(selectionRange.id)) {
-          const lineWrapSelectionRangeData = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
-          if (lineWrapSelectionRangeData !== undefined) {
-            preserveSelectionSecondaryDataExpirationIds.add(lineWrapSelectionRangeData.expirationId);
-          }
-        }
-      }
       const preserveLineWrapAnchorCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds = new Set(
         getSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(data),
       );
-      for (let i = 0; i < this.stateControl.stateView.selection.selectionRanges.length; i++) {
-        const selectionRange = this.stateControl.stateView.selection.selectionRanges[i];
-        if (preserveLineWrapAnchorCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.has(selectionRange.id)) {
-          const lineWrapSelectionRangeData = getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
-          if (lineWrapSelectionRangeData !== undefined) {
-            preserveSelectionSecondaryDataExpirationIds.add(lineWrapSelectionRangeData.expirationId);
+      if (
+        preserveLineWrapAnchorCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.size > 0 ||
+        preserveLineWrapFocusCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.size > 0
+      ) {
+        for (let i = 0; i < this.stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = this.stateControl.stateView.selection.selectionRanges[i];
+          if (preserveLineWrapFocusCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.has(selectionRange.id)) {
+            const focusLineWrapSelectionRangeData = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+            if (focusLineWrapSelectionRangeData !== undefined) {
+              preserveSelectionSecondaryDataExpirationIds.add(focusLineWrapSelectionRangeData.expirationId);
+            }
+          }
+          if (preserveLineWrapAnchorCursorWrapToNextLineSelectionRangeDataForSelectionRangesWithIds.has(selectionRange.id)) {
+            const anchorLineWrapSelectionRangeData = getLineWrapAnchorCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(selectionRange.data);
+            if (anchorLineWrapSelectionRangeData !== undefined) {
+              preserveSelectionSecondaryDataExpirationIds.add(anchorLineWrapSelectionRangeData.expirationId);
+            }
           }
         }
       }
