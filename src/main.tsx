@@ -5941,9 +5941,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     };
   }
   #scrollSelectionIntoViewWhenFinishedUpdating = false;
-  #markScrollSelectionIntoViewWhenFinishedUpdating(): void {
-    this.#scrollSelectionIntoViewWhenFinishedUpdating = true;
-  }
   #isSearchFocused(): boolean {
     return !!this.#searchInputRef.current && document.activeElement === this.#searchInputRef.current;
   }
@@ -5964,21 +5961,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
-    const { previousSelection, updateDataStack, data } = event.value;
+    const { updateDataStack, data } = event.value;
     if (
       !this.#isDraggingSelection &&
       !updateDataStack.some((data) => !!data[doNotScrollToSelectionAfterChangeDataKey]) &&
-      !(data && !!data[doNotScrollToSelectionAfterChangeDataKey]) &&
-      (!matita.areSelectionsCoveringSameContent(previousSelection, this.stateControl.stateView.selection) ||
-        (previousSelection.selectionRanges.length > 0 &&
-          !matita.areSelectionRangesCoveringSameContent(
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            matita.getFocusSelectionRangeFromSelection(previousSelection)!,
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection)!,
-          )))
+      !(data && !!data[doNotScrollToSelectionAfterChangeDataKey])
     ) {
-      this.#markScrollSelectionIntoViewWhenFinishedUpdating();
+      this.#scrollSelectionIntoViewWhenFinishedUpdating = true;
     }
     if (this.stateControl.stateView.selection.selectionRanges.length === 0) {
       if (this.#hasFocusIncludingNotActiveWindow()) {
@@ -6043,8 +6032,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       throwUnreachable();
     }
     const { updateDataStack } = event.value;
-    if (!updateDataStack.some((data) => !!data[doNotScrollToSelectionAfterChangeDataKey])) {
-      this.#markScrollSelectionIntoViewWhenFinishedUpdating();
+    if (!this.#isDraggingSelection && !updateDataStack.some((data) => !!data[doNotScrollToSelectionAfterChangeDataKey])) {
+      this.#scrollSelectionIntoViewWhenFinishedUpdating = true;
     }
   }
   #scrollSelectionIntoView(): void {
@@ -7218,14 +7207,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       this.#replaceViewSelectionRanges(didApplyMutation);
       if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
-        this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
         this.#scrollSelectionIntoView();
       }
+      this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
     } else {
       if (this.#scrollSelectionIntoViewWhenFinishedUpdating) {
-        this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
         this.#scrollSelectionIntoView();
       }
+      this.#scrollSelectionIntoViewWhenFinishedUpdating = false;
       if (this.#isSearchElementContainerVisible$.currentValue) {
         this.#replaceVisibleSearchResults();
       }
