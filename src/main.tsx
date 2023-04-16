@@ -14,7 +14,7 @@ import {
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
-import { CurrentValueDistributor, CurrentValueSource, Distributor, LastValueDistributor } from './ruscel/distributor';
+import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
 import { ScheduleInterval, scheduleAnimationFrame, scheduleMicrotask } from './ruscel/schedule';
 import {
@@ -439,8 +439,10 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         const textNode = document.createTextNode(textBeforeNewline || '\u200b');
         textElementBeforeNewline.appendChild(textNode);
         if (isFirstAfterLineBreak) {
-          textElementBeforeNewline.style.display = 'block';
-          newChildren.push(textElementBeforeNewline);
+          const newlineBlockContainerElement = document.createElement('span');
+          newlineBlockContainerElement.style.display = 'block';
+          newlineBlockContainerElement.appendChild(textElementBeforeNewline);
+          newChildren.push(newlineBlockContainerElement);
         } else if (lastNewlineBlockContainerElement !== null) {
           lastNewlineBlockContainerElement.appendChild(textElementBeforeNewline);
         } else {
