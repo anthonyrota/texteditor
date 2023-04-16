@@ -1,4 +1,4 @@
-import { createRef, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { isFirefox, isSafari } from './common/browserDetection';
@@ -679,17 +679,17 @@ function getNativeTextNodeAndOffset(root: Node, offset: number): NativeNodeAndOf
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Some<T> | (() => Some<T>),
-  updateSync?: boolean | 'transition' | ((value: Maybe<T>) => boolean | 'transition'),
+  updateSync?: boolean | ((value: Maybe<T>) => boolean),
 ): Some<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
-  updateSync?: boolean | 'transition' | ((value: Maybe<T>) => boolean | 'transition'),
+  updateSync?: boolean | ((value: Maybe<T>) => boolean),
 ): Maybe<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
-  updateSync?: boolean | 'transition' | ((value: Maybe<T>) => boolean | 'transition'),
+  updateSync?: boolean | ((value: Maybe<T>) => boolean),
 ): Maybe<T> {
   const [value, setValue] = useState<Maybe<T>>(initialMaybe ?? None);
   const isFirstUpdateRef = useRef(true);
@@ -710,10 +710,6 @@ function use$<T>(
       const updateSyncResult = typeof updateSync === 'function' ? updateSync(maybe) : updateSync;
       if (updateSyncResult === true) {
         flushSync(() => {
-          setValue(maybe);
-        });
-      } else if (updateSyncResult === 'transition') {
-        startTransition(() => {
           setValue(maybe);
         });
       } else {
@@ -1142,8 +1138,8 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
     for (let j = 0; j < viewRangeInfos.length; j++) {
       const viewRangeInfo = viewRangeInfos[j];
       const { rectangle, paragraphReference, paragraphLineIndex } = viewRangeInfo;
-      const previousLineRect = viewRangeInfos[i - 1]?.rectangle;
-      const nextLineRect = viewRangeInfos[i + 1]?.rectangle;
+      const previousLineRect = viewRangeInfos[j - 1]?.rectangle;
+      const nextLineRect = viewRangeInfos[j + 1]?.rectangle;
       const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex]));
       const backgroundColor = hasFocus ? '#aa77ff' : isSelected ? '#aa77ff77' : '#f5c6ec';
       if (roundCorners) {
@@ -6864,6 +6860,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         let fixedCharacterRectangle: ViewRectangle;
         if (isSafariFirstWrappedCharacter) {
           const fixedHeight = characterRectangle.height / 2;
+          // TODO: Use canvas to measure width of character. Estimation sucks, e.g. if emoji (wide).
           fixedCharacterRectangle = makeViewRectangle(
             0,
             characterRectangle.top + fixedHeight,
