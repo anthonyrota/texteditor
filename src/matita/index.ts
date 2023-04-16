@@ -3019,17 +3019,25 @@ function compareKeys(
   // Now left with embed & block or block & embed.
   return key1.indices.length < key2.indices.length ? CompareKeysResult.OverlapPreferKey1Before : CompareKeysResult.OverlapPreferKey1After;
 }
-function getIsSelectionRangeAnchorAfterFocus(
+function compareSelectionRangeAnchorToFocus(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
   selectionRange: SelectionRange,
-): boolean {
+): CompareKeysResult.After | CompareKeysResult.Before | CompareKeysResult.OverlapSameNonText | CompareKeysResult.OverlapSameText {
   const anchorRange = getAnchorRangeFromSelectionRange(selectionRange);
   const focusRange = getFocusRangeFromSelectionRange(selectionRange);
   const anchorPoint = getAnchorPointFromRange(anchorRange);
   const focusPoint = getFocusPointFromRange(focusRange);
   const anchorPointKey = makePointKeyFromPoint(document, anchorRange.contentReference, anchorPoint);
   const focusPointKey = makePointKeyFromPoint(document, focusRange.contentReference, focusPoint);
-  return compareKeys(document, anchorPointKey, focusPointKey) === CompareKeysResult.After;
+  const compareResult = compareKeys(document, anchorPointKey, focusPointKey);
+  assert([CompareKeysResult.After, CompareKeysResult.Before, CompareKeysResult.OverlapSameNonText, CompareKeysResult.OverlapSameText].includes(compareResult));
+  return compareResult as CompareKeysResult.After | CompareKeysResult.Before | CompareKeysResult.OverlapSameNonText | CompareKeysResult.OverlapSameText;
+}
+function getIsSelectionRangeAnchorAfterFocus(
+  document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
+  selectionRange: SelectionRange,
+): boolean {
+  return compareSelectionRangeAnchorToFocus(document, selectionRange) === CompareKeysResult.After;
 }
 function getSelectionRangeAnchorAndFocusPointWithContentReferences(selectionRange: SelectionRange): {
   anchorPointWithContentReference: PointWithContentReference;
@@ -9127,4 +9135,5 @@ export {
   type SelectionChangeData,
   getAnchorRangeFromSelectionRange,
   getFocusRangeFromSelectionRange,
+  compareSelectionRangeAnchorToFocus,
 };

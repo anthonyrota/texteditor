@@ -2705,17 +2705,24 @@ function makeVirtualizedMoveSelectionSoftLineUpDownUpdateFn(
         documentRenderControl.stateControl,
         (_document, _stateControlConfig, _selectionRange) => false,
         (_document, _stateControlConfig, selectionRangeIntention, range, anchorPoint, selectionRange) => {
-          const isAnchorAfterFocus = matita.getIsSelectionRangeAnchorAfterFocus(documentRenderControl.stateControl.stateView.document, selectionRange);
+          const compareAnchorToFocusResult = matita.compareSelectionRangeAnchorToFocus(documentRenderControl.stateControl.stateView.document, selectionRange);
+          const moveFromFocus =
+            compareAnchorToFocusResult === matita.CompareKeysResult.OverlapSameNonText ||
+            compareAnchorToFocusResult === matita.CompareKeysResult.OverlapSameText ||
+            (pointMovement === matita.PointMovement.Previous
+              ? compareAnchorToFocusResult === matita.CompareKeysResult.After
+              : compareAnchorToFocusResult === matita.CompareKeysResult.Before);
           let cursorOffsetLeft: number | undefined;
           const cursorOffsetLeftDataValue = getMoveOrExtendSoftLineUpOrDownOriginalCursorOffsetLeftWithExpirationIdSelectionRangeDataValue(selectionRange.data);
           if (
             cursorOffsetLeftDataValue !== undefined &&
-            documentRenderControl.isSelectionSecondaryDataExpirationIdActive(cursorOffsetLeftDataValue.expirationId)
+            documentRenderControl.isSelectionSecondaryDataExpirationIdActive(cursorOffsetLeftDataValue.expirationId) &&
+            moveFromFocus
           ) {
             cursorOffsetLeft = cursorOffsetLeftDataValue.cursorOffsetLeft;
           }
           let result: ReturnType<(typeof documentRenderControl)['transformPointSoftLineUpDownWithOffsetLeft']>;
-          if (pointMovement === matita.PointMovement.Previous ? isAnchorAfterFocus : !isAnchorAfterFocus) {
+          if (moveFromFocus) {
             const focusPoint = matita.getFocusPointFromRange(range);
             result = documentRenderControl.transformPointSoftLineUpDownWithOffsetLeft(
               pointMovement,
