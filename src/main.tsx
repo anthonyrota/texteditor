@@ -16,7 +16,7 @@ import {
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor, LastValueDistributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
-import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
+import { ScheduleInterval, scheduleAnimationFrame, scheduleMicrotask } from './ruscel/schedule';
 import {
   combine,
   debounce,
@@ -45,14 +45,12 @@ import {
   startWith,
   subscribe,
   switchEach,
-  take,
   takeUntil,
   takeWhile,
   throttle,
   ThrowType,
   timer,
   windowScheduledBySource,
-  withPrevious,
 } from './ruscel/source';
 import {
   pipe,
@@ -691,8 +689,16 @@ function use$<T>(
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
   updateSync?: boolean | ((value: Maybe<T>) => boolean),
 ): Maybe<T> {
-  const [value, setValue] = useState<Maybe<T>>(initialMaybe ?? None);
+  const [value, setValueState] = useState<Maybe<T>>(initialMaybe ?? None);
   const isFirstUpdateRef = useRef(true);
+  const setValue = (newMaybe: Maybe<T>) => {
+    setValueState((currentValue) => {
+      if (isNone(currentValue) ? isNone(newMaybe) : isSome(newMaybe) && currentValue.value === newMaybe.value) {
+        return currentValue;
+      }
+      return newMaybe;
+    });
+  };
   useEffect(() => {
     const isFirstUpdate = isFirstUpdateRef.current;
     isFirstUpdateRef.current = false;
@@ -732,71 +738,6 @@ function use$<T>(
     };
   }, [source]);
   return value;
-}
-interface HitPosition {
-  pointWithContentReference: matita.PointWithContentReference;
-  isPastPreviousCharacterHalfPoint: boolean;
-  isWrappedLineStart: boolean;
-  isWrappedLinePreviousEnd: boolean;
-}
-interface ViewPosition {
-  readonly left: number;
-  readonly top: number;
-}
-interface ViewCursorInfo {
-  position: ViewPosition;
-  height: number;
-  isAnchor: boolean;
-  isFocus: boolean;
-  isItalic: boolean;
-  insertTextConfig: TextConfig;
-  paragraphReference: matita.BlockReference;
-  offset: number;
-  rangeDirection: matita.RangeDirection;
-}
-interface ViewRangeInfo {
-  rectangle: ViewRectangle;
-  paragraphLineIndex: number;
-  startOffset: number;
-  endOffset: number;
-  paragraphReference: matita.BlockReference;
-}
-interface ViewCursorAndRangeInfosForParagraphInRange {
-  paragraphReference: matita.BlockReference;
-  viewCursorInfos: ViewCursorInfo[];
-  viewRangeInfos: ViewRangeInfo[];
-}
-interface ViewCursorAndRangeInfosForRange {
-  viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[];
-}
-interface ViewCursorAndRangeInfosForSelectionRange {
-  viewCursorAndRangeInfosForRanges: ViewCursorAndRangeInfosForRange[];
-  selectionRangeId: string;
-  hasFocus: boolean;
-  isInComposition: boolean;
-  roundCorners: boolean;
-}
-interface ViewCursorAndRangeInfos {
-  viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
-}
-interface SelectionViewMessage {
-  viewCursorAndRangeInfos: ViewCursorAndRangeInfos;
-  renderSync: boolean;
-}
-interface SelectionViewProps {
-  selectionView$: Source<SelectionViewMessage>;
-}
-class UniqueKeyControl {
-  #keyCount = new Map<string, number>();
-  makeUniqueKey(key: string): string {
-    const count = this.#keyCount.get(key);
-    if (count !== undefined) {
-      this.#keyCount.set(key, count + 1);
-      return JSON.stringify([key, count]);
-    }
-    this.#keyCount.set(key, 1);
-    return JSON.stringify([key, 0]);
-  }
 }
 function pushCurvedLineRectSpans(
   jsxElements: JSX.Element[],
@@ -919,9 +860,75 @@ function pushCurvedLineRectSpans(
   }
   jsxElements.push(<span key={key} style={cssProperties} />);
 }
+class UniqueKeyControl {
+  #keyCount = new Map<string, number>();
+  makeUniqueKey(key: string): string {
+    const count = this.#keyCount.get(key);
+    if (count !== undefined) {
+      this.#keyCount.set(key, count + 1);
+      return JSON.stringify([key, count]);
+    }
+    this.#keyCount.set(key, 1);
+    return JSON.stringify([key, 0]);
+  }
+}
+interface HitPosition {
+  pointWithContentReference: matita.PointWithContentReference;
+  isPastPreviousCharacterHalfPoint: boolean;
+  isWrappedLineStart: boolean;
+  isWrappedLinePreviousEnd: boolean;
+}
+interface ViewPosition {
+  readonly left: number;
+  readonly top: number;
+}
+interface ViewCursorInfo {
+  position: ViewPosition;
+  height: number;
+  isAnchor: boolean;
+  isFocus: boolean;
+  isItalic: boolean;
+  insertTextConfig: TextConfig;
+  paragraphReference: matita.BlockReference;
+  offset: number;
+  rangeDirection: matita.RangeDirection;
+}
+interface ViewRangeInfo {
+  rectangle: ViewRectangle;
+  paragraphLineIndex: number;
+  startOffset: number;
+  endOffset: number;
+  paragraphReference: matita.BlockReference;
+}
+interface ViewCursorAndRangeInfosForParagraphInRange {
+  paragraphReference: matita.BlockReference;
+  viewCursorInfos: ViewCursorInfo[];
+  viewRangeInfos: ViewRangeInfo[];
+}
+interface ViewCursorAndRangeInfosForRange {
+  viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[];
+}
+interface ViewCursorAndRangeInfosForSelectionRange {
+  viewCursorAndRangeInfosForRanges: ViewCursorAndRangeInfosForRange[];
+  selectionRangeId: string;
+  isInComposition: boolean;
+  roundCorners: boolean;
+}
+interface ViewCursorAndRangeInfos {
+  viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
+}
+interface SelectionViewMessage {
+  viewCursorAndRangeInfos: ViewCursorAndRangeInfos;
+  renderSync: boolean;
+}
+interface SelectionViewProps {
+  selectionView$: Source<SelectionViewMessage>;
+  hasFocus$: Source<boolean>;
+  resetSynchronizedCursorVisibility$: Source<undefined>;
+}
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
-  const { selectionView$ } = props;
-  const renderDataMaybe = use$(
+  const { selectionView$, hasFocus$, resetSynchronizedCursorVisibility$ } = props;
+  const selectionViewMaybe = use$(
     useMemo(
       () =>
         pipe(
@@ -935,28 +942,50 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
       return isSome(maybe) && maybe.value.renderSync;
     },
   );
+  const hasFocusMaybe = use$(
+    useMemo(
+      () =>
+        pipe(
+          hasFocus$,
+          debounce(() => ofEvent(End, scheduleAnimationFrame)),
+          memoConsecutive(),
+        ),
+      [hasFocus$],
+    ),
+  );
+  const hasFocus = isSome(hasFocusMaybe) && hasFocusMaybe.value;
   const cursorBlinkSpeed = 500;
-  const resetSynchronizedCursorVisibility$ = useMemo(() => LastValueDistributor<undefined>(), []);
   const synchronizedCursorVisibility$ = useMemo(
     () =>
       pipe(
-        resetSynchronizedCursorVisibility$,
-        map<undefined, Source<boolean>>(() =>
-          pipe(
-            interval(cursorBlinkSpeed),
-            map((i) => i % 2 === 1),
-            startWith([true]),
-          ),
-        ),
+        hasFocus$,
+        map((hasFocus) => {
+          if (hasFocus) {
+            return pipe(
+              resetSynchronizedCursorVisibility$,
+              map<undefined, Source<boolean>>(() =>
+                pipe(
+                  interval(cursorBlinkSpeed),
+                  map((i) => i % 2 === 1),
+                  startWith([true]),
+                ),
+              ),
+              switchEach,
+            );
+          }
+          return ofEvent(Push(true));
+        }),
         switchEach,
+        debounce(() => ofEvent(End, scheduleMicrotask)),
+        memoConsecutive(),
         share(),
       ),
     [],
   );
-  if (isNone(renderDataMaybe)) {
+  if (isNone(selectionViewMaybe)) {
     return null;
   }
-  const { viewCursorAndRangeInfos } = renderDataMaybe.value;
+  const { viewCursorAndRangeInfos } = selectionViewMaybe.value;
   const { viewCursorAndRangeInfosForSelectionRanges } = viewCursorAndRangeInfos;
   if (viewCursorAndRangeInfosForSelectionRanges.length === 0) {
     return null;
@@ -965,7 +994,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
   const fragmentChildren: JSX.Element[] = [];
   for (let i = 0; i < viewCursorAndRangeInfosForSelectionRanges.length; i++) {
     const viewCursorAndRangeInfosForSelectionRange = viewCursorAndRangeInfosForSelectionRanges[i];
-    const { viewCursorAndRangeInfosForRanges, hasFocus, isInComposition, selectionRangeId, roundCorners } = viewCursorAndRangeInfosForSelectionRange;
+    const { viewCursorAndRangeInfosForRanges, isInComposition, selectionRangeId, roundCorners } = viewCursorAndRangeInfosForSelectionRange;
     for (let j = 0; j < viewCursorAndRangeInfosForRanges.length; j++) {
       const viewCursorAndRangeInfosForRange = viewCursorAndRangeInfosForRanges[j];
       const { viewParagraphInfos } = viewCursorAndRangeInfosForRange;
@@ -1028,9 +1057,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
                 JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId, insertTextConfig]),
               )}
               viewCursorInfo={viewCursorInfo}
-              resetSynchronizedCursorVisibilitySink={resetSynchronizedCursorVisibility$}
               synchronizedCursorVisibility$={synchronizedCursorVisibility$}
-              cursorBlinkSpeed={cursorBlinkSpeed}
               hasFocus={hasFocus}
               isItalic={isItalic}
             />,
@@ -1043,41 +1070,16 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
 }
 interface BlinkingCursorProps {
   viewCursorInfo: ViewCursorInfo;
-  resetSynchronizedCursorVisibilitySink: Sink<undefined>;
   synchronizedCursorVisibility$: Source<boolean>;
-  cursorBlinkSpeed: number;
   hasFocus: boolean;
   isItalic: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, resetSynchronizedCursorVisibilitySink, synchronizedCursorVisibility$, cursorBlinkSpeed, hasFocus, isItalic } = props;
+  const { viewCursorInfo, synchronizedCursorVisibility$, hasFocus, isItalic } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
-  const isVisibleMaybe = use$(
-    useMemo(
-      () =>
-        !hasFocus
-          ? ofEvent<boolean>(End)
-          : pipe(
-              fromArray([
-                pipe(
-                  timer(cursorBlinkSpeed / 2),
-                  map(() => true),
-                ),
-                synchronizedCursorVisibility$,
-              ]),
-              flat(1),
-            ),
-      [cursorBlinkSpeed, synchronizedCursorVisibility$, hasFocus],
-    ),
-  );
-  useEffect(() => {
-    resetSynchronizedCursorVisibilitySink(Push(undefined));
-    return () => {
-      resetSynchronizedCursorVisibilitySink(Push(undefined));
-    };
-  }, []);
+  const isVisibleMaybe = use$(synchronizedCursorVisibility$, Some(true));
   const cursorWidth = 2;
   return (
     <span
@@ -1089,7 +1091,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         height: viewCursorInfo.height,
         backgroundColor: hasFocus ? '#222' : '#666',
         transform: isItalic ? 'skew(-7deg)' : undefined,
-        visibility: isNone(isVisibleMaybe) || (isSome(isVisibleMaybe) && isVisibleMaybe.value) ? 'visible' : 'hidden',
+        visibility: isVisibleMaybe.value ? 'visible' : 'hidden',
       }}
     />
   );
@@ -4241,6 +4243,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
   #renderOverlayAsync = false;
   #changeQuery$ = Distributor<string>();
+  #hasFocus$ = CurrentValueDistributor(false);
+  #resetSynchronizedCursorVisibility$ = CurrentValueDistributor<undefined>(undefined);
   init(): void {
     this.#containerHtmlElement = document.createElement('div');
     this.#topLevelContentViewContainerElement = document.createElement('div');
@@ -4284,22 +4288,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addEventListener(this.#inputTextElement, 'copy', this.#onCopy.bind(this), this);
     addEventListener(this.#inputTextElement, 'cut', this.#onCut.bind(this), this);
     addEventListener(this.#inputTextElement, 'focus', this.#onInputElementFocus.bind(this), this);
-    // TODO.
-    addEventListener(this.#inputTextElement, 'blur', () => this.#replaceViewSelectionRanges(true), this);
+    addEventListener(this.#inputTextElement, 'blur', this.#onInputElementBlur.bind(this), this);
     addWindowEventListener('compositionstart', this.#onCompositionStart.bind(this), this);
     addWindowEventListener('compositionend', this.#onCompositionEnd.bind(this), this);
-    addWindowEventListener('focus', () => this.#replaceViewSelectionRanges(true), this);
-    addWindowEventListener(
-      'blur',
-      () => {
-        requestAnimationFrameDisposable(() => {
-          this.#clearKeys();
-        }, this);
-        // TODO.
-        this.#replaceViewSelectionRanges(true);
-      },
-      this,
-    );
+    addWindowEventListener('focus', () => this.#onWindowFocus.bind(this), this);
+    addWindowEventListener('blur', this.#onWindowBlur.bind(this), this);
     const inputElementReactiveMutationObserver = new ReactiveMutationObserver();
     pipe(
       inputElementReactiveMutationObserver.records$,
@@ -4614,11 +4607,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               }
               let startPointWithContentReference: matita.PointWithContentReference;
               let endPointWithContentReference: matita.PointWithContentReference;
-              let isWrappedLineStart: boolean;
+              let isFocusWrappedLineStart: boolean;
               if (dragState.selectionType === 'grapheme') {
                 startPointWithContentReference = originalStartPointWithContentReference;
                 endPointWithContentReference = originalEndPointWithContentReference;
-                isWrappedLineStart = originalIsWrappedLineStart;
+                isFocusWrappedLineStart = originalIsWrappedLineStart;
               } else if (
                 matita.isParagraphPoint(originalStartPointWithContentReference.point) &&
                 matita.arePointWithContentReferencesEqual(originalStartPointWithContentReference, originalEndPointWithContentReference) &&
@@ -4628,7 +4621,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               ) {
                 startPointWithContentReference = originalStartPointWithContentReference;
                 endPointWithContentReference = originalStartPointWithContentReference;
-                isWrappedLineStart = false;
+                isFocusWrappedLineStart = false;
               } else {
                 const originalStartPointKey = matita.makePointKeyFromPoint(
                   this.stateControl.stateView.document,
@@ -4747,7 +4740,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   ) {
                     isBackward = false;
                   }
-                  isWrappedLineStart = originalIsWrappedLineStart
+                  isFocusWrappedLineStart = originalIsWrappedLineStart
                     ? isBackward
                       ? matita.arePointWithContentReferencesEqual(originalFirstPointWithContentReference, firstPointWithContentReference)
                       : matita.arePointWithContentReferencesEqual(originalSecondPointWithContentReference, secondPointWithContentReference)
@@ -4784,7 +4777,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   if (isBackward && matita.areParagraphPointsAtSameParagraph(firstPointWithContentReference.point, secondPointWithContentReference.point)) {
                     isBackward = false;
                   }
-                  isWrappedLineStart = false;
+                  isFocusWrappedLineStart = false;
                 }
                 startPointWithContentReference = isBackward ? secondPointWithContentReference : firstPointWithContentReference;
                 endPointWithContentReference = isBackward ? firstPointWithContentReference : secondPointWithContentReference;
@@ -4826,7 +4819,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 matita.SelectionRangeIntention.Text,
                 Object.assign(
                   {},
-                  isWrappedLineStart
+                  isFocusWrappedLineStart
                     ? {
                         [VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId]:
                           makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(this.makeActivatedSelectionSecondaryDataExpirationId()),
@@ -4881,23 +4874,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   endPointInfo = null;
                   return;
                 }
-                let selectionChangeData: matita.SelectionChangeData | undefined;
-                const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(newSelection);
-                if (focusSelectionRange !== null) {
-                  const lineWrapFocusCursorWrapToNextLineDataValue = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
-                    focusSelectionRange.data,
-                  );
-                  if (
-                    lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
-                    this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId)
-                  ) {
-                    selectionChangeData = {
-                      [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
-                        makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue([focusSelectionRange.id]),
-                    };
-                  }
-                }
-                this.stateControl.delta.setSelection(newSelection, undefined, selectionChangeData);
+                const allSelectionIds = newSelection.selectionRanges.map((selectionRange) => selectionRange.id);
+                this.stateControl.delta.setSelection(newSelection, undefined, {
+                  [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+                    makeSelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(allSelectionIds),
+                  [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
+                    makeSelectionChangeDataPreserveLineWrapFocusCursorWrapToNextLineForSelectionRangesWithSelectionIdsDataValue(allSelectionIds),
+                });
                 endPointInfo = null;
               });
             };
@@ -4992,7 +4975,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }),
       );
     };
-    renderReactNodeIntoHtmlContainerElement(<SelectionView selectionView$={this.#selectionView$} />, this.#selectionViewContainerElement, 'selection-view-');
+    renderReactNodeIntoHtmlContainerElement(
+      <SelectionView
+        selectionView$={this.#selectionView$}
+        hasFocus$={this.#hasFocus$}
+        resetSynchronizedCursorVisibility$={this.#resetSynchronizedCursorVisibility$}
+      />,
+      this.#selectionViewContainerElement,
+      'selection-view-',
+    );
     renderReactNodeIntoHtmlContainerElement(<SearchOverlay searchOverlay$={this.#searchOverlay$} />, this.#searchOverlayContainerElement, 'search-overlay-');
     this.#searchElementContainerElement = document.createElement('div');
     this.#containerHtmlElement.style.position = 'relative';
@@ -5745,8 +5736,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     };
   }
   #onInputElementFocus(): void {
-    // TODO.
-    this.#replaceViewSelectionRanges(true);
+    this.#hasFocus$(Push(this.#hasFocus()));
+  }
+  #onInputElementBlur(): void {
+    this.#hasFocus$(Push(this.#hasFocus()));
+  }
+  #onWindowFocus(): void {
+    this.#hasFocus$(Push(this.#hasFocus()));
+  }
+  #onWindowBlur(): void {
+    requestAnimationFrameDisposable(() => {
+      this.#clearKeys();
+    }, this);
+    this.#hasFocus$(Push(this.#hasFocus()));
   }
   makeSoftLineStartEndFocusPointTransformFn(
     pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
@@ -6032,6 +6034,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.#activeSelectionSecondaryDataExpirationIds.delete(activeExpirationId);
       }
     }
+    this.#resetSynchronizedCursorVisibility$(Push(undefined));
   }
   #onAfterMutationPart(
     event: Event<matita.AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>,
@@ -7537,7 +7540,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         (viewCursorAndRangeInfosForRanges): ViewCursorAndRangeInfosForSelectionRange => ({
           viewCursorAndRangeInfosForRanges,
           selectionRangeId: selectionRange.id,
-          hasFocus: this.#hasFocus(),
           isInComposition: this.#isInComposition > 0,
           roundCorners: true,
         }),
