@@ -744,14 +744,11 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
       } else {
         const lastPoint = firstRangeDirection === matita.RangeDirection.Backwards ? firstRange.startPoint : firstRange.endPoint;
-        const lastPointIndex = matita.isStartOfContentPoint(lastPoint)
-          ? 0
-          : matita.isEndOfContentPoint(lastPoint)
-          ? matita.getNumberOfBlocksInContentAtContentReference(this.#stateControl.stateView.document, firstRange.contentReference) - 1
-          : matita.getIndexOfBlockInContentFromBlockReference(
-              this.#stateControl.stateView.document,
-              matita.isParagraphPoint(lastPoint) ? matita.makeBlockReferenceFromParagraphPoint(lastPoint) : matita.makeBlockReferenceFromBlockPoint(lastPoint),
-            );
+        const lastPointIndex = matita.getIndexOfBlockAtPointInNonEmptyContentAtContentReference(
+          this.#stateControl.stateView.document,
+          lastPoint,
+          firstRange.contentReference,
+        );
         const lastBlock = matita.accessBlockAtIndexInContentAtContentReference(
           this.#stateControl.stateView.document,
           firstRange.contentReference,

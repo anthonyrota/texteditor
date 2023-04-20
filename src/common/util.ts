@@ -72,12 +72,18 @@ function groupArray<T, K>(items: T[], getGroupKey: (item: T) => K): Map<K, T[]> 
   });
   return groups;
 }
-function makeArrayWithNumbersFromStartToEndInclusive(start: number, endInclusive: number): number[] {
-  const numbers: number[] = [];
-  for (let i = start; i <= endInclusive; i++) {
-    numbers.push(i);
-  }
-  return numbers;
+function omit<T extends object, K extends keyof T>(value: T, keys: K[]): Omit<T, K> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const newValue: any = {};
+  Object.keys(value).forEach((key) => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+    if (!keys.includes(key as any)) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      newValue[key] = value[key as keyof T];
+    }
+  });
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+  return newValue;
 }
 export {
   UnreachableCodeError,
@@ -89,6 +95,6 @@ export {
   assertIsNotNullish,
   groupConsecutiveItemsInArray,
   groupArray,
-  makeArrayWithNumbersFromStartToEndInclusive,
   type GroupConsecutiveItemsInArrayGroup,
+  omit,
 };
