@@ -27,8 +27,7 @@ class UniqueStringQueue {
       this.#queueLength++;
     }
   }
-  queue(value: string): void {
-    this.dequeue(value);
+  #queueNotAddedValue(value: string): void {
     if (this.#firstNode === null) {
       this.#firstNode = new LinkedListNode(value, null, null);
     } else {
@@ -38,6 +37,16 @@ class UniqueStringQueue {
     }
     this.#valueToNode[value] = this.#firstNode;
     this.#queueLength++;
+  }
+  queueIfNotQueuedAlready(value: string): void {
+    if (value in this.#valueToNode) {
+      return;
+    }
+    this.#queueNotAddedValue(value);
+  }
+  queue(value: string): void {
+    this.dequeue(value);
+    this.#queueNotAddedValue(value);
   }
   dequeue(value: string): void {
     const node = this.#valueToNode[value];

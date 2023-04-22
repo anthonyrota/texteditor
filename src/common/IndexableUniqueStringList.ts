@@ -41,6 +41,9 @@ class IndexableUniqueStringList {
     }
     return index;
   }
+  has(value: string): boolean {
+    return value in this.#valueToNode;
+  }
   *iterBetween(start: number, endInclusive: number): IterableIterator<string> {
     for (let i = start; i <= endInclusive; i++) {
       yield this.access(i);

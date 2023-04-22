@@ -6,7 +6,7 @@ class LruCache<K, V> {
     assert(maxEntries > 0);
     this.#maxEntries = maxEntries;
   }
-  public get(key: K): V | undefined {
+  get(key: K): V | undefined {
     const entry = this.#values.get(key);
     if (entry) {
       this.#values.delete(key);
@@ -14,7 +14,7 @@ class LruCache<K, V> {
     }
     return entry;
   }
-  public set(key: K, value: V) {
+  set(key: K, value: V) {
     if (this.#values.size >= this.#maxEntries) {
       const [keyToDelete] = this.#values.keys();
       if (keyToDelete) {
@@ -23,10 +23,10 @@ class LruCache<K, V> {
     }
     this.#values.set(key, value);
   }
-  public invalidate(key: K): void {
+  invalidate(key: K): void {
     this.#values.delete(key);
   }
-  public clear(): void {
+  clear(): void {
     this.#values.clear();
   }
 }
