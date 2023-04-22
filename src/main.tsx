@@ -526,16 +526,15 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   #listMarkerElement: HTMLElement | null = null;
   #updateContainer(injectedStyle: ParagraphStyleInjection): void {
     const paragraph = this.#accessParagraph();
-    if (this.#previousRenderedConfig === undefined || this.#previousRenderedConfig.alignment !== paragraph.config.alignment) {
-      const accessedParagraphAlignment = convertStoredParagraphAlignmentToAccessedParagraphAlignment(paragraph.config.alignment);
+    const previousAccessedParagraphAlignment =
+      this.#previousRenderedConfig && convertStoredParagraphAlignmentToAccessedParagraphAlignment(this.#previousRenderedConfig.alignment);
+    const accessedParagraphAlignment = convertStoredParagraphAlignmentToAccessedParagraphAlignment(paragraph.config.alignment);
+    if (previousAccessedParagraphAlignment !== accessedParagraphAlignment) {
       this.containerHtmlElement.style.textAlign = accessedParagraphAlignment;
       if (isSafari || isFirefox) {
         if (accessedParagraphAlignment === AccessedParagraphAlignment.Justify) {
           this.containerHtmlElement.style.whiteSpace = 'pre-line';
-        } else if (
-          this.#previousRenderedConfig !== undefined &&
-          convertStoredParagraphAlignmentToAccessedParagraphAlignment(this.#previousRenderedConfig.alignment) === AccessedParagraphAlignment.Justify
-        ) {
+        } else if (previousAccessedParagraphAlignment === AccessedParagraphAlignment.Justify) {
           this.containerHtmlElement.style.whiteSpace = 'break-spaces';
         }
       }
@@ -588,9 +587,14 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           this.#clearLastHeading();
           this.#textContainerElement = document.createElement('span');
           this.#textContainerElement.append(...this.containerHtmlElement.childNodes);
-          this.#textContainerElement.style.flexGrow = '1';
           this.containerHtmlElement.style.display = 'flex';
-          this.containerHtmlElement.style.justifyContent = 'start';
+          const justifyContent =
+            accessedParagraphAlignment === AccessedParagraphAlignment.Right
+              ? 'end'
+              : accessedParagraphAlignment === AccessedParagraphAlignment.Center
+              ? 'center'
+              : 'start';
+          this.containerHtmlElement.style.justifyContent = justifyContent;
           this.containerHtmlElement.style.gap = '0.5em';
           this.containerHtmlElement.style.paddingLeft = '1em';
           this.#listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
@@ -604,17 +608,24 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     } else {
       assertIsNotNullish(this.#previousInjectedStyle);
       if (paragraph.config.type === ParagraphType.ListItem) {
+        assertIsNotNullish(this.#listMarkerElement);
         assertIsNotNullish(this.#previousInjectedStyle.ListItem_type);
         assertIsNotNullish(injectedStyle.ListItem_type);
         if (
           this.#previousInjectedStyle.ListItem_type !== injectedStyle.ListItem_type ||
           this.#previousInjectedStyle.ListItem_OrderedList !== injectedStyle.ListItem_OrderedList
         ) {
-          assertIsNotNullish(this.#listMarkerElement);
           const previousListMarkerElement = this.#listMarkerElement;
           this.#listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
           previousListMarkerElement.replaceWith(this.#listMarkerElement);
         }
+        const justifyContent =
+          accessedParagraphAlignment === AccessedParagraphAlignment.Right
+            ? 'end'
+            : accessedParagraphAlignment === AccessedParagraphAlignment.Center
+            ? 'center'
+            : 'start';
+        this.containerHtmlElement.style.justifyContent = justifyContent;
       }
     }
     if (paragraph.config.type !== ParagraphType.ListItem) {
