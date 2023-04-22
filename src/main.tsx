@@ -4794,6 +4794,7 @@ class NumberedListIndexer {
   iterateParagraphIds(): IterableIterator<string> {
     return this.#listItemInfos.iterBetween(0, this.#listItemInfos.getLength() - 1);
   }
+  // TODO: List start offsets.
   recomputeListIndicesIfDirty(viewControl: VirtualizedViewControl, numberedIndentLevels: Set<number>): void {
     if (!this.#isDirty) {
       return;
@@ -6988,6 +6989,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   isSelectionSecondaryDataExpirationIdActive(expirationId: number): boolean {
     return this.#activeSelectionSecondaryDataExpirationIds.has(expirationId);
   }
+  #didResetCursorVisibility = false;
   #onSelectionChange(event: Event<matita.SelectionChangeMessage>): void {
     if (event.type !== PushType) {
       throwUnreachable();
@@ -7066,7 +7068,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.#activeSelectionSecondaryDataExpirationIds.delete(activeExpirationId);
       }
     }
-    this.#resetSynchronizedCursorVisibility$(Push(undefined));
+    if (!this.#didResetCursorVisibility) {
+      this.#resetSynchronizedCursorVisibility$(Push(undefined));
+      this.#didResetCursorVisibility = true;
+    }
   }
   #onAfterMutationPart(
     event: Event<matita.AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>,
@@ -8286,6 +8291,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (event.type !== PushType) {
       throwUnreachable();
     }
+    this.#didResetCursorVisibility = false;
     const message = event.value;
     const { didApplyMutation } = message;
     if (didApplyMutation) {

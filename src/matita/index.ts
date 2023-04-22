@@ -6701,6 +6701,7 @@ function applyMutation<
         }
         const paragraphReference = makeBlockReferenceFromBlock(paragraph);
         let startInlineOffset = 0;
+        let didChangeParagraph = false;
         for (let j = 0; j < paragraph.children.length; j++) {
           const inline = paragraph.children[j];
           const inlineLength = getInlineLength(inline);
@@ -6712,6 +6713,7 @@ function applyMutation<
               startParagraphPoint: makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, startInlineOffset),
               endParagraphPoint: makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, startInlineOffset + inlineLength),
             });
+            didChangeParagraph = true;
             paragraph.children[j] = makeText(newConfig, inline.text);
           } else {
             textsBetweenParagraphPoints.push({
@@ -6719,6 +6721,9 @@ function applyMutation<
             });
           }
           startInlineOffset += inlineLength;
+        }
+        if (didChangeParagraph) {
+          mergeTextsWithEqualConfigs(paragraph.children);
         }
       }
       const reverseMutations: Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = groupConsecutiveItemsInArray(
