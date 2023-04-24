@@ -5998,7 +5998,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             const endSelectionDragDisposable = Disposable();
             pointerDownWindow$.add(endSelectionDragDisposable);
             endSelectionDragDisposable.add(pointerCaptureDisposable);
+            let didEndSelectionDragManually = false;
             const endSelectionDrag = (): void => {
+              didEndSelectionDragManually = true;
               this.#isDraggingSelection = false;
               endSelectionDragDisposable.dispose();
               currentDebounceTimer$(End);
@@ -6042,9 +6044,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 }
                 const keyboardEvent = event.value;
                 keyboardEvent?.preventDefault();
-                endSelectionDrag();
                 this.stateControl.queueUpdate(() => {
                   assertIsNotNullish(dragState);
+                  endSelectionDrag();
                   this.stateControl.delta.setSelection(
                     this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
                       { selection: dragState.originalSelection, fixWhen: matita.MutationSelectionTransformFixWhen.NoFix, shouldTransformAsSelection: true },
@@ -6413,6 +6415,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             const queueSelectionUpdate = (endPointInfo: PointInfo | null): void => {
               this.#isDraggingSelection = !endPointInfo;
               this.stateControl.queueUpdate(() => {
+                if (didEndSelectionDragManually) {
+                  return;
+                }
                 const newSelection = calculateSelection(endPointInfo);
                 if (!newSelection) {
                   endPointInfo = null;
