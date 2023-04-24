@@ -4544,7 +4544,14 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             continue;
           }
           const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
-          if (inlineNodeText === '-' || inlineNodeText === '*' || inlineNodeText === '>') {
+          if (
+            inlineNodeText === '-' ||
+            inlineNodeText === '*' ||
+            inlineNodeText === '>' ||
+            inlineNodeText === '#' ||
+            inlineNodeText === '##' ||
+            inlineNodeText === '###'
+          ) {
             trackedSelectionRangeIds.add(selectionRange.id);
           }
         }
@@ -4579,15 +4586,23 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             applyUnorderedListSelectionRanges.push(selectionRange);
             continue;
           }
-          if (inlineNodeText === '> ') {
-            if (paragraph.config.type === ParagraphType.Blockquote) {
+          if (inlineNodeText === '> ' || inlineNodeText === '# ' || inlineNodeText === '## ' || inlineNodeText === '### ') {
+            const newParagraphType =
+              inlineNodeText === '> '
+                ? ParagraphType.Blockquote
+                : inlineNodeText === '# '
+                ? ParagraphType.Heading1
+                : inlineNodeText === '## '
+                ? ParagraphType.Heading2
+                : ParagraphType.Heading3;
+            if (paragraph.config.type === newParagraphType) {
               continue;
             }
             const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
             const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
             mutations.push(
               matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []),
-              matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: ParagraphType.Blockquote }),
+              matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: newParagraphType }),
             );
           }
         }
