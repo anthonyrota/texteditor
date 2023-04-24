@@ -3282,6 +3282,33 @@ interface ResolveOverlappingSelectionRangesInfo {
   compare_range1SortedEnd_to_range2SortedEnd: CompareKeysResult;
   updateSelectionRangeId: (removedSelectionRangeId: string, newSelectionRangeId: string) => string;
 }
+function getRangesInSelectionSorted(document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>, selection: Selection): Range[] {
+  const rangesWithKeys = selection.selectionRanges.flatMap((selectionRange) =>
+    selectionRange.ranges.map((range) => {
+      const createdAt = selectionRange.data[SelectionRangeDataCreatedAtKey] as number;
+      assert(typeof createdAt === 'number');
+      return makeSortedRangeWithKeysFromRange(
+        document,
+        range,
+        selectionRange.anchorRangeId === range.id,
+        selectionRange.focusRangeId === range.id,
+        selectionRange.id,
+        createdAt,
+      );
+    }),
+  );
+  rangesWithKeys.sort((range1WithKeys, range2WithKeys) => {
+    const compare_range1SortedStart_to_range2SortedStart = compareKeys(document, range1WithKeys.sortedStartKey, range2WithKeys.sortedStartKey);
+    return compare_range1SortedStart_to_range2SortedStart === CompareKeysResult.Before ||
+      compare_range1SortedStart_to_range2SortedStart === CompareKeysResult.OverlapPreferKey1Before
+      ? -1
+      : compare_range1SortedStart_to_range2SortedStart === CompareKeysResult.OverlapSameNonText ||
+        compare_range1SortedStart_to_range2SortedStart === CompareKeysResult.OverlapSameText
+      ? 0
+      : 1;
+  });
+  return rangesWithKeys.map((rangeWithKeys) => rangeWithKeys.range);
+}
 function sortAndMergeAndFixSelectionRanges<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -9056,58 +9083,53 @@ function calculateParagraphReferenceRangesAndIsAllActiveFromParagraphConfigToggl
 >(
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   isParagraphConfigActive: ((paragraphConfig: ParagraphConfig) => boolean) | null,
-  selection: Selection,
+  orderedRanges: Range[],
 ): { paragraphReferenceRanges: ParagraphReferenceRange[]; isAllActive: boolean } {
   const paragraphReferenceRanges: ParagraphReferenceRange[] = [];
   // Note the selection is always sorted, so we can simplify the logic here.
   const visitedParagraphIds = new Set<string>();
   let isAllActive = true;
-  for (let i = 0; i < selection.selectionRanges.length; i++) {
-    const selectionRange = selection.selectionRanges[i];
-    for (let j = 0; j < selectionRange.ranges.length; j++) {
-      const range = selectionRange.ranges[j];
-      const direction = getRangeDirection(document, range);
-      if (direction === RangeDirection.NeutralEmptyContent) {
-        continue;
-      }
-      const firstPoint = direction === RangeDirection.Backwards ? range.endPoint : range.startPoint;
-      const lastPoint = direction === RangeDirection.Backwards ? range.startPoint : range.endPoint;
-      const firstPointBlockIndex = getIndexOfBlockAtPointInNonEmptyContentAtContentReference(document, firstPoint, range.contentReference);
-      const lastPointBlockIndex = getIndexOfBlockAtPointInNonEmptyContentAtContentReference(document, lastPoint, range.contentReference);
-      let firstParagraphReference: BlockReference | undefined;
-      let lastParagraphReference: BlockReference | undefined;
-      for (let k = firstPointBlockIndex; k <= lastPointBlockIndex; k++) {
-        const block = accessBlockAtIndexInContentAtContentReference(document, range.contentReference, k);
-        if (isParagraph(block) && !visitedParagraphIds.has(block.id)) {
-          firstParagraphReference = makeBlockReferenceFromBlock(block);
-          break;
-        }
-      }
-      if (firstParagraphReference === undefined) {
-        continue;
-      }
-      for (let k = lastPointBlockIndex; k >= firstPointBlockIndex; k--) {
-        const block = accessBlockAtIndexInContentAtContentReference(document, range.contentReference, k);
-        if (isParagraph(block) && !visitedParagraphIds.has(block.id)) {
-          lastParagraphReference = makeBlockReferenceFromBlock(block);
-          break;
-        }
-      }
-      if (selection.selectionRanges.length > 1 || (isParagraphConfigActive !== null && isAllActive)) {
-        for (let k = firstPointBlockIndex; k <= lastPointBlockIndex; k++) {
-          const block = accessBlockAtIndexInContentAtContentReference(document, range.contentReference, k);
-          if (isEmbed(block)) {
-            continue;
-          }
-          visitedParagraphIds.add(block.id);
-          if (isParagraphConfigActive !== null && isAllActive && !isParagraphConfigActive(block.config)) {
-            isAllActive = false;
-          }
-        }
-      }
-      assertIsNotNullish(lastParagraphReference);
-      paragraphReferenceRanges.push({ firstParagraphReference, lastParagraphReference });
+  for (let i = 0; i < orderedRanges.length; i++) {
+    const range = orderedRanges[i];
+    const direction = getRangeDirection(document, range);
+    if (direction === RangeDirection.NeutralEmptyContent) {
+      continue;
     }
+    const firstPoint = direction === RangeDirection.Backwards ? range.endPoint : range.startPoint;
+    const lastPoint = direction === RangeDirection.Backwards ? range.startPoint : range.endPoint;
+    const firstPointBlockIndex = getIndexOfBlockAtPointInNonEmptyContentAtContentReference(document, firstPoint, range.contentReference);
+    const lastPointBlockIndex = getIndexOfBlockAtPointInNonEmptyContentAtContentReference(document, lastPoint, range.contentReference);
+    let firstParagraphReference: BlockReference | undefined;
+    let lastParagraphReference: BlockReference | undefined;
+    for (let k = firstPointBlockIndex; k <= lastPointBlockIndex; k++) {
+      const block = accessBlockAtIndexInContentAtContentReference(document, range.contentReference, k);
+      if (isParagraph(block) && !visitedParagraphIds.has(block.id)) {
+        firstParagraphReference = makeBlockReferenceFromBlock(block);
+        break;
+      }
+    }
+    if (firstParagraphReference === undefined) {
+      continue;
+    }
+    for (let k = lastPointBlockIndex; k >= firstPointBlockIndex; k--) {
+      const block = accessBlockAtIndexInContentAtContentReference(document, range.contentReference, k);
+      if (isParagraph(block) && !visitedParagraphIds.has(block.id)) {
+        lastParagraphReference = makeBlockReferenceFromBlock(block);
+        break;
+      }
+    }
+    for (let k = firstPointBlockIndex; k <= lastPointBlockIndex; k++) {
+      const block = accessBlockAtIndexInContentAtContentReference(document, range.contentReference, k);
+      if (isEmbed(block)) {
+        continue;
+      }
+      visitedParagraphIds.add(block.id);
+      if (isParagraphConfigActive !== null && isAllActive && !isParagraphConfigActive(block.config)) {
+        isAllActive = false;
+      }
+    }
+    assertIsNotNullish(lastParagraphReference);
+    paragraphReferenceRanges.push({ firstParagraphReference, lastParagraphReference });
   }
   return {
     paragraphReferenceRanges,
@@ -9161,7 +9183,7 @@ function makeToggleUpdateParagraphConfigAtSelectionUpdateFn<
     const { paragraphReferenceRanges, isAllActive } = calculateParagraphReferenceRangesAndIsAllActiveFromParagraphConfigToggle(
       stateControl.stateView.document,
       isParagraphConfigActive,
-      selectionAt,
+      selectionAt.selectionRanges.flatMap((selectionRange) => selectionRange.ranges),
     );
     if (paragraphReferenceRanges.length === 0) {
       return;
@@ -9275,7 +9297,7 @@ function* iterParagraphsInRange(
     }
   }
 }
-function* iterParagraphsInSelection(
+function* iterParagraphsInSelectionOutOfOrder(
   document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
   selection: Selection,
 ): IterableIterator<BlockReference> {
@@ -9748,7 +9770,7 @@ export {
   makeToggleUpdateParagraphConfigAtSelectionUpdateFn,
   getIndexOfBlockAtPointInNonEmptyContentAtContentReference,
   iterParagraphsInRange,
-  iterParagraphsInSelection,
+  iterParagraphsInSelectionOutOfOrder,
   makeNodeConfigDeltaInsertInListAtPathBeforeIndex,
   makeNodeConfigDeltaRemoveInListAtPathAtIndex,
   makeNodeConfigDeltaReplaceInListAtPathAtIndex,
@@ -9759,4 +9781,5 @@ export {
   type ParagraphReferenceRange,
   joinNeighboringParagraphReferenceRanges,
   makeUniqueGroupedChangeType,
+  getRangesInSelectionSorted,
 };

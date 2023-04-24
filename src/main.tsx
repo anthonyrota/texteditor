@@ -3382,7 +3382,7 @@ function makeApplyListTypeAtSelectionUpdateFn(
       (paragraphConfig) =>
         paragraphConfig.type === ParagraphType.ListItem &&
         accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType,
-      selectionAt,
+      matita.getRangesInSelectionSorted(stateControl.stateView.document, selectionAt),
     );
     if (paragraphReferenceRanges.length === 0) {
       return;
@@ -4267,7 +4267,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       stateControl.queueUpdate(
         () => {
           const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-          for (const paragraphReference of matita.iterParagraphsInSelection(stateControl.stateView.document, stateControl.stateView.selection)) {
+          for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
             const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
             matita.assertIsParagraph(paragraph);
             if (paragraph.config.type !== ParagraphType.ListItem) {
@@ -4300,7 +4300,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       stateControl.queueUpdate(
         () => {
           const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-          for (const paragraphReference of matita.iterParagraphsInSelection(stateControl.stateView.document, stateControl.stateView.selection)) {
+          for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
             const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
             matita.assertIsParagraph(paragraph);
             if (paragraph.config.type === ParagraphType.ListItem) {
@@ -4329,7 +4329,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       stateControl.queueUpdate(
         () => {
           const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-          for (const paragraphReference of matita.iterParagraphsInSelection(stateControl.stateView.document, stateControl.stateView.selection)) {
+          for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
             const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
             matita.assertIsParagraph(paragraph);
             if (paragraph.config.type === ParagraphType.ListItem) {
