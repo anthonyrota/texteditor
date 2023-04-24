@@ -5147,6 +5147,16 @@ interface BatchMutation<
     | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
   )[];
 }
+type AnyMutation<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+> =
+  | Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
+  | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
 class BatchMutationMustContainMutationsError extends Error {
   name = 'BatchMutationMustContainMutationsError';
   constructor(options?: ErrorOptions) {
@@ -5161,10 +5171,7 @@ function makeBatchMutation<
   TextConfig extends NodeConfig,
   VoidConfig extends NodeConfig,
 >(
-  mutations: (
-    | Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
-    | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
-  )[],
+  mutations: AnyMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[],
 ): BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   if (mutations.length === 0) {
     throw new BatchMutationMustContainMutationsError();
@@ -5181,9 +5188,7 @@ function isMutationBatchMutation<
   TextConfig extends NodeConfig,
   VoidConfig extends NodeConfig,
 >(
-  mutation:
-    | Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
-    | BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  mutation: AnyMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
 ): mutation is BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   return 'mutations' in mutation;
 }
@@ -9782,4 +9787,5 @@ export {
   joinNeighboringParagraphReferenceRanges,
   makeUniqueGroupedChangeType,
   getRangesInSelectionSorted,
+  type AnyMutation,
 };

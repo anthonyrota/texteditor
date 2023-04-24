@@ -69,6 +69,7 @@ import './index.css';
 // eslint-disable-next-line @typescript-eslint/ban-types
 type DocumentConfig = {};
 enum StoredListStyleType {
+  UnorderedList = 'ul',
   OrderedList = 'ol',
   Checklist = 'checklist',
 }
@@ -192,10 +193,14 @@ function accessListTypeInTopLevelContentConfigFromListParagraphConfig(
   const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraphConfig.ListItem_indentLevel);
   return accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
 }
+function isStoredListTypeSet(storedListType: StoredListStyleType | undefined): boolean {
+  return (
+    storedListType === StoredListStyleType.UnorderedList ||
+    storedListType === StoredListStyleType.OrderedList ||
+    storedListType === StoredListStyleType.Checklist
+  );
+}
 function convertStoredListStyleTypeToAccessedListType(storedListType: StoredListStyleType | undefined): AccessedListStyleType {
-  if (storedListType === undefined || typeof storedListType !== 'string') {
-    return defaultListStyleType;
-  }
   if (storedListType === StoredListStyleType.OrderedList) {
     return AccessedListStyleType.OrderedList;
   }
@@ -203,18 +208,18 @@ function convertStoredListStyleTypeToAccessedListType(storedListType: StoredList
   if (storedListType === StoredListStyleType.Checklist) {
     return AccessedListStyleType.Checklist;
   }
-  assertUnreachable(storedListType);
+  return defaultListStyleType;
 }
 function convertAccessedListStyleTypeToStoredListType(accessedListType: AccessedListStyleType): StoredListStyleType | undefined {
+  if (accessedListType === AccessedListStyleType.UnorderedList) {
+    return StoredListStyleType.UnorderedList;
+  }
   if (accessedListType === AccessedListStyleType.Checklist) {
     return StoredListStyleType.Checklist;
   }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (accessedListType === AccessedListStyleType.OrderedList) {
     return StoredListStyleType.OrderedList;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (accessedListType === AccessedListStyleType.UnorderedList) {
-    return undefined;
   }
   assertUnreachable(accessedListType);
 }
@@ -3721,6 +3726,72 @@ function makeApplyListTypeAtSelectionUpdateFn(
     stateControl.delta.applyMutation(batchMutation);
   };
 }
+function makeIndentOrDedentListUpdateFn(
+  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  topLevelContentReference: matita.ContentReference,
+  indentOrDedent: 'indent' | 'dedent',
+): matita.RunUpdateFn {
+  return () => {
+    const topLevelContentConfigMutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    const paragraphConfigMutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    const handledListIdAndNumberedIndentCombinations = new Set<string>();
+    const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
+    for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
+      const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
+      matita.assertIsParagraph(paragraph);
+      if (paragraph.config.type === ParagraphType.ListItem) {
+        const newStoredIndentLevel =
+          indentOrDedent === 'indent'
+            ? incrementStoredListIndent(paragraph.config.ListItem_indentLevel)
+            : decrementStoredListIndent(paragraph.config.ListItem_indentLevel);
+        if (paragraph.config.ListItem_indentLevel !== newStoredIndentLevel) {
+          if (typeof paragraph.config.ListItem_listId === 'string') {
+            const newNumberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(newStoredIndentLevel);
+            const serializedListIdAndNumberedIndentCombination = serializeListIdAndNumberedIndentCombination(
+              paragraph.config.ListItem_listId,
+              newNumberedIndentLevel,
+            );
+            if (!handledListIdAndNumberedIndentCombinations.has(serializedListIdAndNumberedIndentCombination)) {
+              handledListIdAndNumberedIndentCombinations.add(serializedListIdAndNumberedIndentCombination);
+              const listTypeAtCurrentIndent = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+              const storedListStyleAtNewIndent = accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                topLevelContent.config,
+                paragraph.config.ListItem_listId,
+                newNumberedIndentLevel,
+              );
+              if (!matita.isJsonMap(storedListStyleAtNewIndent) || !isStoredListTypeSet(storedListStyleAtNewIndent.type)) {
+                topLevelContentConfigMutations.push(
+                  matita.makeUpdateContentConfigMutation(
+                    topLevelContentReference,
+                    matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(
+                      ['listStyles', 'listIdToStyle', paragraph.config.ListItem_listId, 'indentLevelToStyle', String(newNumberedIndentLevel), 'type'],
+                      convertAccessedListStyleTypeToStoredListType(listTypeAtCurrentIndent),
+                    ),
+                  ),
+                );
+              }
+            }
+          }
+          paragraphConfigMutations.push(
+            matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
+              ListItem_indentLevel: newStoredIndentLevel,
+            }),
+          );
+        }
+      }
+    }
+    if (paragraphConfigMutations.length === 0) {
+      return;
+    }
+    const nestedBatchMutations: matita.BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    if (topLevelContentConfigMutations.length > 0) {
+      nestedBatchMutations.push(matita.makeBatchMutation(topLevelContentConfigMutations));
+    }
+    nestedBatchMutations.push(matita.makeBatchMutation(paragraphConfigMutations));
+    const batchMutation = matita.makeBatchMutation(nestedBatchMutations);
+    stateControl.delta.applyMutation(batchMutation);
+  };
+}
 function makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   shouldExtendSelectionRange: matita.ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
@@ -4296,60 +4367,19 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
     },
   },
   [StandardCommand.IncreaseListIndent]: {
-    execute(stateControl): void {
-      stateControl.queueUpdate(
-        () => {
-          const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-          for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
-            const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
-            matita.assertIsParagraph(paragraph);
-            if (paragraph.config.type === ParagraphType.ListItem) {
-              const newIndentLevel = incrementStoredListIndent(paragraph.config.ListItem_indentLevel);
-              assertIsNotNullish(newIndentLevel);
-              if (paragraph.config.ListItem_indentLevel !== newIndentLevel) {
-                mutations.push(
-                  matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
-                    ListItem_indentLevel: newIndentLevel,
-                  }),
-                );
-              }
-            }
-          }
-          if (mutations.length === 0) {
-            return;
-          }
-          stateControl.delta.applyMutation(matita.makeBatchMutation(mutations));
-        },
-        { [doNotScrollToSelectionAfterChangeDataKey]: true },
-      );
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(makeIndentOrDedentListUpdateFn(documentRenderControl.stateControl, documentRenderControl.topLevelContentReference, 'indent'), {
+        [doNotScrollToSelectionAfterChangeDataKey]: true,
+      });
     },
   },
   [StandardCommand.DecreaseListIndent]: {
-    execute(stateControl): void {
-      stateControl.queueUpdate(
-        () => {
-          const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-          for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
-            const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
-            matita.assertIsParagraph(paragraph);
-            if (paragraph.config.type === ParagraphType.ListItem) {
-              const newIndentLevel = decrementStoredListIndent(paragraph.config.ListItem_indentLevel);
-              if (paragraph.config.ListItem_indentLevel !== newIndentLevel) {
-                mutations.push(
-                  matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
-                    ListItem_indentLevel: newIndentLevel,
-                  }),
-                );
-              }
-            }
-          }
-          if (mutations.length === 0) {
-            return;
-          }
-          stateControl.delta.applyMutation(matita.makeBatchMutation(mutations));
-        },
-        { [doNotScrollToSelectionAfterChangeDataKey]: true },
-      );
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(makeIndentOrDedentListUpdateFn(documentRenderControl.stateControl, documentRenderControl.topLevelContentReference, 'dedent'), {
+        [doNotScrollToSelectionAfterChangeDataKey]: true,
+      });
     },
   },
   [StandardCommand.ApplyBlockquote]: {
