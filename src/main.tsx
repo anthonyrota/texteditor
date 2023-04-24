@@ -82,6 +82,12 @@ type ListStyle = {
   type?: StoredListStyleType;
   OrderedList_startNumber?: number;
 };
+function convertStoredOrderedListStartNumberToAccessedStartNumber(startNumber?: number): number {
+  return typeof startNumber === 'number' && Number.isInteger(startNumber) && startNumber >= 0 && startNumber < 2 ** 20 ? startNumber : 1;
+}
+function convertAccessedOrderedListStartNumberToStoredOrderedListStartNumber(startNumber: number): number | undefined {
+  return startNumber === 1 ? undefined : startNumber;
+}
 type TopLevelContentConfigListIdToStyle = {
   [listId: string]:
     | {
@@ -103,6 +109,7 @@ const acceptableStoredListIndents: StoredListIndent[] = [undefined, 1, 2, 3, 4, 
 type NumberedListIndent = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 const acceptableNumberedListIndents: NumberedListIndent[] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 function convertNumberListIndentLevelToStoredListIndentLevel(numberedIndentLevel: number): StoredListIndent {
+  assert((acceptableNumberedListIndents as number[]).includes(numberedIndentLevel));
   return (acceptableNumberedListIndents as unknown[]).includes(numberedIndentLevel) && numberedIndentLevel !== 0
     ? (numberedIndentLevel as StoredListIndent)
     : undefined;
@@ -118,9 +125,9 @@ function incrementStoredListIndent(indentLevel: number | undefined): StoredListI
 }
 function decrementStoredListIndent(indentLevel: number | undefined): StoredListIndent {
   const index = (acceptableStoredListIndents as unknown[]).indexOf(indentLevel);
-  return index === -1 || index === 0 ? undefined : acceptableStoredListIndents[index + 1];
+  return index === -1 || index === 0 ? undefined : acceptableStoredListIndents[index - 1];
 }
-function accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+function accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
   topLevelContentConfig: TopLevelContentConfig,
   listId: string,
   indentLevel: NumberedListIndent,
@@ -146,8 +153,34 @@ function accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel
   }
   return indentLevelToStyle[indentLevel];
 }
+function accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+  topLevelContentConfig: TopLevelContentConfig,
+  listId: string,
+  indentLevel: NumberedListIndent,
+): AccessedListStyleType {
+  assert(acceptableNumberedListIndents.includes(indentLevel));
+  const listStyle = accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, indentLevel);
+  if (!matita.isJsonMap(listStyle)) {
+    return defaultListStyleType;
+  }
+  return convertStoredListStyleTypeToAccessedListType(listStyle.type);
+}
+function accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+  topLevelContentConfig: TopLevelContentConfig,
+  listId: string,
+  indentLevel: NumberedListIndent,
+): number {
+  assert(acceptableNumberedListIndents.includes(indentLevel));
+  const listStyle = accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, indentLevel);
+  if (!matita.isJsonMap(listStyle)) {
+    throwUnreachable();
+  }
+  const listType = convertStoredListStyleTypeToAccessedListType(listStyle.type);
+  assert(listType === AccessedListStyleType.OrderedList);
+  return convertStoredOrderedListStartNumberToAccessedStartNumber(listStyle.OrderedList_startNumber);
+}
 const defaultListStyleType = AccessedListStyleType.UnorderedList;
-function accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(
+function accessListTypeInTopLevelContentConfigFromListParagraphConfig(
   topLevelContentConfig: TopLevelContentConfig,
   paragraphConfig: ParagraphConfig,
 ): AccessedListStyleType {
@@ -157,22 +190,18 @@ function accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(
     return defaultListStyleType;
   }
   const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraphConfig.ListItem_indentLevel);
-  const listStyle = accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
-  if (!matita.isJsonMap(listStyle)) {
-    return defaultListStyleType;
-  }
-  return convertStoredListStyleTypeToAccessedListType(listStyle.type);
+  return accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
 }
 function convertStoredListStyleTypeToAccessedListType(storedListType: StoredListStyleType | undefined): AccessedListStyleType {
+  if (storedListType === undefined || typeof storedListType !== 'string') {
+    return defaultListStyleType;
+  }
   if (storedListType === StoredListStyleType.OrderedList) {
     return AccessedListStyleType.OrderedList;
   }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (storedListType === StoredListStyleType.Checklist) {
     return AccessedListStyleType.Checklist;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (storedListType === undefined) {
-    return defaultListStyleType;
   }
   assertUnreachable(storedListType);
 }
@@ -251,8 +280,17 @@ type ParagraphConfig = {
   alignment?: StoredParagraphAlignment;
 };
 const defaultParagraphConfig: ParagraphConfig = {};
+const resetListMergeParagraphConfig: ParagraphConfig = {
+  type: undefined,
+  ListItem_listId: undefined,
+  ListItem_Checklist_checked: undefined,
+  ListItem_indentLevel: undefined,
+};
 const resetMergeParagraphConfig: ParagraphConfig = {
   type: undefined,
+  ListItem_listId: undefined,
+  ListItem_Checklist_checked: undefined,
+  ListItem_indentLevel: undefined,
   alignment: undefined,
 };
 // eslint-disable-next-line @typescript-eslint/ban-types
@@ -346,9 +384,7 @@ const getTextConfigTextRunSizingKey = (textConfig: TextConfig): string => {
 };
 interface ParagraphStyleInjection {
   ListItem_type?: AccessedListStyleType;
-  ListItem_OrderedList?: {
-    index: number;
-  };
+  ListItem_OrderedList_number?: number;
 }
 class VirtualizedParagraphRenderControl extends DisposableClass implements matita.ParagraphRenderControl {
   paragraphReference: matita.BlockReference;
@@ -479,28 +515,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   }
   #previousRenderedConfig: ParagraphConfig | undefined;
   #previousInjectedStyle: ParagraphStyleInjection | undefined;
-  #clearLastHeading(): void {
-    if (
-      this.#previousRenderedConfig !== undefined &&
-      (this.#previousRenderedConfig.type === ParagraphType.Heading1 ||
-        this.#previousRenderedConfig.type === ParagraphType.Heading2 ||
-        this.#previousRenderedConfig.type === ParagraphType.Heading3)
-    ) {
-      this.containerHtmlElement.style.fontWeight = '';
-      this.#fontSize = this.#baseFontSize;
-      this.containerHtmlElement.style.fontSize = `${this.#baseFontSize}px`;
-    }
-  }
-  #clearLastBlockquote(): void {
-    if (this.#previousRenderedConfig !== undefined && this.#previousRenderedConfig.type === ParagraphType.Blockquote) {
-      this.containerHtmlElement.style.color = '';
-      this.containerHtmlElement.style.borderLeft = '';
-      this.containerHtmlElement.style.paddingLeft = '';
-    }
-  }
   #makeListMarker(paragraphConfig: ParagraphConfig, injectedStyle: ParagraphStyleInjection): HTMLElement {
     const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
-    const listType = accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(
+    const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(
       matita.accessContentFromContentReference(documentRenderControl.stateControl.stateView.document, documentRenderControl.topLevelContentReference).config,
       paragraphConfig,
     );
@@ -514,8 +531,8 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       case AccessedListStyleType.OrderedList: {
         const listMarker = document.createElement('span');
         listMarker.style.whiteSpace = 'nowrap';
-        assertIsNotNullish(injectedStyle.ListItem_OrderedList);
-        listMarker.append(document.createTextNode(`${injectedStyle.ListItem_OrderedList.index + 1}.`));
+        assertIsNotNullish(injectedStyle.ListItem_OrderedList_number);
+        listMarker.append(document.createTextNode(`${injectedStyle.ListItem_OrderedList_number}.`));
         return listMarker;
       }
       case AccessedListStyleType.Checklist: {
@@ -524,6 +541,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     }
   }
   #listMarkerElement: HTMLElement | null = null;
+  #getPaddingLeftStyleFromListIndent(listIndent: number): string {
+    return `${24 + 48 * listIndent}px`;
+  }
   #updateContainer(injectedStyle: ParagraphStyleInjection): void {
     const paragraph = this.#accessParagraph();
     const previousAccessedParagraphAlignment =
@@ -548,43 +568,62 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         this.containerHtmlElement.replaceChildren(...this.#textContainerElement.childNodes);
         this.#textContainerElement = this.containerHtmlElement;
       }
+      if (this.#previousRenderedConfig !== undefined && this.#previousRenderedConfig.type === ParagraphType.Blockquote) {
+        this.containerHtmlElement.style.display = '';
+        this.containerHtmlElement.style.width = '';
+        this.containerHtmlElement.style.color = '';
+        this.containerHtmlElement.style.borderLeft = '';
+        this.containerHtmlElement.style.paddingLeft = '';
+        this.containerHtmlElement.style.marginLeft = '';
+        this.containerHtmlElement.style.marginRight = '';
+      }
+      if (
+        this.#previousRenderedConfig !== undefined &&
+        (this.#previousRenderedConfig.type === ParagraphType.Heading1 ||
+          this.#previousRenderedConfig.type === ParagraphType.Heading2 ||
+          this.#previousRenderedConfig.type === ParagraphType.Heading3)
+      ) {
+        this.containerHtmlElement.style.fontWeight = '';
+        this.#fontSize = this.#baseFontSize;
+        this.containerHtmlElement.style.fontSize = `${this.#baseFontSize}px`;
+      }
       switch (paragraph.config.type) {
         case undefined: {
-          this.#clearLastBlockquote();
-          this.#clearLastHeading();
           break;
         }
         case ParagraphType.Blockquote: {
-          this.#clearLastHeading();
           this.containerHtmlElement.style.color = '#57606a';
           this.containerHtmlElement.style.borderLeft = '0.2em solid #222';
           this.containerHtmlElement.style.paddingLeft = '12px';
+          if (accessedParagraphAlignment === AccessedParagraphAlignment.Center || accessedParagraphAlignment === AccessedParagraphAlignment.Right) {
+            this.containerHtmlElement.style.width = 'auto';
+            this.containerHtmlElement.style.display = 'table';
+            this.containerHtmlElement.style.marginLeft = 'auto';
+          }
+          if (accessedParagraphAlignment === AccessedParagraphAlignment.Center) {
+            this.containerHtmlElement.style.marginRight = 'auto';
+          }
           break;
         }
         case ParagraphType.Heading1: {
-          this.#clearLastBlockquote();
           this.containerHtmlElement.style.fontWeight = 'bold';
           this.#fontSize = 2 * this.#baseFontSize;
           this.containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
           break;
         }
         case ParagraphType.Heading2: {
-          this.#clearLastBlockquote();
           this.containerHtmlElement.style.fontWeight = 'bold';
           this.#fontSize = 1.5 * this.#baseFontSize;
           this.containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
           break;
         }
         case ParagraphType.Heading3: {
-          this.#clearLastBlockquote();
           this.containerHtmlElement.style.fontWeight = 'bold';
           this.#fontSize = 1.25 * this.#baseFontSize;
           this.containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
           break;
         }
         case ParagraphType.ListItem: {
-          this.#clearLastBlockquote();
-          this.#clearLastHeading();
           this.#textContainerElement = document.createElement('span');
           this.#textContainerElement.append(...this.containerHtmlElement.childNodes);
           this.containerHtmlElement.style.display = 'flex';
@@ -596,7 +635,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
               : 'start';
           this.containerHtmlElement.style.justifyContent = justifyContent;
           this.containerHtmlElement.style.gap = '0.5em';
-          this.containerHtmlElement.style.paddingLeft = '1em';
+          this.containerHtmlElement.style.paddingLeft = this.#getPaddingLeftStyleFromListIndent(
+            convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel),
+          );
           this.#listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
           this.containerHtmlElement.append(this.#listMarkerElement, this.#textContainerElement);
           break;
@@ -607,13 +648,29 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       }
     } else {
       assertIsNotNullish(this.#previousInjectedStyle);
+      if (paragraph.config.type === ParagraphType.Blockquote) {
+        if (accessedParagraphAlignment === AccessedParagraphAlignment.Center || accessedParagraphAlignment === AccessedParagraphAlignment.Right) {
+          this.containerHtmlElement.style.width = 'auto';
+          this.containerHtmlElement.style.display = 'table';
+          this.containerHtmlElement.style.marginLeft = 'auto';
+        } else {
+          this.containerHtmlElement.style.width = '';
+          this.containerHtmlElement.style.display = '';
+          this.containerHtmlElement.style.marginLeft = '';
+        }
+        if (accessedParagraphAlignment === AccessedParagraphAlignment.Center) {
+          this.containerHtmlElement.style.marginRight = 'auto';
+        } else {
+          this.containerHtmlElement.style.marginRight = '';
+        }
+      }
       if (paragraph.config.type === ParagraphType.ListItem) {
         assertIsNotNullish(this.#listMarkerElement);
         assertIsNotNullish(this.#previousInjectedStyle.ListItem_type);
         assertIsNotNullish(injectedStyle.ListItem_type);
         if (
           this.#previousInjectedStyle.ListItem_type !== injectedStyle.ListItem_type ||
-          this.#previousInjectedStyle.ListItem_OrderedList !== injectedStyle.ListItem_OrderedList
+          this.#previousInjectedStyle.ListItem_OrderedList_number !== injectedStyle.ListItem_OrderedList_number
         ) {
           const previousListMarkerElement = this.#listMarkerElement;
           this.#listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
@@ -626,6 +683,11 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
             ? 'center'
             : 'start';
         this.containerHtmlElement.style.justifyContent = justifyContent;
+        const previousListIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(this.#previousRenderedConfig.ListItem_indentLevel);
+        const listIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel);
+        if (previousListIndentLevel !== listIndentLevel) {
+          this.containerHtmlElement.style.paddingLeft = this.#getPaddingLeftStyleFromListIndent(listIndentLevel);
+        }
       }
     }
     if (paragraph.config.type !== ParagraphType.ListItem) {
@@ -828,10 +890,8 @@ class VirtualizedContentRenderControl extends DisposableClass implements matita.
     documentRenderControl.dirtyParagraphIdQueue.queueIfNotQueuedAlready(matita.getBlockIdFromBlockReference(paragraphReference));
     return paragraphRenderControl;
   }
-  onConfigChanged(): void {
-    // TODO: Style injections.
-    const documentRenderControl = this.#viewControl.accessDocumentRenderControl();
-  }
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  onConfigChanged(): void {}
   onBlocksRemoved(blockReferences: matita.BlockReference[]): void {
     const firstBlockReference = blockReferences[0];
     const firstChildIndex = this.#children.findIndex((paragraphRenderControl) => {
@@ -1845,10 +1905,8 @@ enum StandardCommand {
   ExtendSelectionEndOfDocument = 'standard.extendSelectionEndOfDocument',
   RemoveSelectionGraphemeBackwards = 'standard.removeSelectionGraphemeBackwards',
   RemoveSelectionWordBackwards = 'standard.removeSelectionWordBackwards',
-  RemoveSelectionParagraphBackwards = 'standard.removeSelectionParagraphBackwards',
   RemoveSelectionGraphemeForwards = 'standard.removeSelectionGraphemeForwards',
   RemoveSelectionWordForwards = 'standard.removeSelectionWordForwards',
-  RemoveSelectionParagraphForwards = 'standard.removeSelectionParagraphForwards',
   RemoveSelectionSoftLineStart = 'standard.removeSelectionSoftLineStart',
   RemoveSelectionSoftLineEnd = 'standard.removeSelectionSoftLineEnd',
   TransposeGraphemes = 'standard.transposeGraphemes',
@@ -1902,6 +1960,7 @@ enum StandardCommand {
   ApplyUnorderedList = 'standard.applyUnorderedList',
   ApplyChecklist = 'standard.applyChecklist',
   ResetParagraphStyle = 'standard.resetParagraphStyle',
+  KeyPressSpace = 'standard.keyPressSpace',
 }
 enum Platform {
   Apple = 'Apple',
@@ -2224,8 +2283,8 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Control+Alt+KeyE', command: StandardCommand.AlignParagraphCenter, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+Alt+KeyR', command: StandardCommand.AlignParagraphRight, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+Alt+KeyJ', command: StandardCommand.AlignParagraphJustify, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+BracketRight', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+BracketLeft', command: StandardCommand.DecreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+BracketRight', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+BracketLeft', command: StandardCommand.DecreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Digit1', command: StandardCommand.ApplyHeading1, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Digit2', command: StandardCommand.ApplyHeading2, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Digit3', command: StandardCommand.ApplyHeading3, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -2234,6 +2293,7 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Alt+Digit9', command: StandardCommand.ApplyChecklist, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Digit0', command: StandardCommand.ApplyBlockquote, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Alt?+Shift?+Space', command: StandardCommand.KeyPressSpace, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
 ];
 function getPlatform(): Platform | null {
   const userAgent = window.navigator.userAgent;
@@ -2651,18 +2711,6 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
       );
     },
   },
-  [StandardCommand.RemoveSelectionParagraphBackwards]: {
-    execute(stateControl): void {
-      stateControl.queueUpdate(
-        matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
-          stateControl,
-          (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          undefined,
-          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Previous),
-        ),
-      );
-    },
-  },
   [StandardCommand.RemoveSelectionGraphemeForwards]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
@@ -2686,18 +2734,6 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Next),
         ),
         { [matita.RedoUndoUpdateKey.RemoveTextForwards]: true },
-      );
-    },
-  },
-  [StandardCommand.RemoveSelectionParagraphForwards]: {
-    execute(stateControl): void {
-      stateControl.queueUpdate(
-        matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
-          stateControl,
-          (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
-          undefined,
-          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.Next),
-        ),
       );
     },
   },
@@ -3280,9 +3316,11 @@ function makeVirtualizedExtendSelectionForwardsByFocusPointTransformFnUpdateFn(
     );
   };
 }
-function makeInsertPlainTextUpdateFn(
+function makeInsertPlainTextAtSelectionUpdateFn(
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   text: string,
+  selection?: matita.Selection,
+  treatAsSelection?: boolean,
 ): matita.RunUpdateFn {
   return () => {
     const lineTexts = text.split(/\r?\n/g).map((line) => line.replaceAll('\r', ''));
@@ -3309,12 +3347,17 @@ function makeInsertPlainTextUpdateFn(
         ),
       );
     };
-    stateControl.queueUpdate(
+    stateControl.delta.applyUpdate(
       () => {
         const { customCollapsedSelectionTextConfig } = stateControl.stateView;
         stateControl.delta.applyUpdate(
-          matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, (selectionRange) =>
-            getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+          matita.makeInsertContentFragmentAtSelectionUpdateFn(
+            stateControl,
+            (selectionRange) => {
+              return getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange);
+            },
+            selection,
+            treatAsSelection,
           ),
         );
       },
@@ -3325,30 +3368,33 @@ function makeInsertPlainTextUpdateFn(
 const serializeListIdAndNumberedIndentCombination = (listId: string, listIndent: NumberedListIndent): string => {
   return JSON.stringify([listId, listIndent]);
 };
-function makeApplyListTypeUpdateFn(
+function makeApplyListTypeAtSelectionUpdateFn(
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   topLevelContentReference: matita.ContentReference,
   listType: AccessedListStyleType,
+  selection?: matita.Selection,
 ): matita.RunUpdateFn {
   return () => {
+    const selectionAt = selection ?? stateControl.stateView.selection;
     const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
     const { paragraphReferenceRanges, isAllActive } = matita.calculateParagraphReferenceRangesAndIsAllActiveFromParagraphConfigToggle(
       stateControl.stateView.document,
       (paragraphConfig) =>
         paragraphConfig.type === ParagraphType.ListItem &&
-        accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType,
-      stateControl.stateView.selection,
+        accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType,
+      selectionAt,
     );
     if (paragraphReferenceRanges.length === 0) {
       return;
     }
     if (isAllActive) {
-      const mergeParagraphConfig: ParagraphConfig = { type: undefined };
       const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
       for (let i = 0; i < paragraphReferenceRanges.length; i++) {
         const paragraphReferenceRange = paragraphReferenceRanges[i];
         const { firstParagraphReference, lastParagraphReference } = paragraphReferenceRange;
-        mutations.push(matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(firstParagraphReference, lastParagraphReference, mergeParagraphConfig));
+        mutations.push(
+          matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(firstParagraphReference, lastParagraphReference, resetListMergeParagraphConfig),
+        );
       }
       const batchMutation = matita.makeBatchMutation(mutations);
       stateControl.delta.applyMutation(batchMutation);
@@ -3377,7 +3423,7 @@ function makeApplyListTypeUpdateFn(
           const serializedListIdAndNumberedIndentCombination = serializeListIdAndNumberedIndentCombination(block.config.ListItem_listId, numberedIndentLevel);
           if (!handledExistingListIdAndNumberedIndentCombinations.has(serializedListIdAndNumberedIndentCombination)) {
             handledExistingListIdAndNumberedIndentCombinations.add(serializedListIdAndNumberedIndentCombination);
-            const accessedListStyleType = accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, block.config);
+            const accessedListStyleType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, block.config);
             if (accessedListStyleType !== listType) {
               changedListIdAndNumberedIndentCombinations.add(serializedListIdAndNumberedIndentCombination);
               topLevelContentConfigMutations.push(
@@ -3406,7 +3452,22 @@ function makeApplyListTypeUpdateFn(
         }
       }
     }
-    const getListIdFromParagraphConfigIfWellDefinedAndTheRightListType = (paragraphConfig: ParagraphConfig): string | undefined => {
+    const nonExistingListParagraphIdToListIdAndIndentMap = new Map<string, { listId: string; listIndent: NumberedListIndent }>();
+    const getListIdFromParagraphIdAndConfigIfWellDefined = (paragraphId: string, paragraphConfig: ParagraphConfig): string | undefined => {
+      const newMappedListInfo = nonExistingListParagraphIdToListIdAndIndentMap.get(paragraphId);
+      if (newMappedListInfo !== undefined) {
+        return newMappedListInfo.listId;
+      }
+      if (paragraphConfig.type !== ParagraphType.ListItem || typeof paragraphConfig.ListItem_listId !== 'string') {
+        return undefined;
+      }
+      return paragraphConfig.ListItem_listId;
+    };
+    const getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType = (paragraphId: string, paragraphConfig: ParagraphConfig): string | undefined => {
+      const newMappedListInfo = nonExistingListParagraphIdToListIdAndIndentMap.get(paragraphId);
+      if (newMappedListInfo !== undefined) {
+        return newMappedListInfo.listId;
+      }
       if (paragraphConfig.type !== ParagraphType.ListItem || typeof paragraphConfig.ListItem_listId !== 'string') {
         return undefined;
       }
@@ -3414,11 +3475,51 @@ function makeApplyListTypeUpdateFn(
       const serializedListIdAndNumberedIndentCombination = serializeListIdAndNumberedIndentCombination(paragraphConfig.ListItem_listId, numberedIndentLevel);
       if (
         changedListIdAndNumberedIndentCombinations.has(serializedListIdAndNumberedIndentCombination) ||
-        accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType
+        accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType
       ) {
         return paragraphConfig.ListItem_listId;
       }
       return undefined;
+    };
+    const getListIndentFromParagraphIdAndConfig = (paragraphId: string, paragraphConfig: ParagraphConfig): NumberedListIndent => {
+      const newMappedListInfo = nonExistingListParagraphIdToListIdAndIndentMap.get(paragraphId);
+      if (newMappedListInfo !== undefined) {
+        return newMappedListInfo.listIndent;
+      }
+      return convertStoredListIndentLevelToNumberedIndentLevel(paragraphConfig.ListItem_indentLevel);
+    };
+    const unhandledIndices = new Set<number>();
+    const lookBackwardsIndices = new Set<number>();
+    const lookForwardsIndices = new Set<number>();
+    const pushSetAsListMutation = (
+      firstParagraphReference: matita.BlockReference,
+      lastParagraphReference: matita.BlockReference,
+      listId: string,
+      listIndent: NumberedListIndent,
+      updateListIdMapping: boolean,
+    ): void => {
+      const firstParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, firstParagraphReference);
+      const lastParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, firstParagraphReference);
+      const contentReference = matita.makeContentReferenceFromContent(
+        matita.accessContentFromBlockReference(stateControl.stateView.document, firstParagraphReference),
+      );
+      if (updateListIdMapping) {
+        for (let i = firstParagraphIndex; i <= lastParagraphIndex; i++) {
+          const block = matita.accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, contentReference, i);
+          if (matita.isEmbed(block)) {
+            continue;
+          }
+          nonExistingListParagraphIdToListIdAndIndentMap.set(block.id, { listId, listIndent });
+        }
+      }
+      paragraphConfigMutations.push(
+        matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(firstParagraphReference, lastParagraphReference, {
+          type: ParagraphType.ListItem,
+          ListItem_listId: listId,
+          ListItem_indentLevel: convertNumberListIndentLevelToStoredListIndentLevel(listIndent),
+          ListItem_Checklist_checked: undefined,
+        }),
+      );
     };
     for (let i = 0; i < nonWellDefinedListParagraphReferenceRanges.length; i++) {
       const paragraphReferenceRange = nonWellDefinedListParagraphReferenceRanges[i];
@@ -3427,6 +3528,7 @@ function makeApplyListTypeUpdateFn(
         matita.accessContentFromBlockReference(stateControl.stateView.document, firstParagraphReference),
       );
       let listId: string | undefined;
+      let listIndent: NumberedListIndent | undefined;
       const firstParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, firstParagraphReference);
       if (firstParagraphIndex > 0) {
         const previousBlockToFirstParagraph = matita.accessBlockAtIndexInContentAtContentReference(
@@ -3435,37 +3537,178 @@ function makeApplyListTypeUpdateFn(
           firstParagraphIndex - 1,
         );
         if (matita.isParagraph(previousBlockToFirstParagraph)) {
-          listId = getListIdFromParagraphConfigIfWellDefinedAndTheRightListType(previousBlockToFirstParagraph.config);
+          listId = getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType(previousBlockToFirstParagraph.id, previousBlockToFirstParagraph.config);
+          if (listId === undefined) {
+            if (firstParagraphIndex > 1) {
+              const groupListId = getListIdFromParagraphIdAndConfigIfWellDefined(previousBlockToFirstParagraph.id, previousBlockToFirstParagraph.config);
+              if (groupListId !== undefined) {
+                lookBackwardsIndices.add(i);
+              }
+            }
+          } else {
+            listIndent = getListIndentFromParagraphIdAndConfig(previousBlockToFirstParagraph.id, previousBlockToFirstParagraph.config);
+          }
         }
       }
       if (listId === undefined) {
         const lastParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, lastParagraphReference);
-        if (lastParagraphIndex < matita.getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, contentReference) - 1) {
+        const numberOfBlocksInContent = matita.getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, contentReference);
+        if (lastParagraphIndex < numberOfBlocksInContent - 1) {
           const nextBlockToLastParagraph = matita.accessBlockAtIndexInContentAtContentReference(
             stateControl.stateView.document,
             contentReference,
             lastParagraphIndex + 1,
           );
           if (matita.isParagraph(nextBlockToLastParagraph)) {
-            listId = getListIdFromParagraphConfigIfWellDefinedAndTheRightListType(nextBlockToLastParagraph.config);
+            listId = getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType(nextBlockToLastParagraph.id, nextBlockToLastParagraph.config);
+            if (listId === undefined) {
+              if (lastParagraphIndex < numberOfBlocksInContent - 2) {
+                const groupListId = getListIdFromParagraphIdAndConfigIfWellDefined(nextBlockToLastParagraph.id, nextBlockToLastParagraph.config);
+                if (groupListId !== undefined) {
+                  lookForwardsIndices.add(i);
+                }
+              }
+            } else {
+              lookBackwardsIndices.delete(i);
+              listIndent = getListIndentFromParagraphIdAndConfig(nextBlockToLastParagraph.id, nextBlockToLastParagraph.config);
+            }
           }
         }
       }
       if (listId === undefined) {
-        listId = uuidV4();
+        unhandledIndices.add(i);
+        continue;
+      }
+      assertIsNotNullish(listIndent);
+      pushSetAsListMutation(firstParagraphReference, lastParagraphReference, listId, listIndent, true);
+    }
+    for (let indentLevel = 0; indentLevel <= maxListIndentLevel; indentLevel++) {
+      if (lookBackwardsIndices.size === 0 && lookForwardsIndices.size === 0) {
+        break;
+      }
+      if (lookBackwardsIndices.size > 0) {
+        for (let i = 0; i < nonWellDefinedListParagraphReferenceRanges.length; i++) {
+          if (!lookBackwardsIndices.has(i)) {
+            continue;
+          }
+          const paragraphReferenceRange = nonWellDefinedListParagraphReferenceRanges[i];
+          const { firstParagraphReference, lastParagraphReference } = paragraphReferenceRange;
+          const contentReference = matita.makeContentReferenceFromContent(
+            matita.accessContentFromBlockReference(stateControl.stateView.document, firstParagraphReference),
+          );
+          const firstParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, firstParagraphReference);
+          assert(firstParagraphIndex > 1);
+          const previousBlockToFirstParagraph = matita.accessBlockAtIndexInContentAtContentReference(
+            stateControl.stateView.document,
+            contentReference,
+            firstParagraphIndex - 1,
+          );
+          matita.assertIsParagraph(previousBlockToFirstParagraph);
+          const previousBlockMatchingTypeListId = getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType(
+            previousBlockToFirstParagraph.id,
+            previousBlockToFirstParagraph.config,
+          );
+          assert(previousBlockMatchingTypeListId === undefined);
+          const groupListId = getListIdFromParagraphIdAndConfigIfWellDefined(previousBlockToFirstParagraph.id, previousBlockToFirstParagraph.config);
+          assertIsNotNullish(groupListId);
+          for (let j = firstParagraphIndex - 2; j >= 0; j--) {
+            const block = matita.accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, contentReference, j);
+            if (matita.isEmbed(block)) {
+              break;
+            }
+            const potentialMatchingTypeListId = getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType(block.id, block.config);
+            if (potentialMatchingTypeListId !== undefined) {
+              if (potentialMatchingTypeListId !== groupListId) {
+                break;
+              }
+              const potentialIndentLevel = getListIndentFromParagraphIdAndConfig(block.id, block.config);
+              if (potentialIndentLevel !== indentLevel) {
+                continue;
+              }
+              unhandledIndices.delete(i);
+              lookBackwardsIndices.delete(i);
+              lookForwardsIndices.delete(i);
+              pushSetAsListMutation(firstParagraphReference, lastParagraphReference, groupListId, indentLevel, true);
+              break;
+            }
+            const potentialGroupListId = getListIdFromParagraphIdAndConfigIfWellDefined(block.id, block.config);
+            if (potentialGroupListId !== groupListId) {
+              break;
+            }
+          }
+        }
+      }
+      if (lookForwardsIndices.size > 0) {
+        for (let i = nonWellDefinedListParagraphReferenceRanges.length - 1; i >= 0; i--) {
+          if (!lookForwardsIndices.has(i)) {
+            continue;
+          }
+          const paragraphReferenceRange = nonWellDefinedListParagraphReferenceRanges[i];
+          const { firstParagraphReference, lastParagraphReference } = paragraphReferenceRange;
+          const contentReference = matita.makeContentReferenceFromContent(
+            matita.accessContentFromBlockReference(stateControl.stateView.document, firstParagraphReference),
+          );
+          const lastParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, lastParagraphReference);
+          const numberOfBlocksInContent = matita.getNumberOfBlocksInContentAtContentReference(stateControl.stateView.document, contentReference);
+          assert(lastParagraphIndex < numberOfBlocksInContent - 2);
+          const nextBlockToLastParagraph = matita.accessBlockAtIndexInContentAtContentReference(
+            stateControl.stateView.document,
+            contentReference,
+            lastParagraphIndex + 1,
+          );
+          matita.assertIsParagraph(nextBlockToLastParagraph);
+          const nextBlockMatchingTypeListId = getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType(
+            nextBlockToLastParagraph.id,
+            nextBlockToLastParagraph.config,
+          );
+          assert(nextBlockMatchingTypeListId === undefined);
+          const groupListId = getListIdFromParagraphIdAndConfigIfWellDefined(nextBlockToLastParagraph.id, nextBlockToLastParagraph.config);
+          assertIsNotNullish(groupListId);
+          for (let j = lastParagraphIndex + 2; j < numberOfBlocksInContent; j++) {
+            const block = matita.accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, contentReference, j);
+            if (matita.isEmbed(block)) {
+              break;
+            }
+            const potentialMatchingTypeListId = getListIdFromParagraphIdAndConfigIfWellDefinedAndTheRightListType(block.id, block.config);
+            if (potentialMatchingTypeListId !== undefined) {
+              if (potentialMatchingTypeListId !== groupListId) {
+                break;
+              }
+              const potentialIndentLevel = getListIndentFromParagraphIdAndConfig(block.id, block.config);
+              if (potentialIndentLevel !== indentLevel) {
+                continue;
+              }
+              unhandledIndices.delete(i);
+              lookBackwardsIndices.delete(i);
+              lookForwardsIndices.delete(i);
+              pushSetAsListMutation(firstParagraphReference, lastParagraphReference, groupListId, indentLevel, true);
+              break;
+            }
+            const potentialGroupListId = getListIdFromParagraphIdAndConfigIfWellDefined(block.id, block.config);
+            if (potentialGroupListId !== groupListId) {
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (unhandledIndices.size > 0) {
+      for (let i = 0; i < nonWellDefinedListParagraphReferenceRanges.length; i++) {
+        if (!unhandledIndices.has(i)) {
+          continue;
+        }
+        const paragraphReferenceRange = nonWellDefinedListParagraphReferenceRanges[i];
+        const { firstParagraphReference, lastParagraphReference } = paragraphReferenceRange;
+        const listId = uuidV4();
+        const listIndent = 0;
         topLevelContentConfigMutations.push(
           matita.makeUpdateContentConfigMutation(
             topLevelContentReference,
             matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(['listStyles', 'listIdToStyle', listId, 'indentLevelToStyle', '0', 'type'], listStyleTypeToStore),
           ),
         );
+        pushSetAsListMutation(firstParagraphReference, lastParagraphReference, listId, listIndent, false);
       }
-      paragraphConfigMutations.push(
-        matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(firstParagraphReference, lastParagraphReference, {
-          type: ParagraphType.ListItem,
-          ListItem_listId: listId,
-        }),
-      );
     }
     const nestedBatchMutations: matita.BatchMutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
     if (topLevelContentConfigMutations.length > 0) {
@@ -3476,6 +3719,74 @@ function makeApplyListTypeUpdateFn(
     }
     const batchMutation = matita.makeBatchMutation(nestedBatchMutations);
     stateControl.delta.applyMutation(batchMutation);
+  };
+}
+function makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
+  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  shouldExtendSelectionRange: matita.ShouldExtendSelectionRangeFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  focusPointTransformFn?: matita.PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): matita.RunUpdateFn {
+  return () => {
+    const removeBackwardsSelectionRanges: matita.SelectionRange[] = [];
+    const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+      const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+      if (!matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+        removeBackwardsSelectionRanges.push(selectionRange);
+        continue;
+      }
+      const collapsedRange = selectionRange.ranges[0];
+      const point = collapsedRange.startPoint;
+      matita.assertIsParagraphPoint(point);
+      if (point.offset !== 0) {
+        removeBackwardsSelectionRanges.push(selectionRange);
+        continue;
+      }
+      const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
+      if (paragraph.config.type === ParagraphType.ListItem) {
+        const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+        mutations.push(matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, resetListMergeParagraphConfig));
+        continue;
+      }
+      if (paragraph.config.type === ParagraphType.Blockquote) {
+        const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+        mutations.push(matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: undefined }));
+        continue;
+      }
+      const alignment = convertStoredParagraphAlignmentToAccessedParagraphAlignment(paragraph.config.alignment);
+      if (alignment === AccessedParagraphAlignment.Center || alignment === AccessedParagraphAlignment.Right) {
+        const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+        mutations.push(matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { alignment: undefined }));
+        continue;
+      }
+      removeBackwardsSelectionRanges.push(selectionRange);
+    }
+    const applyNormalRemovalIfShould = (): void => {
+      if (removeBackwardsSelectionRanges.length > 0) {
+        const removeBackwardsSelection = matita.makeSelection(removeBackwardsSelectionRanges);
+        stateControl.delta.applyUpdate(
+          matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+            stateControl,
+            shouldExtendSelectionRange,
+            undefined,
+            focusPointTransformFn,
+            removeBackwardsSelection,
+          ),
+        );
+      }
+    };
+    if (mutations.length > 0) {
+      stateControl.delta.applyUpdate(
+        () => {
+          const batchMutation = matita.makeBatchMutation(mutations);
+          stateControl.delta.applyMutation(batchMutation);
+          applyNormalRemovalIfShould();
+        },
+        { [matita.RedoUndoUpdateKey.UniqueGroupedUpdate]: matita.makeUniqueGroupedChangeType() },
+      );
+    } else {
+      applyNormalRemovalIfShould();
+    }
   };
 }
 const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredCommand> = {
@@ -3549,6 +3860,30 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.Paragraph, matita.PointMovement.PreviousBoundByEdge),
         ),
+      );
+    },
+  },
+  [StandardCommand.RemoveSelectionGraphemeBackwards]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(
+        makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
+          stateControl,
+          (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Grapheme, matita.PointMovement.Previous),
+        ),
+        { [matita.RedoUndoUpdateKey.RemoveTextBackwards]: true },
+      );
+    },
+  },
+  [StandardCommand.RemoveSelectionWordBackwards]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(
+        makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
+          stateControl,
+          (document, _stateControlConfig, selectionRange) => !shouldCollapseSelectionRangeInTextCommand(document, selectionRange),
+          matita.makeDefaultPointTransformFn(matita.MovementGranularity.Word, matita.PointMovement.Previous),
+        ),
+        { [matita.RedoUndoUpdateKey.RemoveTextBackwards]: true },
       );
     },
   },
@@ -3700,11 +4035,10 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
       stateControl.queueUpdate(
-        matita.makeRemoveSelectionByPointTransformFnsUpdateFn(
+        makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
           stateControl,
           (document, _stateControlConfig, selectionRange) =>
             !shouldCollapseSelectionRangeInTextCommand(document, selectionRange) || matita.getIsSelectionRangeAnchorAfterFocus(document, selectionRange),
-          undefined,
           documentRenderControl.makeSoftLineStartEndFocusPointTransformFn(matita.PointMovement.Previous),
         ),
       );
@@ -3898,7 +4232,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.AlignParagraphLeft]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
-        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, (isAllActive) => ({ alignment: undefined })),
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, () => ({ alignment: undefined })),
         { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
     },
@@ -3906,7 +4240,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.AlignParagraphRight]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
-        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, (isAllActive) => ({ alignment: StoredParagraphAlignment.Right })),
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, () => ({ alignment: StoredParagraphAlignment.Right })),
         { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
     },
@@ -3914,7 +4248,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.AlignParagraphCenter]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
-        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, (isAllActive) => ({ alignment: StoredParagraphAlignment.Center })),
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, () => ({ alignment: StoredParagraphAlignment.Center })),
         { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
     },
@@ -3922,7 +4256,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.AlignParagraphJustify]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
-        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, (isAllActive) => ({ alignment: StoredParagraphAlignment.Justify })),
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, () => ({ alignment: StoredParagraphAlignment.Justify })),
         { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
     },
@@ -3940,7 +4274,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
               continue;
             }
             const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, documentRenderControl.topLevelContentReference);
-            const listStyleType = accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+            const listStyleType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
             if (listStyleType !== AccessedListStyleType.Checklist) {
               continue;
             }
@@ -3969,7 +4303,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           for (const paragraphReference of matita.iterParagraphsInSelection(stateControl.stateView.document, stateControl.stateView.selection)) {
             const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
             matita.assertIsParagraph(paragraph);
-            if (paragraph.config.type !== ParagraphType.ListItem) {
+            if (paragraph.config.type === ParagraphType.ListItem) {
               const newIndentLevel = incrementStoredListIndent(paragraph.config.ListItem_indentLevel);
               assertIsNotNullish(newIndentLevel);
               if (paragraph.config.ListItem_indentLevel !== newIndentLevel) {
@@ -3998,7 +4332,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           for (const paragraphReference of matita.iterParagraphsInSelection(stateControl.stateView.document, stateControl.stateView.selection)) {
             const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
             matita.assertIsParagraph(paragraph);
-            if (paragraph.config.type !== ParagraphType.ListItem) {
+            if (paragraph.config.type === ParagraphType.ListItem) {
               const newIndentLevel = decrementStoredListIndent(paragraph.config.ListItem_indentLevel);
               if (paragraph.config.ListItem_indentLevel !== newIndentLevel) {
                 mutations.push(
@@ -4069,25 +4403,34 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.ApplyOrderedList]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(makeApplyListTypeUpdateFn(stateControl, documentRenderControl.topLevelContentReference, AccessedListStyleType.OrderedList), {
-        [doNotScrollToSelectionAfterChangeDataKey]: true,
-      });
+      stateControl.queueUpdate(
+        makeApplyListTypeAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, AccessedListStyleType.OrderedList),
+        {
+          [doNotScrollToSelectionAfterChangeDataKey]: true,
+        },
+      );
     },
   },
   [StandardCommand.ApplyUnorderedList]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(makeApplyListTypeUpdateFn(stateControl, documentRenderControl.topLevelContentReference, AccessedListStyleType.UnorderedList), {
-        [doNotScrollToSelectionAfterChangeDataKey]: true,
-      });
+      stateControl.queueUpdate(
+        makeApplyListTypeAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, AccessedListStyleType.UnorderedList),
+        {
+          [doNotScrollToSelectionAfterChangeDataKey]: true,
+        },
+      );
     },
   },
   [StandardCommand.ApplyChecklist]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(makeApplyListTypeUpdateFn(stateControl, documentRenderControl.topLevelContentReference, AccessedListStyleType.Checklist), {
-        [doNotScrollToSelectionAfterChangeDataKey]: true,
-      });
+      stateControl.queueUpdate(
+        makeApplyListTypeAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, AccessedListStyleType.Checklist),
+        {
+          [doNotScrollToSelectionAfterChangeDataKey]: true,
+        },
+      );
     },
   },
   [StandardCommand.ResetParagraphStyle]: {
@@ -4103,19 +4446,19 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.InsertPlainText]: {
     execute(stateControl, _viewControl, data: InsertPlainTextCommandData): void {
       const { insertText } = data;
-      stateControl.queueUpdate(makeInsertPlainTextUpdateFn(stateControl, insertText));
+      stateControl.queueUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, insertText));
     },
   },
   [StandardCommand.InsertPastedPlainText]: {
     execute(stateControl, _viewControl, data: InsertPastedPlainTextCommandData): void {
       const { pasteText } = data;
-      stateControl.queueUpdate(makeInsertPlainTextUpdateFn(stateControl, pasteText));
+      stateControl.queueUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, pasteText));
     },
   },
   [StandardCommand.InsertDroppedPlainText]: {
     execute(stateControl, _viewControl, data: InsertDroppedPlainTextCommandData): void {
       const { dropText } = data;
-      stateControl.queueUpdate(makeInsertPlainTextUpdateFn(stateControl, dropText));
+      stateControl.queueUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, dropText));
     },
   },
   [StandardCommand.InsertLineBreak]: {
@@ -4156,6 +4499,119 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       ]);
       stateControl.queueUpdate(() => {
         stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, () => contentFragment));
+      });
+    },
+  },
+  [StandardCommand.KeyPressSpace]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(() => {
+        const minimumPartialParagraphPointOffsetMap = new Map<string, number>();
+        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+          for (let i = 0; i < selectionRange.ranges.length; i++) {
+            const range = selectionRange.ranges[i];
+            if (matita.isParagraphPoint(range.startPoint)) {
+              const paragraphId = matita.getParagraphIdFromParagraphPoint(range.startPoint);
+              const currentMinimum = minimumPartialParagraphPointOffsetMap.get(paragraphId) ?? Infinity;
+              minimumPartialParagraphPointOffsetMap.set(paragraphId, Math.min(currentMinimum, range.startPoint.offset));
+            }
+            if (matita.isParagraphPoint(range.endPoint)) {
+              const paragraphId = matita.getParagraphIdFromParagraphPoint(range.endPoint);
+              const currentMinimum = minimumPartialParagraphPointOffsetMap.get(paragraphId) ?? Infinity;
+              minimumPartialParagraphPointOffsetMap.set(paragraphId, Math.min(currentMinimum, range.endPoint.offset));
+            }
+          }
+        }
+        const trackedSelectionRangeIds = new Set<string>();
+        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+          if (!matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+            continue;
+          }
+          const collapsedRange = selectionRange.ranges[0];
+          const point = collapsedRange.startPoint;
+          matita.assertIsParagraphPoint(point);
+          const paragraphId = matita.getParagraphIdFromParagraphPoint(point);
+          const minimum = minimumPartialParagraphPointOffsetMap.get(paragraphId);
+          assertIsNotNullish(minimum);
+          if (point.offset !== minimum) {
+            continue;
+          }
+          const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
+          const inlineNodesBeforePoint = matita.sliceParagraphChildren(paragraph, 0, point.offset);
+          if (!inlineNodesBeforePoint.every(matita.isText)) {
+            continue;
+          }
+          const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
+          if (inlineNodeText === '-' || inlineNodeText === '*' || inlineNodeText === '>') {
+            trackedSelectionRangeIds.add(selectionRange.id);
+          }
+        }
+        stateControl.delta.applyUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, ' '));
+        const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+        const applyUnorderedListSelectionRanges: matita.SelectionRange[] = [];
+        const handledParagraphIds = new Set<string>();
+        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+          if (!trackedSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+            continue;
+          }
+          const collapsedRange = selectionRange.ranges[0];
+          const point = collapsedRange.startPoint;
+          matita.assertIsParagraphPoint(point);
+          const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
+          if (handledParagraphIds.has(paragraph.id)) {
+            continue;
+          }
+          handledParagraphIds.add(paragraph.id);
+          const inlineNodesBeforePoint = matita.sliceParagraphChildren(paragraph, 0, point.offset);
+          if (!inlineNodesBeforePoint.every(matita.isText)) {
+            continue;
+          }
+          const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
+          if (inlineNodeText === '- ' || inlineNodeText === '* ') {
+            if (paragraph.config.type === ParagraphType.ListItem) {
+              continue;
+            }
+            const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+            mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
+            applyUnorderedListSelectionRanges.push(selectionRange);
+            continue;
+          }
+          if (inlineNodeText === '> ') {
+            if (paragraph.config.type === ParagraphType.Blockquote) {
+              continue;
+            }
+            const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+            const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+            mutations.push(
+              matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []),
+              matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: ParagraphType.Blockquote }),
+            );
+          }
+        }
+        if (mutations.length === 0) {
+          return;
+        }
+        stateControl.delta.applyUpdate(
+          () => {
+            if (applyUnorderedListSelectionRanges.length > 0) {
+              const applyUnorderedListSelection = matita.makeSelection(applyUnorderedListSelectionRanges);
+              stateControl.delta.applyUpdate(
+                makeApplyListTypeAtSelectionUpdateFn(
+                  stateControl,
+                  documentRenderControl.topLevelContentReference,
+                  AccessedListStyleType.UnorderedList,
+                  applyUnorderedListSelection,
+                ),
+              );
+            }
+            const batchMutation = matita.makeBatchMutation(mutations);
+            stateControl.delta.applyMutation(batchMutation);
+          },
+          { [matita.RedoUndoUpdateKey.UniqueGroupedUpdate]: matita.makeUniqueGroupedChangeType() },
+        );
       });
     },
   },
@@ -4402,6 +4858,8 @@ function scrollCursorRectIntoView(
   if (x === xOffset && y === yOffset) {
     return;
   }
+  // TODO: Browser scroll calculation errors on large scroll heights when cursor not fully visible in one axis but is in the other, e.g. to the right edge of
+  // the screen in right aligned text.
   if (isWindow) {
     window.scrollTo(x, y);
   } else {
@@ -4796,7 +5254,7 @@ interface NumberedListItemInfo {
 // TODO: Insertion can be done more efficiently w/o binary search and instead directly through the tree as the blocks are ordered.
 class NumberedListIndexer {
   #listItemInfos: IndexableUniqueStringList;
-  #paragraphIdToIndex = Object.create(null) as Record<string, number>;
+  #paragraphIdToNumber = Object.create(null) as Record<string, number>;
   #paragraphIdToIndentLevel = Object.create(null) as Record<string, NumberedListIndent>;
   #isDirty = false;
   constructor() {
@@ -4805,11 +5263,14 @@ class NumberedListIndexer {
   iterateParagraphIds(): IterableIterator<string> {
     return this.#listItemInfos.iterBetween(0, this.#listItemInfos.getLength() - 1);
   }
-  // TODO: List start offsets.
-  recomputeListIndicesIfDirty(viewControl: VirtualizedViewControl, numberedIndentLevels: Set<number>): void {
-    if (!this.#isDirty) {
-      return;
-    }
+  markDirty(): void {
+    this.#isDirty = true;
+  }
+  getIsDirty(): boolean {
+    return this.#isDirty;
+  }
+  recomputeListNumbers(viewControl: VirtualizedViewControl, numberedIndentLevels: Map<number, number>): void {
+    assert(this.#isDirty);
     const documentRenderControl = viewControl.accessDocumentRenderControl();
     const numberOfListItemInfos = this.#listItemInfos.getLength();
     const indices: number[] = Array<number>(maxListIndentLevel + 1);
@@ -4818,19 +5279,17 @@ class NumberedListIndexer {
     for (let i = 0; i < numberOfListItemInfos; i++) {
       const paragraphId = this.#listItemInfos.access(i);
       const indentLevel = this.#paragraphIdToIndentLevel[paragraphId];
-      const currentListItemIndex = this.#paragraphIdToIndex[paragraphId];
-      let newListItemIndex: number;
+      const currentListItemIndex = this.#paragraphIdToNumber[paragraphId];
       if (previousIndentLevel > indentLevel) {
-        for (let j = indentLevel; j <= maxListIndentLevel; j++) {
+        for (let j = indentLevel + 1; j <= maxListIndentLevel; j++) {
           indices[j] = 0;
         }
-        newListItemIndex = indentLevel;
-      } else {
-        newListItemIndex = indices[indentLevel]++;
       }
-      if (currentListItemIndex !== newListItemIndex) {
-        this.#paragraphIdToIndex[paragraphId] = newListItemIndex;
-        if (numberedIndentLevels.has(indentLevel)) {
+      const startNumber = numberedIndentLevels.get(indentLevel);
+      if (startNumber !== undefined) {
+        const newListItemIndex = startNumber + indices[indentLevel]++;
+        if (currentListItemIndex !== newListItemIndex) {
+          this.#paragraphIdToNumber[paragraphId] = newListItemIndex;
           const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
           const paragraphRenderControl = viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
           paragraphRenderControl.markDirtyContainer();
@@ -4893,12 +5352,12 @@ class NumberedListIndexer {
     this.#isDirty = true;
     const index = this.#listItemInfos.indexOf(paragraphId);
     this.#listItemInfos.remove(index, index);
-    delete this.#paragraphIdToIndex[paragraphId];
+    delete this.#paragraphIdToNumber[paragraphId];
     delete this.#paragraphIdToIndentLevel[paragraphId];
   }
-  getListItemIndex(paragraphId: string): number {
+  getListItemNumber(paragraphId: string): number {
     assert(this.#listItemInfos.has(paragraphId) && !this.#isDirty);
-    const value = this.#paragraphIdToIndex[paragraphId];
+    const value = this.#paragraphIdToNumber[paragraphId];
     assertIsNotNullish(value);
     return value;
   }
@@ -4988,23 +5447,28 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (matita.isJsonMap(listIdToStyle)) {
         // TODO: This loop happens on every measurement.
         for (const [listId, numberedListIndexer] of this.#numberedListIndexerMap.entries()) {
-          const listStyle = listIdToStyle[listId];
-          if (matita.isJsonMap(listStyle)) {
-            const { indentLevelToStyle } = listStyle;
-            if (matita.isJsonMap(indentLevelToStyle)) {
-              const numberedIndentLevels = new Set<number>();
-              for (let indentLevel = 0; indentLevel <= maxListIndentLevel; indentLevel++) {
-                const indentStyle = indentLevelToStyle[indentLevel];
-                if (matita.isJsonMap(indentStyle)) {
-                  if (convertStoredListStyleTypeToAccessedListType(indentStyle.type) === AccessedListStyleType.OrderedList) {
-                    numberedIndentLevels.add(indentLevel);
-                    break;
-                  }
-                }
+          if (!numberedListIndexer.getIsDirty()) {
+            continue;
+          }
+          const stylesForListId = listIdToStyle[listId];
+          if (matita.isJsonMap(stylesForListId)) {
+            const numberedIndentLevels = new Map<number, number>();
+            for (let indentLevel = 0; indentLevel <= maxListIndentLevel; indentLevel++) {
+              const listStyleAtIndent = accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                topLevelContent.config,
+                listId,
+                indentLevel as NumberedListIndent,
+              );
+              if (
+                matita.isJsonMap(listStyleAtIndent) &&
+                convertStoredListStyleTypeToAccessedListType(listStyleAtIndent.type) === AccessedListStyleType.OrderedList
+              ) {
+                const startNumber = convertStoredOrderedListStartNumberToAccessedStartNumber(listStyleAtIndent.OrderedList_startNumber);
+                numberedIndentLevels.set(indentLevel, startNumber);
               }
-              if (numberedIndentLevels.size > 0) {
-                numberedListIndexer.recomputeListIndicesIfDirty(this.viewControl, numberedIndentLevels);
-              }
+            }
+            if (numberedIndentLevels.size > 0) {
+              numberedListIndexer.recomputeListNumbers(this.viewControl, numberedIndentLevels);
             }
           }
         }
@@ -5017,15 +5481,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
       const injectedStyle: ParagraphStyleInjection = {};
       if (paragraph.config.type === ParagraphType.ListItem) {
-        const listType = accessListStyleTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+        const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
         injectedStyle.ListItem_type = listType;
         if (listType === AccessedListStyleType.OrderedList) {
           assert(typeof paragraph.config.ListItem_listId === 'string');
           const numberedListIndexer = this.#numberedListIndexerMap.get(paragraph.config.ListItem_listId as string);
           assertIsNotNullish(numberedListIndexer);
-          injectedStyle.ListItem_OrderedList = {
-            index: numberedListIndexer.getListItemIndex(paragraph.id),
-          };
+          injectedStyle.ListItem_OrderedList_number = numberedListIndexer.getListItemNumber(paragraph.id);
         }
       }
       paragraphRenderControl.commitDirtyChanges(injectedStyle);
@@ -5268,15 +5730,55 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   }
                   for (const [listId, numberedListIndexer] of this.#numberedListIndexerMap.entries()) {
                     for (let indentLevel = 0; indentLevel <= maxListIndentLevel; indentLevel++) {
-                      if (
-                        accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(configBefore, listId, indentLevel as NumberedListIndent) !==
-                        accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(configAfter, listId, indentLevel as NumberedListIndent)
-                      ) {
+                      const previousListType = accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                        configBefore,
+                        listId,
+                        indentLevel as NumberedListIndent,
+                      );
+                      const listType = accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                        configAfter,
+                        listId,
+                        indentLevel as NumberedListIndent,
+                      );
+                      if (previousListType === listType) {
+                        if (listType === AccessedListStyleType.OrderedList) {
+                          const previousListStartNumber = accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                            configBefore,
+                            listId,
+                            indentLevel as NumberedListIndent,
+                          );
+                          const listStartNumber = accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                            configAfter,
+                            listId,
+                            indentLevel as NumberedListIndent,
+                          );
+                          if (previousListStartNumber !== listStartNumber) {
+                            for (const paragraphId of numberedListIndexer.iterateParagraphIds()) {
+                              const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
+                              const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+                              matita.assertIsParagraph(paragraph);
+                              if (convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel) === indentLevel) {
+                                numberedListIndexer.markDirty();
+                                const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
+                                paragraphRenderControl.markDirtyContainer();
+                                this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+                              }
+                            }
+                          }
+                        }
+                      } else {
                         for (const paragraphId of numberedListIndexer.iterateParagraphIds()) {
                           const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
-                          const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
-                          paragraphRenderControl.markDirtyContainer();
-                          this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+                          const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+                          matita.assertIsParagraph(paragraph);
+                          if (convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel) === indentLevel) {
+                            if (listType === AccessedListStyleType.OrderedList) {
+                              numberedListIndexer.markDirty();
+                            }
+                            const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
+                            paragraphRenderControl.markDirtyContainer();
+                            this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+                          }
                         }
                       }
                     }
@@ -8042,7 +8544,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.relativeParagraphMeasurementCache.set(paragraphReference.blockId, newCachedMeasurement);
     return { relativeParagraphMeasurement: newCachedMeasurement, containerHtmlElementBoundingRect };
   }
-  // TODO: Fix in Safari for collapsed justified spaces.
   #measureParagraphAtParagraphReference(paragraphReference: matita.BlockReference): AbsoluteParagraphMeasurement {
     const {
       relativeParagraphMeasurement,

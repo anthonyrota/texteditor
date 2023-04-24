@@ -74,29 +74,82 @@ enum NodeType {
   Text = 'Text',
   Void = 'Void',
 }
-type AnyNode =
-  | Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>
-  | Content<NodeConfig>
-  | Paragraph<NodeConfig, NodeConfig, NodeConfig>
-  | Embed<NodeConfig>
-  | Text<NodeConfig>
-  | Void<NodeConfig>;
-function isDocument(node: AnyNode): node is Document<any, any, any, any, any, any> {
+type AnyNode<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+> =
+  | Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
+  | Content<ContentConfig>
+  | Paragraph<ParagraphConfig, TextConfig, VoidConfig>
+  | Embed<EmbedConfig>
+  | Text<TextConfig>
+  | Void<VoidConfig>;
+function isDocument<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): node is Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   return node.type === NodeType.Document;
 }
-function isContent(node: AnyNode): node is Content<any> {
+function isContent<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): node is Content<ContentConfig> {
   return node.type === NodeType.Content;
 }
-function isParagraph(node: AnyNode): node is Paragraph<any, any, any> {
+function isParagraph<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): node is Paragraph<ParagraphConfig, TextConfig, VoidConfig> {
   return node.type === NodeType.Paragraph;
 }
-function isEmbed(node: AnyNode): node is Embed<any> {
+function isEmbed<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): node is Embed<EmbedConfig> {
   return node.type === NodeType.Embed;
 }
-function isText(node: AnyNode): node is Text<any> {
+function isText<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): node is Text<TextConfig> {
   return node.type === NodeType.Text;
 }
-function isVoid(node: AnyNode): node is Void<any> {
+function isVoid<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): node is Void<VoidConfig> {
   return node.type === NodeType.Void;
 }
 class NodeNotOfTypeError extends Error {
@@ -105,7 +158,16 @@ class NodeNotOfTypeError extends Error {
     super(`Expected node to be of type ${expectedNodeType}`, options);
   }
 }
-function assertIsDocument(node: AnyNode): asserts node is Document<any, any, any, any, any, any> {
+function assertIsDocument<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   if (!isDocument(node)) {
     throw new NodeNotOfTypeError(NodeType.Paragraph, {
       cause: {
@@ -114,7 +176,14 @@ function assertIsDocument(node: AnyNode): asserts node is Document<any, any, any
     });
   }
 }
-function assertIsContent(node: AnyNode): asserts node is Content<any> {
+function assertIsContent<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): asserts node is Content<ContentConfig> {
   if (!isContent(node)) {
     throw new NodeNotOfTypeError(NodeType.Content, {
       cause: {
@@ -123,7 +192,16 @@ function assertIsContent(node: AnyNode): asserts node is Content<any> {
     });
   }
 }
-function assertIsParagraph(node: AnyNode): asserts node is Paragraph<any, any, any> {
+function assertIsParagraph<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Paragraph<ParagraphConfig, TextConfig, VoidConfig> {
   if (!isParagraph(node)) {
     throw new NodeNotOfTypeError(NodeType.Paragraph, {
       cause: {
@@ -132,7 +210,14 @@ function assertIsParagraph(node: AnyNode): asserts node is Paragraph<any, any, a
     });
   }
 }
-function assertIsEmbed(node: AnyNode): asserts node is Embed<any> {
+function assertIsEmbed<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): asserts node is Embed<EmbedConfig> {
   if (!isParagraph(node)) {
     throw new NodeNotOfTypeError(NodeType.Paragraph, {
       cause: {
@@ -141,7 +226,14 @@ function assertIsEmbed(node: AnyNode): asserts node is Embed<any> {
     });
   }
 }
-function assertIsText(node: AnyNode): asserts node is Text<any> {
+function assertIsText<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): asserts node is Text<TextConfig> {
   if (!isText(node)) {
     throw new NodeNotOfTypeError(NodeType.Text, {
       cause: {
@@ -150,7 +242,14 @@ function assertIsText(node: AnyNode): asserts node is Text<any> {
     });
   }
 }
-function assertIsVoid(node: AnyNode): asserts node is Void<any> {
+function assertIsVoid<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>): asserts node is Void<VoidConfig> {
   if (!isVoid(node)) {
     throw new NodeNotOfTypeError(NodeType.Void, {
       cause: {
@@ -165,7 +264,19 @@ class NodeOfTypeError extends Error {
     super(`Expected node to not be of type ${expectedNotNodeType}`, options);
   }
 }
-function assertIsNotDocument(node: AnyNode): asserts node is Exclude<AnyNode, Document<any, any, any, any, any, any>> {
+function assertIsNotDocument<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Exclude<
+  AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>
+> {
   if (isDocument(node)) {
     throw new NodeOfTypeError(NodeType.Paragraph, {
       cause: {
@@ -174,7 +285,16 @@ function assertIsNotDocument(node: AnyNode): asserts node is Exclude<AnyNode, Do
     });
   }
 }
-function assertIsNotContent(node: AnyNode): asserts node is Exclude<AnyNode, Content<any>> {
+function assertIsNotContent<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Exclude<AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, Content<ContentConfig>> {
   if (isContent(node)) {
     throw new NodeOfTypeError(NodeType.Content, {
       cause: {
@@ -183,7 +303,19 @@ function assertIsNotContent(node: AnyNode): asserts node is Exclude<AnyNode, Con
     });
   }
 }
-function assertIsNotParagraph(node: AnyNode): asserts node is Exclude<AnyNode, Paragraph<any, any, any>> {
+function assertIsNotParagraph<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Exclude<
+  AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  Paragraph<ParagraphConfig, TextConfig, VoidConfig>
+> {
   if (isParagraph(node)) {
     throw new NodeOfTypeError(NodeType.Paragraph, {
       cause: {
@@ -192,7 +324,16 @@ function assertIsNotParagraph(node: AnyNode): asserts node is Exclude<AnyNode, P
     });
   }
 }
-function assertIsNotEmbed(node: AnyNode): asserts node is Exclude<AnyNode, Embed<any>> {
+function assertIsNotEmbed<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Exclude<AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, Embed<EmbedConfig>> {
   if (isParagraph(node)) {
     throw new NodeOfTypeError(NodeType.Paragraph, {
       cause: {
@@ -201,7 +342,16 @@ function assertIsNotEmbed(node: AnyNode): asserts node is Exclude<AnyNode, Embed
     });
   }
 }
-function assertIsNotText(node: AnyNode): asserts node is Exclude<AnyNode, Text<any>> {
+function assertIsNotText<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Exclude<AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, Text<TextConfig>> {
   if (isText(node)) {
     throw new NodeOfTypeError(NodeType.Text, {
       cause: {
@@ -210,7 +360,16 @@ function assertIsNotText(node: AnyNode): asserts node is Exclude<AnyNode, Text<a
     });
   }
 }
-function assertIsNotVoid(node: AnyNode): asserts node is Exclude<AnyNode, Void<any>> {
+function assertIsNotVoid<
+  DocumentConfig extends NodeConfig,
+  ContentConfig extends NodeConfig,
+  ParagraphConfig extends NodeConfig,
+  EmbedConfig extends NodeConfig,
+  TextConfig extends NodeConfig,
+  VoidConfig extends NodeConfig,
+>(
+  node: AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+): asserts node is Exclude<AnyNode<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, Void<VoidConfig>> {
   if (isVoid(node)) {
     throw new NodeOfTypeError(NodeType.Void, {
       cause: {
@@ -677,7 +836,7 @@ function getBlockIdFromBlockReference(blockReference: BlockReference): string {
 function getBlockIdFromBlockPoint(blockPoint: BlockPoint): string {
   return getBlockIdFromBlockReference(makeBlockReferenceFromBlockPoint(blockPoint));
 }
-function getBlockIdFromParagraphPoint(paragraphPoint: ParagraphPoint): string {
+function getParagraphIdFromParagraphPoint(paragraphPoint: ParagraphPoint): string {
   return getBlockIdFromBlockReference(makeBlockReferenceFromParagraphPoint(paragraphPoint));
 }
 interface Content<Config extends NodeConfig> extends NodeBase<NodeType.Content, Config> {
@@ -4028,6 +4187,9 @@ function makeStateControl<
   }
   const stateView = makeStateViewOfStateAfterDynamicMutationReferenceId(() => latestMutationReference.mutationId, true);
   function queueUpdate(runUpdate: RunUpdateFn, data?: UpdateData): Disposable {
+    if (delta !== null) {
+      throw new Error('Cannot queue an update from inside of an update.');
+    }
     if (updateDisposable === null) {
       updateDisposable = Disposable();
       disposable.add(updateDisposable);
@@ -5557,7 +5719,7 @@ function accessJsonListAtPathInJsonMap(jsonMap: JsonMap, path: string[]): any[] 
   for (let i = 0; i < path.length; i++) {
     const propertyName = path[i];
     if (i === path.length - 1) {
-      const jsonList = jsonMap[propertyName] as any[];
+      const jsonList = currentJsonMap[propertyName] as any[];
       assert(Array.isArray(jsonList));
       return jsonList;
     }
@@ -5573,7 +5735,7 @@ function accessValueAtPathInJsonMap(jsonMap: JsonMap, path: string[]): any {
   for (let i = 0; i < path.length; i++) {
     const propertyName = path[i];
     if (i === path.length - 1) {
-      return jsonMap[propertyName] as any;
+      return currentJsonMap[propertyName] as any;
     }
     const value = currentJsonMap[propertyName] as JsonMap | undefined;
     if (value === undefined) {
@@ -8537,9 +8699,9 @@ function makeInsertParagraphBelowOrAboveAtSelectionUpdateFn<
         const index = countBlockId(blockId);
         affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
       } else if (isParagraphPoint(focusPoint)) {
-        const blockId = getBlockIdFromParagraphPoint(focusPoint);
-        const index = countBlockId(blockId);
-        affectedSelectionRangeInfos.push([focusRange.contentReference, blockId, selectionRange, index]);
+        const paragraphId = getParagraphIdFromParagraphPoint(focusPoint);
+        const index = countBlockId(paragraphId);
+        affectedSelectionRangeInfos.push([focusRange.contentReference, paragraphId, selectionRange, index]);
       }
     }
     const blockIdToInsertedParagraphIds = new Map<string, string[]>();
@@ -9100,7 +9262,7 @@ function* iterParagraphsInRange(
     return;
   }
   const firstPoint = direction === RangeDirection.Backwards ? range.endPoint : range.startPoint;
-  const lastPoint = direction === RangeDirection.Forwards ? range.startPoint : range.endPoint;
+  const lastPoint = direction === RangeDirection.Backwards ? range.startPoint : range.endPoint;
   const firstBlockIndex = getIndexOfBlockAtPointInNonEmptyContentAtContentReference(document, firstPoint, range.contentReference);
   const lastBlockIndex = getIndexOfBlockAtPointInNonEmptyContentAtContentReference(document, lastPoint, range.contentReference);
   for (let i = firstBlockIndex; i <= lastBlockIndex; i++) {
@@ -9388,7 +9550,7 @@ export {
   getBlockFromContentFragmentBlock,
   getBlockIdFromBlockPoint,
   getBlockIdFromBlockReference,
-  getBlockIdFromParagraphPoint,
+  getParagraphIdFromParagraphPoint,
   getFocusPointFromRange,
   getFocusSelectionRangeFromSelection,
   getIndexOfBlockInContentFromBlockReference,
@@ -9596,4 +9758,5 @@ export {
   calculateParagraphReferenceRangesAndIsAllActiveFromParagraphConfigToggle,
   type ParagraphReferenceRange,
   joinNeighboringParagraphReferenceRanges,
+  makeUniqueGroupedChangeType,
 };
