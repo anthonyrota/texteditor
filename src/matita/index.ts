@@ -3901,10 +3901,6 @@ interface StateControlConfig<
   TextConfig extends NodeConfig,
   VoidConfig extends NodeConfig,
 > {
-  canContentAtContentReferenceBeRemovedWhenRemovingSelection: (
-    document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-    contentReference: ContentReference,
-  ) => boolean;
   fixSelectionRange: (
     document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
     selectionRange: SelectionRange,

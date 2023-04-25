@@ -229,6 +229,9 @@ enum ParagraphType {
   Heading1 = 'heading1',
   Heading2 = 'heading2',
   Heading3 = 'heading3',
+  Heading4 = 'heading4',
+  Heading5 = 'heading5',
+  Heading6 = 'heading6',
 }
 enum StoredParagraphAlignment {
   Center = 'center',
@@ -586,7 +589,10 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         this.#previousRenderedConfig !== undefined &&
         (this.#previousRenderedConfig.type === ParagraphType.Heading1 ||
           this.#previousRenderedConfig.type === ParagraphType.Heading2 ||
-          this.#previousRenderedConfig.type === ParagraphType.Heading3)
+          this.#previousRenderedConfig.type === ParagraphType.Heading3 ||
+          this.#previousRenderedConfig.type === ParagraphType.Heading4 ||
+          this.#previousRenderedConfig.type === ParagraphType.Heading5 ||
+          this.#previousRenderedConfig.type === ParagraphType.Heading6)
       ) {
         this.containerHtmlElement.style.fontWeight = '';
         this.#fontSize = this.#baseFontSize;
@@ -611,21 +617,39 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           break;
         }
         case ParagraphType.Heading1: {
-          this.containerHtmlElement.style.fontWeight = 'bold';
           this.#fontSize = 2 * this.#baseFontSize;
-          this.containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
+          this.containerHtmlElement.style.fontWeight = 'bold';
+          this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
           break;
         }
         case ParagraphType.Heading2: {
-          this.containerHtmlElement.style.fontWeight = 'bold';
           this.#fontSize = 1.5 * this.#baseFontSize;
-          this.containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
+          this.containerHtmlElement.style.fontWeight = 'bold';
+          this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
           break;
         }
         case ParagraphType.Heading3: {
-          this.containerHtmlElement.style.fontWeight = 'bold';
           this.#fontSize = 1.25 * this.#baseFontSize;
-          this.containerHtmlElement.style.fontSize = `${this.#fontSize}px`;
+          this.containerHtmlElement.style.fontWeight = 'bold';
+          this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
+          break;
+        }
+        case ParagraphType.Heading4: {
+          this.#fontSize = 1 * this.#baseFontSize;
+          this.containerHtmlElement.style.fontWeight = 'bold';
+          this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
+          break;
+        }
+        case ParagraphType.Heading5: {
+          this.#fontSize = 0.875 * this.#baseFontSize;
+          this.containerHtmlElement.style.fontWeight = 'bold';
+          this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
+          break;
+        }
+        case ParagraphType.Heading6: {
+          this.#fontSize = 0.85 * this.#baseFontSize;
+          this.containerHtmlElement.style.fontWeight = 'bold';
+          this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
           break;
         }
         case ParagraphType.ListItem: {
@@ -4580,7 +4604,10 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             inlineNodeText === '>' ||
             inlineNodeText === '#' ||
             inlineNodeText === '##' ||
-            inlineNodeText === '###'
+            inlineNodeText === '###' ||
+            inlineNodeText === '####' ||
+            inlineNodeText === '#####' ||
+            inlineNodeText === '######'
           ) {
             trackedSelectionRangeIds.add(selectionRange.id);
           }
@@ -4616,7 +4643,15 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             applyUnorderedListSelectionRanges.push(selectionRange);
             continue;
           }
-          if (inlineNodeText === '> ' || inlineNodeText === '# ' || inlineNodeText === '## ' || inlineNodeText === '### ') {
+          if (
+            inlineNodeText === '> ' ||
+            inlineNodeText === '# ' ||
+            inlineNodeText === '## ' ||
+            inlineNodeText === '### ' ||
+            inlineNodeText === '#### ' ||
+            inlineNodeText === '##### ' ||
+            inlineNodeText === '###### '
+          ) {
             const newParagraphType =
               inlineNodeText === '> '
                 ? ParagraphType.Blockquote
@@ -4624,7 +4659,16 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
                 ? ParagraphType.Heading1
                 : inlineNodeText === '## '
                 ? ParagraphType.Heading2
-                : ParagraphType.Heading3;
+                : inlineNodeText === '### '
+                ? ParagraphType.Heading3
+                : inlineNodeText === '#### '
+                ? ParagraphType.Heading4
+                : inlineNodeText === '##### '
+                ? ParagraphType.Heading5
+                : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+                inlineNodeText === '###### '
+                ? ParagraphType.Heading6
+                : assertUnreachable(inlineNodeText);
             if (paragraph.config.type === newParagraphType) {
               continue;
             }
@@ -9596,9 +9640,6 @@ import dummyText from './dummyText.txt?raw';
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
 makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
   const stateControlConfig: matita.StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = {
-    canContentAtContentReferenceBeRemovedWhenRemovingSelection(document, contentReference) {
-      throwNotImplemented();
-    },
     fixSelectionRange(document, selectionRange) {
       return selectionRange;
     },
