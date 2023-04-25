@@ -3637,6 +3637,12 @@ function makeRangesConnectingPointsAtContentReferences(
     });
   }
   if (areContentReferencesAtSameContent(startPointContentReference, endPointContentReference)) {
+    if (isBlockPoint(startPoint) && isParagraphPoint(endPoint) && areBlockReferencesAtSameBlock(startPoint.blockReference, endPoint.paragraphReference)) {
+      return [makeRange(startPointContentReference, startPoint, startPoint, lastRangeId)];
+    }
+    if (isParagraphPoint(startPoint) && isBlockPoint(endPoint) && areBlockReferencesAtSameBlock(startPoint.paragraphReference, endPoint.blockReference)) {
+      return [makeRange(startPointContentReference, endPoint, endPoint, lastRangeId)];
+    }
     return [makeRange(startPointContentReference, startPoint, endPoint, lastRangeId)];
   }
   const startPointSocPointKey = makePointKeyFromPoint(document, startPointContentReference, makeStartOfContentPoint());

@@ -62,7 +62,7 @@ button {
   background-color: #000;
   contain: content;
   font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 16;
+  font-size: 16px;
   line-height: 1.5;
 }
 .search-box__line-container {
@@ -160,6 +160,9 @@ button {
   gap: 0.35em;
 }
 .search-box__checkbox-input {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
   appearance: none;
   background-color: #000;
@@ -169,15 +172,11 @@ button {
   outline: none;
 }
 .search-box__checkbox-input:checked {
-  display: flex;
   border-color: rgb(100, 218, 251);
   background-color: rgb(100, 218, 251);
 }
 .search-box__checkbox-input:checked::before {
   content: '\2713';
-  position: absolute;
-  left: calc(50% - 0.37em);
-  top: calc(50% - 0.515em);
 }
 @supports selector(:has(*)) {
   .search-box__checkbox-container:has(.search-box__checkbox-input:focus-visible) {
@@ -194,4 +193,32 @@ button {
 .search-box__checkbox-label {
   user-select: none;
   color: #fff;
+}
+.list-item--checklist__checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  position: relative;
+  background-clip: padding-box;
+  background-color: #fff;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #888;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.list-item--checklist__checkbox--checked {
+  border-color: rgb(100, 218, 251);
+  background-color: rgb(100, 218, 251);
+}
+.list-item--checklist__checkbox:not(.list-item--checklist__checkbox--checked):hover {
+  border: 2px solid #000;
+}
+.list-item--checklist__checkbox--checked:hover {
+  border-color: rgba(100, 218, 251, 0.6);
+  background-color: rgba(100, 218, 251, 0.6);
+}
+.list-item--checklist__checkbox--checked::before {
+  content: '\2713';
 }

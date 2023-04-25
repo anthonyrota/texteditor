@@ -19,7 +19,7 @@ module.exports = {
   ],
   rules: {
     curly: 'error',
-    'max-len': ['error', { code: 160, ignoreStrings: true }],
+    'max-len': ['warn', { code: 160, ignoreStrings: true }],
     'no-constant-condition': ['error', { checkLoops: false }],
     'no-unused-vars': 'off',
     'no-else-return': ['error', { allowElseIf: false }],

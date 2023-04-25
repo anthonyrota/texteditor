@@ -154,7 +154,7 @@ function accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
   }
   return indentLevelToStyle[indentLevel];
 }
-function accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+function accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
   topLevelContentConfig: TopLevelContentConfig,
   listId: string,
   indentLevel: NumberedListIndent,
@@ -191,7 +191,7 @@ function accessListTypeInTopLevelContentConfigFromListParagraphConfig(
     return defaultListStyleType;
   }
   const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraphConfig.ListItem_indentLevel);
-  return accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
+  return accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
 }
 function isStoredListTypeSet(storedListType: StoredListStyleType | undefined): boolean {
   return (
@@ -544,11 +544,18 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         return listMarker;
       }
       case AccessedListStyleType.Checklist: {
-        throwNotImplemented();
+        const listMarker = document.createElement('span');
+        let className = 'list-item--checklist__checkbox';
+        if (paragraphConfig.ListItem_Checklist_checked === true) {
+          className += ' list-item--checklist__checkbox--checked';
+        }
+        listMarker.className = className;
+        listMarker.style.top = `${(this.#lineHeight * this.#fontSize - 18) / 2}px`;
+        return listMarker;
       }
     }
   }
-  #listMarkerElement: HTMLElement | null = null;
+  listMarkerElement: HTMLElement | null = null;
   #getPaddingLeftStyleFromListIndent(listIndent: number): string {
     return `${24 + 48 * listIndent}px`;
   }
@@ -667,8 +674,8 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           this.containerHtmlElement.style.paddingLeft = this.#getPaddingLeftStyleFromListIndent(
             convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel),
           );
-          this.#listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
-          this.containerHtmlElement.append(this.#listMarkerElement, this.#textContainerElement);
+          this.listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
+          this.containerHtmlElement.append(this.listMarkerElement, this.#textContainerElement);
           break;
         }
         default: {
@@ -694,16 +701,16 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         }
       }
       if (paragraph.config.type === ParagraphType.ListItem) {
-        assertIsNotNullish(this.#listMarkerElement);
+        assertIsNotNullish(this.listMarkerElement);
         assertIsNotNullish(this.#previousInjectedStyle.ListItem_type);
         assertIsNotNullish(injectedStyle.ListItem_type);
-        if (
+        const recreateMarker =
           this.#previousInjectedStyle.ListItem_type !== injectedStyle.ListItem_type ||
-          this.#previousInjectedStyle.ListItem_OrderedList_number !== injectedStyle.ListItem_OrderedList_number
-        ) {
-          const previousListMarkerElement = this.#listMarkerElement;
-          this.#listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
-          previousListMarkerElement.replaceWith(this.#listMarkerElement);
+          this.#previousInjectedStyle.ListItem_OrderedList_number !== injectedStyle.ListItem_OrderedList_number;
+        if (recreateMarker) {
+          const previousListMarkerElement = this.listMarkerElement;
+          this.listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
+          previousListMarkerElement.replaceWith(this.listMarkerElement);
         }
         const justifyContent =
           accessedParagraphAlignment === AccessedParagraphAlignment.Right
@@ -717,10 +724,21 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         if (previousListIndentLevel !== listIndentLevel) {
           this.containerHtmlElement.style.paddingLeft = this.#getPaddingLeftStyleFromListIndent(listIndentLevel);
         }
+        if (
+          injectedStyle.ListItem_type === AccessedListStyleType.Checklist &&
+          !recreateMarker &&
+          this.#previousRenderedConfig.ListItem_Checklist_checked !== paragraph.config.ListItem_Checklist_checked
+        ) {
+          if (paragraph.config.ListItem_Checklist_checked === true) {
+            this.listMarkerElement.classList.add('list-item--checklist__checkbox--checked');
+          } else {
+            this.listMarkerElement.classList.remove('list-item--checklist__checkbox--checked');
+          }
+        }
       }
     }
     if (paragraph.config.type !== ParagraphType.ListItem) {
-      this.#listMarkerElement = null;
+      this.listMarkerElement = null;
     }
     this.#previousRenderedConfig = paragraph.config;
     this.#previousInjectedStyle = injectedStyle;
@@ -1243,12 +1261,23 @@ class UniqueKeyControl {
     return JSON.stringify([key, 0]);
   }
 }
-interface HitPosition {
+enum HitPositionType {
+  CheckboxMarker = 'CheckboxMarker',
+  ParagraphText = 'ParagraphText',
+}
+interface CheckboxMarkerHitPosition {
+  type: HitPositionType.CheckboxMarker;
+  paragraphReference: matita.BlockReference;
+}
+interface ParagraphTextHitPosition {
+  type: HitPositionType.ParagraphText;
+  checkboxMarkerParagraphReference: matita.BlockReference | null;
   pointWithContentReference: matita.PointWithContentReference;
   isPastPreviousCharacterHalfPoint: boolean;
   isWrappedLineStart: boolean;
   isWrappedLinePreviousEnd: boolean;
 }
+type HitPosition = CheckboxMarkerHitPosition | ParagraphTextHitPosition;
 interface ViewPosition {
   readonly left: number;
   readonly top: number;
@@ -1287,6 +1316,7 @@ interface ViewCursorAndRangeInfosForSelectionRange {
 }
 interface ViewCursorAndRangeInfos {
   viewCursorAndRangeInfosForSelectionRanges: ViewCursorAndRangeInfosForSelectionRange[];
+  isDragging: boolean;
 }
 interface SelectionViewMessage {
   viewCursorAndRangeInfos: ViewCursorAndRangeInfos;
@@ -1318,7 +1348,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
       () =>
         pipe(
           hasFocus$,
-          debounce(() => ofEvent(End, scheduleAnimationFrame)),
+          debounce(() => ofEvent(End, scheduleMicrotask)),
           memoConsecutive(),
         ),
       [hasFocus$],
@@ -1357,7 +1387,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
     return null;
   }
   const { viewCursorAndRangeInfos } = selectionViewMaybe.value;
-  const { viewCursorAndRangeInfosForSelectionRanges } = viewCursorAndRangeInfos;
+  const { viewCursorAndRangeInfosForSelectionRanges, isDragging } = viewCursorAndRangeInfos;
   if (viewCursorAndRangeInfosForSelectionRanges.length === 0) {
     return null;
   }
@@ -1430,6 +1460,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               viewCursorInfo={viewCursorInfo}
               synchronizedCursorVisibility$={synchronizedCursorVisibility$}
               hasFocus={hasFocus}
+              isDragging={isDragging}
               isItalic={isItalic}
             />,
           );
@@ -1443,10 +1474,11 @@ interface BlinkingCursorProps {
   viewCursorInfo: ViewCursorInfo;
   synchronizedCursorVisibility$: Source<boolean>;
   hasFocus: boolean;
+  isDragging: boolean;
   isItalic: boolean;
 }
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, synchronizedCursorVisibility$, hasFocus, isItalic } = props;
+  const { viewCursorInfo, synchronizedCursorVisibility$, hasFocus, isDragging, isItalic } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
@@ -1462,7 +1494,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         height: viewCursorInfo.height,
         backgroundColor: hasFocus ? '#222' : '#666',
         transform: isItalic ? 'skew(-7deg)' : undefined,
-        visibility: isVisibleMaybe.value ? 'visible' : 'hidden',
+        visibility: isDragging || isVisibleMaybe.value ? 'visible' : 'hidden',
       }}
     />
   );
@@ -3541,13 +3573,16 @@ function makeApplyListTypeAtSelectionUpdateFn(
           nonExistingListParagraphIdToListIdAndIndentMap.set(block.id, { listId, listIndent });
         }
       }
+      const mergeParagraphConfig: ParagraphConfig = {
+        type: ParagraphType.ListItem,
+        ListItem_listId: listId,
+        ListItem_indentLevel: convertNumberListIndentLevelToStoredListIndentLevel(listIndent),
+      };
+      if (listType === AccessedListStyleType.Checklist) {
+        mergeParagraphConfig.ListItem_Checklist_checked = undefined;
+      }
       paragraphConfigMutations.push(
-        matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(firstParagraphReference, lastParagraphReference, {
-          type: ParagraphType.ListItem,
-          ListItem_listId: listId,
-          ListItem_indentLevel: convertNumberListIndentLevelToStoredListIndentLevel(listIndent),
-          ListItem_Checklist_checked: undefined,
-        }),
+        matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(firstParagraphReference, lastParagraphReference, mergeParagraphConfig),
       );
     };
     for (let i = 0; i < nonWellDefinedListParagraphReferenceRanges.length; i++) {
@@ -3882,6 +3917,39 @@ function makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
     } else {
       applyNormalRemovalIfShould();
     }
+  };
+}
+function makeToggleChecklistCheckedAtSelectionUpdateFn(
+  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  topLevelContentReference: matita.ContentReference,
+  selection?: matita.Selection,
+): matita.RunUpdateFn {
+  return () => {
+    const selectionAt = selection ?? stateControl.stateView.selection;
+    const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, selectionAt)) {
+      const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
+      matita.assertIsParagraph(paragraph);
+      if (paragraph.config.type !== ParagraphType.ListItem) {
+        continue;
+      }
+      const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
+      const listStyleType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+      if (listStyleType !== AccessedListStyleType.Checklist) {
+        continue;
+      }
+      const isChecked = paragraph.config.ListItem_Checklist_checked === true;
+      const newIsChecked = isChecked === true ? undefined : true;
+      mutations.push(
+        matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
+          ListItem_Checklist_checked: newIsChecked,
+        }),
+      );
+    }
+    if (mutations.length === 0) {
+      return;
+    }
+    stateControl.delta.applyMutation(matita.makeBatchMutation(mutations));
   };
 }
 const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredCommand> = {
@@ -4359,35 +4427,9 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.ToggleChecklistChecked]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(
-        () => {
-          const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-          for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, stateControl.stateView.selection)) {
-            const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
-            matita.assertIsParagraph(paragraph);
-            if (paragraph.config.type !== ParagraphType.ListItem) {
-              continue;
-            }
-            const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, documentRenderControl.topLevelContentReference);
-            const listStyleType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
-            if (listStyleType !== AccessedListStyleType.Checklist) {
-              continue;
-            }
-            const isChecked = paragraph.config.ListItem_Checklist_checked === true;
-            const newIsChecked = isChecked === true ? true : undefined;
-            mutations.push(
-              matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
-                ListItem_Checklist_checked: newIsChecked,
-              }),
-            );
-          }
-          if (mutations.length === 0) {
-            return;
-          }
-          stateControl.delta.applyMutation(matita.makeBatchMutation(mutations));
-        },
-        { [doNotScrollToSelectionAfterChangeDataKey]: true },
-      );
+      stateControl.queueUpdate(makeToggleChecklistCheckedAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference), {
+        [doNotScrollToSelectionAfterChangeDataKey]: true,
+      });
     },
   },
   [StandardCommand.IncreaseListIndent]: {
@@ -5498,6 +5540,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.#selectionView$ = CurrentValueDistributor<SelectionViewMessage>({
       viewCursorAndRangeInfos: {
         viewCursorAndRangeInfosForSelectionRanges: [],
+        isDragging: false,
       },
       renderSync: false,
     });
@@ -5593,7 +5636,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
   #renderOverlayAsync = false;
   #changeQuery$ = Distributor<string>();
-  #hasFocus$ = CurrentValueDistributor(false);
+  #selectionViewHasFocus$ = CurrentValueDistributor(false);
   #resetSynchronizedCursorVisibility$ = CurrentValueDistributor<undefined>(undefined);
   init(): void {
     const registerParagraphAtParagraphIdWithListIdAndNumberedListIndent = (paragraphId: string, listId: string, indentLevel: NumberedListIndent) => {
@@ -5819,12 +5862,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   }
                   for (const [listId, numberedListIndexer] of this.#numberedListIndexerMap.entries()) {
                     for (let indentLevel = 0; indentLevel <= maxListIndentLevel; indentLevel++) {
-                      const previousListType = accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                      const previousListType = accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
                         configBefore,
                         listId,
                         indentLevel as NumberedListIndent,
                       );
-                      const listType = accessListStyleTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                      const listType = accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
                         configAfter,
                         listId,
                         indentLevel as NumberedListIndent,
@@ -6028,6 +6071,22 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           );
         };
         const transformPointInfoToCurrentPointWithContentReference = (pointInfo: PointInfo): matita.PointWithContentReference | null => {
+          if (pointInfo.position.type === HitPositionType.CheckboxMarker) {
+            try {
+              matita.accessBlockFromBlockReference(this.stateControl.stateView.document, pointInfo.position.paragraphReference);
+            } catch (error) {
+              if (!(error instanceof matita.BlockNotInBlockStoreError)) {
+                throw error;
+              }
+              return null;
+            }
+            return {
+              point: matita.makeBlockPointFromBlockReference(pointInfo.position.paragraphReference),
+              contentReference: matita.makeContentReferenceFromContent(
+                matita.accessContentFromBlockReference(this.stateControl.stateView.document, pointInfo.position.paragraphReference),
+              ),
+            };
+          }
           const dummyRange = matita.makeRange(
             pointInfo.position.pointWithContentReference.contentReference,
             pointInfo.position.pointWithContentReference.point,
@@ -6075,7 +6134,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               left: pointerEvent.x,
               top: pointerEvent.y,
             };
-            const position = this.#calculatePositionFromViewPosition(viewPosition, false);
+            const position = this.#calculatePositionFromViewPosition(viewPosition, false, false);
             if (!dragState && !position) {
               return;
             }
@@ -6159,7 +6218,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   left: pointerEvent.x,
                   top: pointerEvent.y,
                 };
-                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold);
+                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold, true);
                 queueSelectionUpdate(
                   position && {
                     position,
@@ -6188,13 +6247,61 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               flat(),
             );
             let isMovedPastThreshold = false;
-            const calculateSelection = (endPointInfo: PointInfo | null): matita.Selection | null => {
+            const enum CalculateDraggingResultType {
+              ToggleCheckbox = 'ToggleCheckbox',
+              Selection = 'Selection',
+            }
+            type CalculateDraggingResult =
+              | {
+                  type: CalculateDraggingResultType.ToggleCheckbox;
+                  paragraphReference: matita.BlockReference;
+                }
+              | {
+                  type: CalculateDraggingResultType.Selection;
+                  selection: matita.Selection;
+                };
+            const calculateDraggingResult = (endPointInfo: PointInfo | null): CalculateDraggingResult | null => {
               assertIsNotNullish(dragState);
               const transformedBeforeSelection = this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
                 { selection: dragState.beforeSelection, fixWhen: matita.MutationSelectionTransformFixWhen.NoFix, shouldTransformAsSelection: true },
                 dragState.startPointInfo.stateView,
                 this.stateControl.stateView,
               );
+              const finalPointInfo = endPointInfo ?? dragState.lastPointInfo;
+              if (dragState.startPointInfo.position.type === HitPositionType.CheckboxMarker) {
+                const startPointWithContentReference = transformPointInfoToCurrentPointWithContentReference(dragState.startPointInfo);
+                if (!startPointWithContentReference) {
+                  return null;
+                }
+                matita.assertIsBlockPoint(startPointWithContentReference.point);
+                const paragraph = matita.accessBlockFromBlockPoint(this.stateControl.stateView.document, startPointWithContentReference.point);
+                matita.assertIsParagraph(paragraph);
+                const topLevelContent = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+                if (
+                  paragraph.config.type !== ParagraphType.ListItem ||
+                  accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config) !== AccessedListStyleType.Checklist
+                ) {
+                  return null;
+                }
+                assert(typeof paragraph.config.ListItem_listId === 'string');
+                const lastCheckboxMarkerParagraphReference =
+                  finalPointInfo.position.type === HitPositionType.CheckboxMarker
+                    ? finalPointInfo.position.paragraphReference
+                    : finalPointInfo.position.checkboxMarkerParagraphReference;
+                if (
+                  lastCheckboxMarkerParagraphReference !== null &&
+                  matita.areBlockReferencesAtSameBlock(dragState.startPointInfo.position.paragraphReference, lastCheckboxMarkerParagraphReference)
+                ) {
+                  if (endPointInfo === null) {
+                    return null;
+                  }
+                  return {
+                    type: CalculateDraggingResultType.ToggleCheckbox,
+                    paragraphReference: dragState.startPointInfo.position.paragraphReference,
+                  };
+                }
+                return null;
+              }
               let originalStartPointWithContentReference = transformPointInfoToCurrentPointWithContentReference(dragState.startPointInfo);
               if (!originalStartPointWithContentReference) {
                 return null;
@@ -6210,8 +6317,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               if (!originalEndPointWithContentReference) {
                 return null;
               }
-              const originalIsWrappedLineStart = (endPointInfo ?? dragState.lastPointInfo).position.isWrappedLineStart;
-              const originalIsWrappedLinePreviousEnd = (endPointInfo ?? dragState.lastPointInfo).position.isWrappedLinePreviousEnd;
+              if (finalPointInfo.position.type === HitPositionType.CheckboxMarker) {
+                throwUnreachable();
+              }
+              const originalIsWrappedLineStart = finalPointInfo.position.isWrappedLineStart;
+              const originalIsWrappedLinePreviousEnd = finalPointInfo.position.isWrappedLinePreviousEnd;
               endPointInfo = null;
               let extendedSelectionRangeIdMaybe: Maybe<string>;
               if (dragState.isExtendSelection && transformedBeforeSelection.selectionRanges.length > 0) {
@@ -6268,10 +6378,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   originalEndPointWithContentReference.contentReference,
                   originalEndPointWithContentReference.point,
                 );
-                let isBackward =
+                let isBackwards =
                   matita.compareKeys(this.stateControl.stateView.document, originalStartPointKey, originalEndPointKey) === matita.CompareKeysResult.After;
-                let firstPointWithContentReference = isBackward ? originalEndPointWithContentReference : originalStartPointWithContentReference;
-                let secondPointWithContentReference = isBackward ? originalStartPointWithContentReference : originalEndPointWithContentReference;
+                let firstPointWithContentReference = isBackwards ? originalEndPointWithContentReference : originalStartPointWithContentReference;
+                let secondPointWithContentReference = isBackwards ? originalStartPointWithContentReference : originalEndPointWithContentReference;
                 // TODO. (Also, these aren't updated in 'word'.)
                 const dummyFirstRange = matita.makeRange(
                   firstPointWithContentReference.contentReference,
@@ -6360,7 +6470,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                     );
                   }
                   if (
-                    isBackward &&
+                    isBackwards &&
                     matita.arePointWithContentReferencesEqual(
                       firstPointWithContentReference,
                       matita.makeDefaultPointTransformFn(matita.MovementGranularity.WordBoundary, matita.PointMovement.Previous)(
@@ -6373,13 +6483,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                       ),
                     )
                   ) {
-                    isBackward = false;
+                    isBackwards = false;
                   }
                   isFocusWrappedLineStart = originalIsWrappedLineStart
-                    ? isBackward
+                    ? isBackwards
                       ? matita.arePointWithContentReferencesEqual(originalFirstPointWithContentReference, firstPointWithContentReference)
                       : matita.arePointWithContentReferencesEqual(originalSecondPointWithContentReference, secondPointWithContentReference)
-                    : isBackward && !originalIsWrappedLinePreviousEnd;
+                    : isBackwards && !originalIsWrappedLinePreviousEnd;
                 } else {
                   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
                   if (dragState.selectionType !== 'paragraph') {
@@ -6409,13 +6519,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   );
                   matita.assertIsParagraphPoint(firstPointWithContentReference.point);
                   matita.assertIsParagraphPoint(secondPointWithContentReference.point);
-                  if (isBackward && matita.areParagraphPointsAtSameParagraph(firstPointWithContentReference.point, secondPointWithContentReference.point)) {
-                    isBackward = false;
+                  if (isBackwards && matita.areParagraphPointsAtSameParagraph(firstPointWithContentReference.point, secondPointWithContentReference.point)) {
+                    isBackwards = false;
                   }
                   isFocusWrappedLineStart = false;
                 }
-                startPointWithContentReference = isBackward ? secondPointWithContentReference : firstPointWithContentReference;
-                endPointWithContentReference = isBackward ? firstPointWithContentReference : secondPointWithContentReference;
+                startPointWithContentReference = isBackwards ? secondPointWithContentReference : firstPointWithContentReference;
+                endPointWithContentReference = isBackwards ? firstPointWithContentReference : secondPointWithContentReference;
               }
               const resolveOverlappingSelectionRanges = (
                 info: matita.ResolveOverlappingSelectionRangesInfo,
@@ -6466,20 +6576,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 true,
               );
               if (isNone(dragState.separateSelectionId)) {
-                return matita.makeSelection([draggedSelectionRange]);
+                return { type: CalculateDraggingResultType.Selection, selection: matita.makeSelection([draggedSelectionRange]) };
               }
               if (isSome(extendedSelectionRangeIdMaybe)) {
                 const extendedSelectionRangeId = extendedSelectionRangeIdMaybe.value;
-                return matita.sortAndMergeAndFixSelectionRanges(
-                  this.stateControl.stateView.document,
-                  this.stateControl.stateControlConfig,
-                  [
-                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                    ...transformedBeforeSelection.selectionRanges.filter((selectionRange) => selectionRange.id !== extendedSelectionRangeId),
-                    draggedSelectionRange,
-                  ],
-                  (info) => resolveOverlappingSelectionRanges(info, extendedSelectionRangeId),
-                );
+                return {
+                  type: CalculateDraggingResultType.Selection,
+                  selection: matita.sortAndMergeAndFixSelectionRanges(
+                    this.stateControl.stateView.document,
+                    this.stateControl.stateControlConfig,
+                    [
+                      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                      ...transformedBeforeSelection.selectionRanges.filter((selectionRange) => selectionRange.id !== extendedSelectionRangeId),
+                      draggedSelectionRange,
+                    ],
+                    (info) => resolveOverlappingSelectionRanges(info, extendedSelectionRangeId),
+                  ),
+                };
               }
               if (
                 !isMovedPastThreshold &&
@@ -6491,15 +6604,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   (selectionRange) => !matita.areSelectionRangesCoveringSameContent(selectionRange, draggedSelectionRange),
                 );
                 if (withoutCollapsedAtSameSpotSelectionRanges.length !== transformedBeforeSelection.selectionRanges.length) {
-                  return matita.makeSelection(withoutCollapsedAtSameSpotSelectionRanges);
+                  return { type: CalculateDraggingResultType.Selection, selection: matita.makeSelection(withoutCollapsedAtSameSpotSelectionRanges) };
                 }
               }
-              return matita.sortAndMergeAndFixSelectionRanges(
-                this.stateControl.stateView.document,
-                this.stateControl.stateControlConfig,
-                [...transformedBeforeSelection.selectionRanges, draggedSelectionRange],
-                (info) => resolveOverlappingSelectionRanges(info, draggedSelectionRange.id),
-              );
+              return {
+                type: CalculateDraggingResultType.Selection,
+                selection: matita.sortAndMergeAndFixSelectionRanges(
+                  this.stateControl.stateView.document,
+                  this.stateControl.stateControlConfig,
+                  [...transformedBeforeSelection.selectionRanges, draggedSelectionRange],
+                  (info) => resolveOverlappingSelectionRanges(info, draggedSelectionRange.id),
+                ),
+              };
             };
             const queueSelectionUpdate = (endPointInfo: PointInfo | null): void => {
               this.#isDraggingSelection = !endPointInfo;
@@ -6507,11 +6623,29 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 if (didEndSelectionDragManually) {
                   return;
                 }
-                const newSelection = calculateSelection(endPointInfo);
-                if (!newSelection) {
+                const calculatedDraggingResult = calculateDraggingResult(endPointInfo);
+                if (calculatedDraggingResult === null) {
+                  this.#inputTextElement.focus({
+                    preventScroll: true,
+                  });
                   endPointInfo = null;
                   return;
                 }
+                if (calculatedDraggingResult.type === CalculateDraggingResultType.ToggleCheckbox) {
+                  assertIsNotNullish(endPointInfo);
+                  const point = matita.makeBlockPointFromBlockReference(calculatedDraggingResult.paragraphReference);
+                  const contentReference = matita.makeContentReferenceFromContent(
+                    matita.accessContentFromBlockReference(this.stateControl.stateView.document, calculatedDraggingResult.paragraphReference),
+                  );
+                  const range = matita.makeRange(contentReference, point, point, matita.generateId());
+                  const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Block, {}, matita.generateId());
+                  const selection = matita.makeSelection([selectionRange]);
+                  this.stateControl.delta.applyUpdate(
+                    makeToggleChecklistCheckedAtSelectionUpdateFn(this.stateControl, this.topLevelContentReference, selection),
+                  );
+                  return;
+                }
+                const newSelection = calculatedDraggingResult.selection;
                 const allSelectionIds = newSelection.selectionRanges.map((selectionRange) => selectionRange.id);
                 this.stateControl.delta.setSelection(newSelection, undefined, {
                   [VirtualizedDataKey.SelectionChangeDataPreserveLineWrapAnchorCursorWrapToNextLineForSelectionRangesWithSelectionIds]:
@@ -6560,7 +6694,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   top: pointerEvent.y,
                 };
                 dragState.lastViewPosition = viewPosition;
-                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold);
+                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold, true);
                 if (position) {
                   dragState.lastPointInfo = {
                     position,
@@ -6617,7 +6751,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     renderReactNodeIntoHtmlContainerElement(
       <SelectionView
         selectionView$={this.#selectionView$}
-        hasFocus$={this.#hasFocus$}
+        hasFocus$={this.#selectionViewHasFocus$}
         resetSynchronizedCursorVisibility$={this.#resetSynchronizedCursorVisibility$}
       />,
       this.#selectionViewContainerElement,
@@ -6630,8 +6764,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#inputTextElementMeasurementElement,
       this.#searchOverlayContainerElement,
       this.#selectionViewContainerElement,
-      this.#topLevelContentViewContainerElement,
       this.#inputTextElement,
+      this.#topLevelContentViewContainerElement,
       this.#searchElementContainerElement,
     );
     let searchContainerStaticViewRectangle$: CurrentValueDistributor<ViewRectangle> | undefined;
@@ -7374,20 +7508,32 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
     };
   }
+  #getSelectionViewHasFocusValue(): boolean {
+    return (document.hasFocus() && this.#hasFocusIncludingNotActiveWindow()) || this.#isDraggingSelection;
+  }
+  #updateSelectionViewHasFocus(): void {
+    if (this.stateControl.isInUpdate) {
+      this.#selectionViewHasFocus$(Push(this.#getSelectionViewHasFocusValue()));
+    } else {
+      this.stateControl.queueUpdate(() => {
+        this.#selectionViewHasFocus$(Push(this.#getSelectionViewHasFocusValue()));
+      });
+    }
+  }
   #onInputElementFocus(): void {
-    this.#hasFocus$(Push(this.#hasFocus()));
+    this.#updateSelectionViewHasFocus();
   }
   #onInputElementBlur(): void {
-    this.#hasFocus$(Push(this.#hasFocus()));
+    this.#updateSelectionViewHasFocus();
   }
   #onWindowFocus(): void {
-    this.#hasFocus$(Push(this.#hasFocus()));
+    this.#updateSelectionViewHasFocus();
   }
   #onWindowBlur(): void {
+    this.#updateSelectionViewHasFocus();
     requestAnimationFrameDisposable(() => {
       this.#clearKeys();
     }, this);
-    this.#hasFocus$(Push(this.#hasFocus()));
   }
   makeSoftLineStartEndFocusPointTransformFn(
     pointMovement: matita.PointMovement.Previous | matita.PointMovement.Next,
@@ -7509,6 +7655,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           previousParagraphReference,
           previousParagraphMeasurement.measuredParagraphLineRanges.length - 1,
           horizontalOffset,
+          null,
         );
         return {
           pointWithContentReference: position.pointWithContentReference,
@@ -7521,6 +7668,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         paragraphReference,
         measuredParagraphLineRangeIndex - 1,
         horizontalOffset,
+        null,
       );
       return {
         pointWithContentReference: position.pointWithContentReference,
@@ -7560,6 +7708,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         nextParagraphReference,
         0,
         horizontalOffset,
+        null,
       );
       return {
         pointWithContentReference: position.pointWithContentReference,
@@ -7572,6 +7721,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       paragraphReference,
       measuredParagraphLineRangeIndex + 1,
       horizontalOffset,
+      null,
     );
     return {
       pointWithContentReference: position.pointWithContentReference,
@@ -7850,9 +8000,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
     }
     throwUnreachable();
-  }
-  #hasFocus(): boolean {
-    return document.hasFocus() && this.#hasFocusIncludingNotActiveWindow();
   }
   #hasFocusIncludingNotActiveWindow(): boolean {
     return document.activeElement === this.#inputTextElement;
@@ -8685,9 +8832,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     horizontalOffset: number,
     isFirstInParagraphOrIsPreviousLineEndingWithLineBreak: boolean,
     isLastInParagraph: boolean,
-  ): HitPosition {
+    checkboxMarkerParagraphReference: matita.BlockReference | null,
+  ): ParagraphTextHitPosition {
     if (measuredParagraphLineRange.characterRectangles.length === 0) {
       return {
+        type: HitPositionType.ParagraphText,
+        checkboxMarkerParagraphReference,
         pointWithContentReference: {
           contentReference: matita.makeContentReferenceFromContent(
             matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
@@ -8723,6 +8873,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }
       const pointOffset = measuredParagraphLineRange.startOffset + j;
       return {
+        type: HitPositionType.ParagraphText,
+        checkboxMarkerParagraphReference,
         pointWithContentReference: {
           contentReference: matita.makeContentReferenceFromContent(
             matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
@@ -8741,7 +8893,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     paragraphReference: matita.BlockReference,
     measuredParagraphLineRangeIndex: number,
     horizontalOffset: number,
-  ): HitPosition {
+    checkboxMarkerParagraphReference: matita.BlockReference | null,
+  ): ParagraphTextHitPosition {
     const measuredParagraphLineRange = relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex];
     const isFirstInParagraphOrIsPreviousLineEndingWithLineBreak =
       measuredParagraphLineRangeIndex === 0 || relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex - 1].endsWithLineBreak;
@@ -8752,15 +8905,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       horizontalOffset,
       isFirstInParagraphOrIsPreviousLineEndingWithLineBreak,
       isLastInParagraph,
+      checkboxMarkerParagraphReference,
     );
   }
-  #calculatePositionFromViewPosition(viewPosition: ViewPosition, isExtend: boolean): HitPosition | null {
+  #calculatePositionFromViewPosition(viewPosition: ViewPosition, isSnapIfPastBoundary: boolean, isHitTestCheckboxMarker: boolean): HitPosition | null {
     const hitElements = document.elementsFromPoint(viewPosition.left, viewPosition.top);
     const firstContentHitElement = hitElements.find(
       (hitElement) => hitElement === this.#topLevelContentViewContainerElement || this.#topLevelContentViewContainerElement.contains(hitElement),
     );
     let paragraphReferences: matita.BlockReference[];
     const nodeRenderControl = firstContentHitElement ? findClosestNodeRenderControl(this.viewControl, firstContentHitElement) : null;
+    let checkboxMarkerParagraphReference: matita.BlockReference | null = null;
     if (!nodeRenderControl) {
       // TODO.
       paragraphReferences = matita
@@ -8771,6 +8926,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const { paragraphReference } = nodeRenderControl;
       const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
       matita.assertIsParagraph(paragraph);
+      if (firstContentHitElement === nodeRenderControl.listMarkerElement) {
+        const topLevelContent = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+        const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+        if (listType === AccessedListStyleType.Checklist) {
+          if (!isHitTestCheckboxMarker) {
+            return {
+              type: HitPositionType.CheckboxMarker,
+              paragraphReference,
+            };
+          }
+          checkboxMarkerParagraphReference = paragraphReference;
+        }
+      }
       paragraphReferences = [paragraphReference];
     } else {
       // TODO.
@@ -8813,7 +8981,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (!(lineTop - this.#positionCalculationEpsilon <= viewPosition.top && viewPosition.top <= lineBottom + this.#positionCalculationEpsilon)) {
         continue;
       }
-      if (isExtend) {
+      if (isSnapIfPastBoundary) {
         if (i === 0 && viewPosition.top < possibleLine.measuredParagraphLineRange.boundingRect.top) {
           const contentReference = matita.makeContentReferenceFromContent(
             matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
@@ -8822,6 +8990,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
             matita.assertIsParagraph(paragraph);
             return {
+              type: HitPositionType.ParagraphText,
+              checkboxMarkerParagraphReference,
               pointWithContentReference: {
                 contentReference,
                 point: matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, 0),
@@ -8844,6 +9014,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             matita.assertIsParagraph(paragraph);
             const paragraphLength = matita.getParagraphLength(paragraph);
             return {
+              type: HitPositionType.ParagraphText,
+              checkboxMarkerParagraphReference,
               pointWithContentReference: {
                 contentReference,
                 point: matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, paragraphLength),
@@ -8861,6 +9033,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         viewPosition.left,
         isFirstInParagraph || possibleLines[i - 1].measuredParagraphLineRange.endsWithLineBreak,
         isLastInParagraph,
+        checkboxMarkerParagraphReference,
       );
     }
     return null;
@@ -9159,16 +9332,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   #virtualSelectionDisposable: Disposable | null = null;
   #lastRenderedSelection: matita.Selection | null = null;
   #lastRenderedCustomCollapsedSelectionTextConfig: TextConfig | null = null;
+  #lastIsDraggingSelection = false;
   #replaceViewSelectionRanges(forceUpdate?: boolean): void {
     if (
       forceUpdate === false &&
       this.#lastRenderedSelection === this.stateControl.stateView.selection &&
-      this.#lastRenderedCustomCollapsedSelectionTextConfig === this.stateControl.stateView.customCollapsedSelectionTextConfig
+      this.#lastRenderedCustomCollapsedSelectionTextConfig === this.stateControl.stateView.customCollapsedSelectionTextConfig &&
+      this.#lastIsDraggingSelection === this.#isDraggingSelection
     ) {
       return;
     }
     this.#lastRenderedSelection = this.stateControl.stateView.selection;
     this.#lastRenderedCustomCollapsedSelectionTextConfig = this.stateControl.stateView.customCollapsedSelectionTextConfig;
+    this.#lastIsDraggingSelection = this.#isDraggingSelection;
     this.#virtualSelectionDisposable?.dispose();
     const virtualSelectionDisposable = Disposable();
     this.#virtualSelectionDisposable = virtualSelectionDisposable;
@@ -9179,6 +9355,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         Push({
           viewCursorAndRangeInfos: {
             viewCursorAndRangeInfosForSelectionRanges: [],
+            isDragging: this.#isDraggingSelection,
           },
           renderSync: false,
         }),
@@ -9200,6 +9377,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         (viewCursorAndRangeInfosForSelectionRanges, i): SelectionViewMessage => ({
           viewCursorAndRangeInfos: {
             viewCursorAndRangeInfosForSelectionRanges,
+            isDragging: this.#isDraggingSelection,
           },
           renderSync: !this.#renderOverlayAsync && (!isFirefox || i === 0),
         }),
