@@ -104,11 +104,11 @@ type TopLevelContentConfig = {
   };
 };
 type ContentConfig = TopLevelContentConfig;
-const maxListIndentLevel = 8;
-type StoredListIndent = undefined | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-const acceptableStoredListIndents: StoredListIndent[] = [undefined, 1, 2, 3, 4, 5, 6, 7, 8];
-type NumberedListIndent = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-const acceptableNumberedListIndents: NumberedListIndent[] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+const maxListIndentLevel = 14;
+type StoredListIndent = undefined | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+const acceptableStoredListIndents: StoredListIndent[] = [undefined, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+type NumberedListIndent = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+const acceptableNumberedListIndents: NumberedListIndent[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 function convertNumberListIndentLevelToStoredListIndentLevel(numberedIndentLevel: number): StoredListIndent {
   assert((acceptableNumberedListIndents as number[]).includes(numberedIndentLevel));
   return (acceptableNumberedListIndents as unknown[]).includes(numberedIndentLevel) && numberedIndentLevel !== 0
@@ -587,7 +587,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   }
   listMarkerElement: HTMLElement | null = null;
   #getPaddingLeftStyleFromListIndent(listIndent: number): string {
-    return `${24 + 48 * listIndent}px`;
+    return `${16 + 32 * listIndent}px`;
   }
   #updateContainer(injectedStyle: ParagraphStyleInjection): void {
     const paragraph = this.#accessParagraph();
