@@ -2011,6 +2011,7 @@ enum StandardCommand {
   AlignParagraphCenter = 'standard.alignParagraphCenter',
   AlignParagraphJustify = 'standard.alignParagraphJustify',
   ToggleChecklistChecked = 'standard.toggleChecklistChecked',
+  ToggleChecklistCheckedIndividually = 'standard.toggleChecklistCheckedIndividually',
   IncreaseListIndent = 'standard.increaseListIndent',
   DecreaseListIndent = 'standard.decreaseListIndent',
   ApplyBlockquote = 'standard.applyBlockquote',
@@ -2355,6 +2356,14 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Alt+Digit0', command: StandardCommand.ApplyBlockquote, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Alt?+Shift?+Space', command: StandardCommand.KeyPressSpace, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Control+Enter', command: StandardCommand.ToggleChecklistChecked, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  {
+    key: 'Control+Alt+Enter',
+    command: StandardCommand.ToggleChecklistCheckedIndividually,
+    platform: Platform.Apple,
+    context: Context.Editing,
+    cancelKeyEvent: true,
+  },
 ];
 function getPlatform(): Platform | null {
   const userAgent = window.navigator.userAgent;
@@ -3919,27 +3928,47 @@ function makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
     }
   };
 }
+function isParagraphChecklistByTopLevelContentConfigAndParagraphConfig(
+  topLevelContentConfig: TopLevelContentConfig,
+  paragraphConfig: ParagraphConfig,
+): boolean {
+  if (paragraphConfig.type !== ParagraphType.ListItem) {
+    return false;
+  }
+  const listStyleType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContentConfig, paragraphConfig);
+  return listStyleType === AccessedListStyleType.Checklist;
+}
 function makeToggleChecklistCheckedAtSelectionUpdateFn(
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   topLevelContentReference: matita.ContentReference,
+  strategy: 'synced' | 'individually',
   selection?: matita.Selection,
 ): matita.RunUpdateFn {
   return () => {
     const selectionAt = selection ?? stateControl.stateView.selection;
     const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
+    let isAllChecked = true;
+    if (strategy === 'synced') {
+      for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, selectionAt)) {
+        const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
+        matita.assertIsParagraph(paragraph);
+        if (
+          isParagraphChecklistByTopLevelContentConfigAndParagraphConfig(topLevelContent.config, paragraph.config) &&
+          paragraph.config.ListItem_Checklist_checked !== true
+        ) {
+          isAllChecked = false;
+          break;
+        }
+      }
+    }
     for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, selectionAt)) {
       const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
       matita.assertIsParagraph(paragraph);
-      if (paragraph.config.type !== ParagraphType.ListItem) {
+      if (!isParagraphChecklistByTopLevelContentConfigAndParagraphConfig(topLevelContent.config, paragraph.config)) {
         continue;
       }
-      const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
-      const listStyleType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
-      if (listStyleType !== AccessedListStyleType.Checklist) {
-        continue;
-      }
-      const isChecked = paragraph.config.ListItem_Checklist_checked === true;
-      const newIsChecked = isChecked === true ? undefined : true;
+      const newIsChecked = (strategy === 'individually' ? paragraph.config.ListItem_Checklist_checked === true : isAllChecked) ? undefined : true;
       mutations.push(
         matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
           ListItem_Checklist_checked: newIsChecked,
@@ -4427,7 +4456,15 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.ToggleChecklistChecked]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(makeToggleChecklistCheckedAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference), {
+      stateControl.queueUpdate(makeToggleChecklistCheckedAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, 'synced'), {
+        [doNotScrollToSelectionAfterChangeDataKey]: true,
+      });
+    },
+  },
+  [StandardCommand.ToggleChecklistCheckedIndividually]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(makeToggleChecklistCheckedAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, 'individually'), {
         [doNotScrollToSelectionAfterChangeDataKey]: true,
       });
     },
@@ -6641,7 +6678,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Block, {}, matita.generateId());
                   const selection = matita.makeSelection([selectionRange]);
                   this.stateControl.delta.applyUpdate(
-                    makeToggleChecklistCheckedAtSelectionUpdateFn(this.stateControl, this.topLevelContentReference, selection),
+                    makeToggleChecklistCheckedAtSelectionUpdateFn(this.stateControl, this.topLevelContentReference, 'individually', selection),
                   );
                   return;
                 }
