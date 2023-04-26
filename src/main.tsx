@@ -6730,6 +6730,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   const selection = matita.makeSelection([selectionRange]);
                   this.stateControl.delta.applyUpdate(
                     makeToggleChecklistCheckedAtSelectionUpdateFn(this.stateControl, this.topLevelContentReference, 'individually', selection),
+                    { [doNotScrollToSelectionAfterChangeDataKey]: true },
                   );
                   return;
                 }
