@@ -19,7 +19,7 @@ import {
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
-import { ScheduleInterval, scheduleAnimationFrame, scheduleMicrotask } from './ruscel/schedule';
+import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
 import {
   combine,
   debounce,
@@ -580,6 +580,8 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         this.containerHtmlElement.style.justifyContent = '';
         this.containerHtmlElement.style.gap = '';
         this.containerHtmlElement.style.paddingLeft = '';
+        this.containerHtmlElement.style.color = '';
+        this.#textContainerElement.style.textDecoration = '';
         this.containerHtmlElement.replaceChildren(...this.#textContainerElement.childNodes);
         this.#textContainerElement = this.containerHtmlElement;
       }
@@ -676,6 +678,10 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           );
           this.listMarkerElement = this.#makeListMarker(paragraph.config, injectedStyle);
           this.containerHtmlElement.append(this.listMarkerElement, this.#textContainerElement);
+          if (injectedStyle.ListItem_type === AccessedListStyleType.Checklist && paragraph.config.ListItem_Checklist_checked === true) {
+            this.containerHtmlElement.style.color = '#888';
+            this.#textContainerElement.style.textDecoration = 'line-through';
+          }
           break;
         }
         default: {
@@ -734,6 +740,13 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           } else {
             this.listMarkerElement.classList.remove('list-item--checklist__checkbox--checked');
           }
+        }
+        if (injectedStyle.ListItem_type === AccessedListStyleType.Checklist && paragraph.config.ListItem_Checklist_checked) {
+          this.containerHtmlElement.style.color = '#888';
+          this.#textContainerElement.style.textDecoration = 'line-through';
+        } else {
+          this.containerHtmlElement.style.color = '';
+          this.#textContainerElement.style.textDecoration = '';
         }
       }
     }
@@ -1097,7 +1110,10 @@ function use$<T>(
       if (event.type === ThrowType) {
         throw event.error;
       }
-      const maybe = event.type === EndType ? None : Some(event.value);
+      if (event.type === EndType) {
+        return;
+      }
+      const maybe = Some(event.value);
       if (isSyncFirstEvent) {
         syncFirstMaybe = maybe;
         return;
@@ -1482,7 +1498,10 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
   if (!viewCursorInfo.isFocus) {
     return null;
   }
-  const isVisibleMaybe = use$(synchronizedCursorVisibility$, Some(true));
+  const isVisibleMaybe = use$(
+    useMemo(() => (isDragging ? ofEvent(Push(true)) : pipe(synchronizedCursorVisibility$)), [isDragging]),
+    Some(true),
+  );
   const cursorWidth = 2;
   return (
     <span
@@ -1494,7 +1513,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         height: viewCursorInfo.height,
         backgroundColor: hasFocus ? '#222' : '#666',
         transform: isItalic ? 'skew(-7deg)' : undefined,
-        visibility: isDragging || isVisibleMaybe.value ? 'visible' : 'hidden',
+        visibility: isVisibleMaybe.value ? 'visible' : 'hidden',
       }}
     />
   );
@@ -6171,7 +6190,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               left: pointerEvent.x,
               top: pointerEvent.y,
             };
-            const position = this.#calculatePositionFromViewPosition(viewPosition, false, false);
+            const position = this.#calculatePositionFromViewPosition(viewPosition, false, true);
             if (!dragState && !position) {
               return;
             }
@@ -6255,7 +6274,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   left: pointerEvent.x,
                   top: pointerEvent.y,
                 };
-                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold, true);
+                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold, false);
                 queueSelectionUpdate(
                   position && {
                     position,
@@ -6731,7 +6750,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   top: pointerEvent.y,
                 };
                 dragState.lastViewPosition = viewPosition;
-                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold, true);
+                const position = this.#calculatePositionFromViewPosition(viewPosition, isMovedPastThreshold, false);
                 if (position) {
                   dragState.lastPointInfo = {
                     position,
@@ -8945,7 +8964,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       checkboxMarkerParagraphReference,
     );
   }
-  #calculatePositionFromViewPosition(viewPosition: ViewPosition, isSnapIfPastBoundary: boolean, isHitTestCheckboxMarker: boolean): HitPosition | null {
+  #calculatePositionFromViewPosition(
+    viewPosition: ViewPosition,
+    isSnapIfPastBoundary: boolean,
+    isReturnCheckboxMarkerHitIfHitCheckboxMarker: boolean,
+  ): HitPosition | null {
     const hitElements = document.elementsFromPoint(viewPosition.left, viewPosition.top);
     const firstContentHitElement = hitElements.find(
       (hitElement) => hitElement === this.#topLevelContentViewContainerElement || this.#topLevelContentViewContainerElement.contains(hitElement),
@@ -8967,7 +8990,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         const topLevelContent = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
         const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
         if (listType === AccessedListStyleType.Checklist) {
-          if (!isHitTestCheckboxMarker) {
+          if (isReturnCheckboxMarkerHitIfHitCheckboxMarker) {
             return {
               type: HitPositionType.CheckboxMarker,
               paragraphReference,
@@ -9039,7 +9062,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             };
           }
         }
-        if (i > 0 && i === possibleLines.length - 1 && viewPosition.top > possibleLine.measuredParagraphLineRange.boundingRect.bottom) {
+        if (i === possibleLines.length - 1 && viewPosition.top > possibleLine.measuredParagraphLineRange.boundingRect.bottom) {
           const contentReference = matita.makeContentReferenceFromContent(
             matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference),
           );

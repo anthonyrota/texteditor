@@ -221,4 +221,5 @@ button {
 }
 .list-item--checklist__checkbox--checked::before {
   content: '\2713';
+  color: #fff;
 }
