@@ -1,5 +1,5 @@
 import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
+import { flushSync, createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { v4 as uuidV4 } from 'uuid';
 import { isFirefox, isSafari } from './common/browserDetection';
@@ -1404,9 +1404,10 @@ interface SelectionViewProps {
   selectionView$: Source<SelectionViewMessage>;
   hasFocus$: Source<boolean>;
   resetSynchronizedCursorVisibility$: Source<undefined>;
+  cursorElement: HTMLElement;
 }
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
-  const { selectionView$, hasFocus$, resetSynchronizedCursorVisibility$ } = props;
+  const { selectionView$, hasFocus$, resetSynchronizedCursorVisibility$, cursorElement } = props;
   const selectionViewMaybe = use$(
     useMemo(
       () =>
@@ -1470,7 +1471,8 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
     return null;
   }
   const uniqueKeyControl = new UniqueKeyControl();
-  const fragmentChildren: JSX.Element[] = [];
+  const selectionRectElements: JSX.Element[] = [];
+  const cursorElements: JSX.Element[] = [];
   for (let i = 0; i < viewCursorAndRangeInfosForSelectionRanges.length; i++) {
     const viewCursorAndRangeInfosForSelectionRange = viewCursorAndRangeInfosForSelectionRanges[i];
     const { viewCursorAndRangeInfosForRanges, isInComposition, selectionRangeId, roundCorners } = viewCursorAndRangeInfosForSelectionRange;
@@ -1496,7 +1498,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
           const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]));
           const backgroundColor = isInComposition ? '#accef766' : hasFocus ? '#accef7cc' : '#d3d3d36c';
           if (isInComposition) {
-            fragmentChildren.push(
+            selectionRectElements.push(
               <span
                 key={uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, true]))}
                 style={{
@@ -1510,10 +1512,10 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               />,
             );
           } else if (roundCorners) {
-            pushCurvedLineRectSpans(fragmentChildren, previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
+            pushCurvedLineRectSpans(selectionRectElements, previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
             continue;
           }
-          fragmentChildren.push(
+          selectionRectElements.push(
             <span
               key={key}
               style={{
@@ -1530,7 +1532,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
         for (let l = 0; l < viewCursorInfos.length; l++) {
           const viewCursorInfo = viewCursorInfos[l];
           const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection, insertTextConfig } = viewCursorInfo;
-          fragmentChildren.push(
+          cursorElements.push(
             <BlinkingCursor
               key={uniqueKeyControl.makeUniqueKey(
                 JSON.stringify([paragraphReference.blockId, isAnchor, isFocus, offset, rangeDirection, selectionRangeId, insertTextConfig]),
@@ -1546,7 +1548,12 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
       }
     }
   }
-  return <>{fragmentChildren}</>;
+  return (
+    <>
+      <>{selectionRectElements}</>
+      {createPortal(cursorElements, cursorElement)}
+    </>
+  );
 }
 interface BlinkingCursorProps {
   viewCursorInfo: ViewCursorInfo;
@@ -5628,10 +5635,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_numberedListIndexerMap: Map<string, NumberedListIndexer>;
   private $p_containerHtmlElement!: HTMLElement;
   private $p_topLevelContentViewContainerElement!: HTMLElement;
-  private $p_selectionViewContainerElement!: HTMLElement;
+  private $p_selectionRectsViewContainerElement!: HTMLElement;
+  private $p_selectionCursorsViewContainerElement!: HTMLElement;
   private $p_inputElementLastSynchronizedParagraphReference: matita.BlockReference | null;
   private $p_inputElementContainedInSingleParagraph: boolean;
   private $p_inputTextElement!: HTMLElement;
+  // TODO: Fix input handling so this isn't needed.
   private $p_inputTextElementMeasurementElement!: HTMLElement;
   private $p_searchOverlayContainerElement!: HTMLElement;
   private $p_searchElementContainerElement!: HTMLElement;
@@ -6046,7 +6055,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_topLevelContentViewContainerElement = document.createElement('div');
     // TODO: Hack to fix virtual selection and input overflowing bottom.
     this.$p_topLevelContentViewContainerElement.style.paddingBottom = '8px';
-    this.$p_selectionViewContainerElement = document.createElement('div');
+    this.$p_selectionRectsViewContainerElement = document.createElement('div');
+    this.$p_selectionCursorsViewContainerElement = document.createElement('div');
     this.$p_searchOverlayContainerElement = document.createElement('div');
     pipe(
       this.stateControl.afterMutationPart$,
@@ -6117,7 +6127,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const dragElements = [
       this.$p_inputTextElementMeasurementElement,
       this.$p_topLevelContentViewContainerElement,
-      this.$p_selectionViewContainerElement,
+      this.$p_selectionRectsViewContainerElement,
+      this.$p_selectionCursorsViewContainerElement,
       this.$p_searchOverlayContainerElement,
       this.$p_inputTextElement, // TODO: Overflows parent, changing dimensions.
     ];
@@ -6874,8 +6885,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         selectionView$={this.$p_selectionView$}
         hasFocus$={this.$p_selectionViewHasFocus$}
         resetSynchronizedCursorVisibility$={this.$p_resetSynchronizedCursorVisibility$}
+        cursorElement={this.$p_selectionCursorsViewContainerElement}
       />,
-      this.$p_selectionViewContainerElement,
+      this.$p_selectionRectsViewContainerElement,
       'selection-view-',
     );
     renderReactNodeIntoHtmlContainerElement(
@@ -6887,10 +6899,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_containerHtmlElement.style.position = 'relative';
     this.$p_containerHtmlElement.append(
       this.$p_inputTextElementMeasurementElement,
-      this.$p_searchOverlayContainerElement,
-      this.$p_selectionViewContainerElement,
       this.$p_inputTextElement,
+      this.$p_searchOverlayContainerElement,
+      this.$p_selectionRectsViewContainerElement,
       this.$p_topLevelContentViewContainerElement,
+      this.$p_selectionCursorsViewContainerElement,
       this.$p_searchElementContainerElement,
     );
     let searchContainerStaticViewRectangle$: CurrentValueDistributor<ViewRectangle> | undefined;
