@@ -7,4 +7,14 @@ export default defineConfig({
     hmr: false,
     port: 3000,
   },
+  build: {
+    minify: 'terser',
+    terserOptions: {
+      mangle: {
+        properties: {
+          regex: /^\$p_.*/,
+        },
+      },
+    },
+  },
 });
