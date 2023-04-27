@@ -475,7 +475,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       textConfig.script === TextConfigScript.Super || textConfig.script === TextConfigScript.Sub
         ? this.$p_fontSize * this.$p_scriptFontSizeMultiplier
         : this.$p_fontSize
-    }px ${textConfig.code === true ? '"Fira Code, monospace"' : '"IBM Plex Sans, sans-serif"'}`;
+    }px/${this.$p_lineHeight} ${textConfig.code === true ? 'Fira Code, monospace' : 'IBM Plex Sans, sans-serif'}`;
   }
   convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
     lineTop: number,
