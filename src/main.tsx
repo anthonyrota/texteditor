@@ -7175,13 +7175,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 return `${document.fonts.size}|${Array.from(document.fonts.values(), (fontFace) => fontFace.status).join(',')}`;
               };
               let lastKey = calculateKey();
-              setInterval(() => {
-                const key = calculateKey();
-                if (key !== lastKey) {
-                  lastKey = key;
-                  callback();
-                }
-              }, 1000);
+              setIntervalDisposable(
+                () => {
+                  const key = calculateKey();
+                  if (key !== lastKey) {
+                    lastKey = key;
+                    callback();
+                  }
+                },
+                1000,
+                disposable,
+              );
               return;
             }
             document.fonts.addEventListener('loadingdone', callback);
@@ -8325,9 +8329,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (isSafari) {
       // Safari fires keydown events after the composition end event. Wait until they are processed (e.g. "Enter" to finish composition shouldn't split the
       // paragraph)
-      setTimeoutDisposable(() => {
-        this.#isInComposition--;
-      }, 100);
+      setTimeoutDisposable(
+        () => {
+          this.#isInComposition--;
+        },
+        100,
+        this,
+      );
     } else {
       this.#clearKeys();
       this.#isInComposition--;

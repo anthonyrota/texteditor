@@ -2,7 +2,7 @@ import { Disposable } from './disposable';
 import { requestAnimationFrameDisposable, setTimeoutDisposable, setIntervalDisposable, removeOnce, queueMicrotaskDisposable } from './util';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ScheduleFunction<T extends any[] = []> {
-  (callback: (...args: T) => void, subscription?: Disposable): void;
+  (callback: (...args: T) => void, subscription: Disposable): void;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 interface ScheduleQueuedCallback<T extends any[]> {
@@ -16,7 +16,7 @@ function ScheduleQueued<T extends any[] = []>(schedule: (callNext: (...args: T) 
   let isInCallback = false;
   const nestedCallNextArgs: T[] = [];
   return (callback, subscription) => {
-    if (subscription && !subscription.active) {
+    if (!subscription.active) {
       return;
     }
     const callbackInfo: ScheduleQueuedCallback<T> = {
@@ -24,33 +24,31 @@ function ScheduleQueued<T extends any[] = []>(schedule: (callNext: (...args: T) 
       __hasBeenRemovedFromQueue: false,
     };
     callbacks.push(callbackInfo);
-    if (subscription) {
-      const _callbacks = callbacks;
-      subscription.add(
-        Disposable(() => {
-          // If the callbacks array has changed then the queue has
-          // already been flushed, ensuring this callback will not be
-          // called in the future.
-          if (_callbacks !== callbacks || callbackInfo.__hasBeenRemovedFromQueue) {
-            return;
-          }
-          callbackInfo.__hasBeenRemovedFromQueue = true;
-          removeOnce(callbacks, callbackInfo);
-          // If we are executing a callback, then there is no need to
-          // handle disposal logic here as it will be handled after
-          // the callback is called. This also avoids unnecessary
-          // disposal in the case where the callback flushes all
-          // future callbacks, then queues a new callback.
-          if (isInCallback) {
-            return;
-          }
-          if (callbacks.length === 0) {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            scheduledSubscription!.dispose();
-          }
-        }),
-      );
-    }
+    const _callbacks = callbacks;
+    subscription.add(
+      Disposable(() => {
+        // If the callbacks array has changed then the queue has
+        // already been flushed, ensuring this callback will not be
+        // called in the future.
+        if (_callbacks !== callbacks || callbackInfo.__hasBeenRemovedFromQueue) {
+          return;
+        }
+        callbackInfo.__hasBeenRemovedFromQueue = true;
+        removeOnce(callbacks, callbackInfo);
+        // If we are executing a callback, then there is no need to
+        // handle disposal logic here as it will be handled after
+        // the callback is called. This also avoids unnecessary
+        // disposal in the case where the callback flushes all
+        // future callbacks, then queues a new callback.
+        if (isInCallback) {
+          return;
+        }
+        if (callbacks.length === 0) {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          scheduledSubscription!.dispose();
+        }
+      }),
+    );
     // Exiting here ensures that in the case where the last callback is
     // removed from the queue and executed, scheduling another callback will
     // mean that the subscription logic will not be handled inside the
@@ -139,7 +137,7 @@ function ScheduleQueuedDiscrete<T extends any[] = []>(schedule: (callback: (...a
   });
 }
 const scheduleSync: ScheduleFunction = (callback, subscription) => {
-  if (subscription && !subscription.active) {
+  if (!subscription.active) {
     return;
   }
   callback();

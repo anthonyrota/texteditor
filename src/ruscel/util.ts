@@ -22,22 +22,20 @@ function removeOnce<T>(array: T[], item: T): void {
     array.splice(index, 1);
   }
 }
-function requestAnimationFrameDisposable(callback: (time: number) => void, subscription?: Disposable): void {
-  if (subscription && !subscription.active) {
+function requestAnimationFrameDisposable(callback: (time: number) => void, subscription: Disposable): void {
+  if (!subscription.active) {
     return;
   }
   const animationId = requestAnimationFrame(callback);
-  if (subscription) {
-    subscription.add(
-      Disposable(() => {
-        cancelAnimationFrame(animationId);
-      }),
-    );
-  }
+  subscription.add(
+    Disposable(() => {
+      cancelAnimationFrame(animationId);
+    }),
+  );
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function setTimeoutDisposable<T extends any[]>(callback: (...args: T) => void, delayMs = 0, subscription?: Disposable, ...args: T): void {
-  if (subscription && !subscription.active) {
+function setTimeoutDisposable<T extends any[]>(callback: (...args: T) => void, delayMs = 0, subscription: Disposable, ...args: T): void {
+  if (!subscription.active) {
     return;
   }
   const id = setTimeout(
@@ -46,17 +44,15 @@ function setTimeoutDisposable<T extends any[]>(callback: (...args: T) => void, d
     delayMs,
     ...args,
   );
-  if (subscription) {
-    subscription.add(
-      Disposable(() => {
-        clearTimeout(id);
-      }),
-    );
-  }
+  subscription.add(
+    Disposable(() => {
+      clearTimeout(id);
+    }),
+  );
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function setIntervalDisposable<T extends any[]>(callback: (...args: T) => void, delayMs = 0, subscription?: Disposable, ...args: T): void {
-  if (subscription && !subscription.active) {
+function setIntervalDisposable<T extends any[]>(callback: (...args: T) => void, delayMs = 0, subscription: Disposable, ...args: T): void {
+  if (!subscription.active) {
     return;
   }
   const id = setInterval(
@@ -65,21 +61,19 @@ function setIntervalDisposable<T extends any[]>(callback: (...args: T) => void, 
     delayMs,
     ...args,
   );
-  if (subscription) {
-    subscription.add(
-      Disposable(() => {
-        clearInterval(id);
-      }),
-    );
-  }
+  subscription.add(
+    Disposable(() => {
+      clearInterval(id);
+    }),
+  );
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function queueMicrotaskDisposable<T extends any[]>(callback: (...args: T) => void, subscription?: Disposable, ...args: T): void {
-  if (subscription && !subscription.active) {
+function queueMicrotaskDisposable<T extends any[]>(callback: (...args: T) => void, subscription: Disposable, ...args: T): void {
+  if (!subscription.active) {
     return;
   }
   queueMicrotask(() => {
-    if (subscription && !subscription.active) {
+    if (!subscription.active) {
       return;
     }
     callback(...args);
