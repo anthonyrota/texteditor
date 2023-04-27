@@ -5714,14 +5714,14 @@ function makeRemoveBlocksSelectionTransformFn<
   };
 }
 class SimpleConfigConflictMerger<Config extends JsonMap> {
-  #mergeConfig: Config;
-  #mergeConfigKeys: (keyof Config)[];
+  private $p_mergeConfig: Config;
+  private $p_mergeConfigKeys: (keyof Config)[];
   constructor(mergeConfig: Config) {
-    this.#mergeConfig = mergeConfig;
-    this.#mergeConfigKeys = Object.keys(mergeConfig);
+    this.$p_mergeConfig = mergeConfig;
+    this.$p_mergeConfigKeys = Object.keys(mergeConfig);
   }
   willConfigChangeAfterMerge(originalConfig: Config): boolean {
-    return this.#mergeConfigKeys.some((key) => !areJsonEqual(originalConfig[key], this.#mergeConfig[key]));
+    return this.$p_mergeConfigKeys.some((key) => !areJsonEqual(originalConfig[key], this.$p_mergeConfig[key]));
   }
   updateConfig(originalConfig: Config): { newConfig: Config; reverseMergeConfig: Config } {
     const newConfig: Config = {} as Config;
@@ -5731,10 +5731,10 @@ class SimpleConfigConflictMerger<Config extends JsonMap> {
       const originalConfigKey = originalConfigKeys[i];
       (newConfig as JsonMap)[originalConfigKey] = originalConfig[originalConfigKey];
     }
-    for (let i = 0; i < this.#mergeConfigKeys.length; i++) {
-      const mergeConfigKey = this.#mergeConfigKeys[i];
+    for (let i = 0; i < this.$p_mergeConfigKeys.length; i++) {
+      const mergeConfigKey = this.$p_mergeConfigKeys[i];
       reverseMergeConfig[mergeConfigKey] = originalConfig[mergeConfigKey];
-      const mergeValue = this.#mergeConfig[mergeConfigKey];
+      const mergeValue = this.$p_mergeConfig[mergeConfigKey];
       if (mergeValue === undefined) {
         delete newConfig[mergeConfigKey];
       } else {
@@ -5809,130 +5809,130 @@ function setPropertyAtPathInJsonMap(jsonMap: JsonMap, path: string[], value: any
   };
 }
 class NodeConfigDeltaInsertInListAtPathBeforeIndexConflictMerger<Config extends JsonMap> implements NodeConfigDeltaConflictMerger<Config> {
-  #path: string[];
-  #insertBefore: number;
-  #value: any;
+  private $p_path: string[];
+  private $p_insertBefore: number;
+  private $p_value: any;
   constructor(nodeConfigDelta: NodeConfigDeltaInsertInListAtPathBeforeIndex<Config, any>) {
-    this.#path = nodeConfigDelta.path as string[];
-    this.#insertBefore = nodeConfigDelta.insertBefore;
-    this.#value = nodeConfigDelta.value;
+    this.$p_path = nodeConfigDelta.path as string[];
+    this.$p_insertBefore = nodeConfigDelta.insertBefore;
+    this.$p_value = nodeConfigDelta.value;
   }
   updateConfig(originalConfig: Config): { newConfig: Config; reverseConfigDelta: NodeConfigDelta<Config, any> } {
-    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.#path);
-    assert(0 <= this.#insertBefore && this.#insertBefore <= jsonList.length);
+    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.$p_path);
+    assert(0 <= this.$p_insertBefore && this.$p_insertBefore <= jsonList.length);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const newJsonList = [...jsonList.slice(0, this.#insertBefore), this.#value, ...jsonList.slice(this.#insertBefore)];
+    const newJsonList = [...jsonList.slice(0, this.$p_insertBefore), this.$p_value, ...jsonList.slice(this.$p_insertBefore)];
     return {
-      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.#path, newJsonList) as Config,
+      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.$p_path, newJsonList) as Config,
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      reverseConfigDelta: makeNodeConfigDeltaRemoveInListAtPathAtIndex(this.#path as any, this.#insertBefore) as any,
+      reverseConfigDelta: makeNodeConfigDeltaRemoveInListAtPathAtIndex(this.$p_path as any, this.$p_insertBefore) as any,
     };
   }
 }
 class NodeConfigDeltaRemoveInListAtPathAtIndexConflictMerger<Config extends JsonMap> implements NodeConfigDeltaConflictMerger<Config> {
-  #path: string[];
-  #removeAt: number;
+  private $p_path: string[];
+  private $p_removeAt: number;
   constructor(nodeConfigDelta: NodeConfigDeltaRemoveInListAtPathAtIndex<Config, any>) {
-    this.#path = nodeConfigDelta.path as string[];
-    this.#removeAt = nodeConfigDelta.removeAt;
+    this.$p_path = nodeConfigDelta.path as string[];
+    this.$p_removeAt = nodeConfigDelta.removeAt;
   }
   updateConfig(originalConfig: Config): { newConfig: Config; reverseConfigDelta: NodeConfigDelta<Config, any> } {
-    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.#path);
-    assert(0 <= this.#removeAt && this.#removeAt < jsonList.length);
+    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.$p_path);
+    assert(0 <= this.$p_removeAt && this.$p_removeAt < jsonList.length);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const removedValue = jsonList[this.#removeAt];
+    const removedValue = jsonList[this.$p_removeAt];
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const newJsonList = [...jsonList.slice(0, this.#removeAt), ...jsonList.slice(this.#removeAt + 1)];
+    const newJsonList = [...jsonList.slice(0, this.$p_removeAt), ...jsonList.slice(this.$p_removeAt + 1)];
     return {
-      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.#path, newJsonList) as Config,
+      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.$p_path, newJsonList) as Config,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      reverseConfigDelta: makeNodeConfigDeltaInsertInListAtPathBeforeIndex(this.#path, this.#removeAt, removedValue),
+      reverseConfigDelta: makeNodeConfigDeltaInsertInListAtPathBeforeIndex(this.$p_path, this.$p_removeAt, removedValue),
     };
   }
 }
 class NodeConfigDeltaReplaceInListAtPathAtIndexConflictMerger<Config extends JsonMap> implements NodeConfigDeltaConflictMerger<Config> {
-  #path: string[];
-  #replaceAt: number;
-  #value: any;
+  private $p_path: string[];
+  private $p_replaceAt: number;
+  private $p_value: any;
   constructor(nodeConfigDelta: NodeConfigDeltaReplaceInListAtPathAtIndex<Config, any>) {
-    this.#path = nodeConfigDelta.path as string[];
-    this.#replaceAt = nodeConfigDelta.replaceAt;
-    this.#value = nodeConfigDelta.value;
+    this.$p_path = nodeConfigDelta.path as string[];
+    this.$p_replaceAt = nodeConfigDelta.replaceAt;
+    this.$p_value = nodeConfigDelta.value;
   }
   updateConfig(originalConfig: Config): { newConfig: Config; reverseConfigDelta: NodeConfigDelta<Config, any> } {
-    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.#path);
-    assert(0 <= this.#replaceAt && this.#replaceAt < jsonList.length);
+    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.$p_path);
+    assert(0 <= this.$p_replaceAt && this.$p_replaceAt < jsonList.length);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const replacedValue = jsonList[this.#replaceAt];
+    const replacedValue = jsonList[this.$p_replaceAt];
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const newJsonList = [...jsonList];
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    newJsonList[this.#replaceAt] = this.#value;
+    newJsonList[this.$p_replaceAt] = this.$p_value;
     return {
-      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.#path, newJsonList) as Config,
+      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.$p_path, newJsonList) as Config,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      reverseConfigDelta: makeNodeConfigDeltaReplaceInListAtPathAtIndex(this.#path, this.#replaceAt, replacedValue),
+      reverseConfigDelta: makeNodeConfigDeltaReplaceInListAtPathAtIndex(this.$p_path, this.$p_replaceAt, replacedValue),
     };
   }
 }
 class NodeConfigDeltaMoveInListAtPathFromIndexToIndexConflictMerger<Config extends JsonMap> implements NodeConfigDeltaConflictMerger<Config> {
-  #path: string[];
-  #moveFrom: number;
-  #moveToBefore: number;
+  private $p_path: string[];
+  private $p_moveFrom: number;
+  private $p_moveToBefore: number;
   constructor(nodeConfigDelta: NodeConfigDeltaMoveInListAtPathFromIndexToIndex<Config, any>) {
-    this.#path = nodeConfigDelta.path as string[];
-    this.#moveFrom = nodeConfigDelta.moveFrom;
-    this.#moveToBefore = nodeConfigDelta.moveToBefore;
+    this.$p_path = nodeConfigDelta.path as string[];
+    this.$p_moveFrom = nodeConfigDelta.moveFrom;
+    this.$p_moveToBefore = nodeConfigDelta.moveToBefore;
   }
   updateConfig(originalConfig: Config): { newConfig: Config; reverseConfigDelta: NodeConfigDelta<Config, any> } {
-    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.#path);
+    const jsonList = accessJsonListAtPathInJsonMap(originalConfig, this.$p_path);
     assert(
-      this.#moveFrom !== this.#moveToBefore &&
-        this.#moveFrom !== this.#moveToBefore + 1 &&
-        0 <= this.#moveFrom &&
-        this.#moveFrom < jsonList.length &&
-        0 <= this.#moveToBefore &&
-        this.#moveToBefore <= jsonList.length,
+      this.$p_moveFrom !== this.$p_moveToBefore &&
+        this.$p_moveFrom !== this.$p_moveToBefore + 1 &&
+        0 <= this.$p_moveFrom &&
+        this.$p_moveFrom < jsonList.length &&
+        0 <= this.$p_moveToBefore &&
+        this.$p_moveToBefore <= jsonList.length,
     );
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const itemToMove = jsonList[this.#moveFrom];
+    const itemToMove = jsonList[this.$p_moveFrom];
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const newJsonList = [...jsonList];
-    newJsonList.splice(this.#moveFrom, 1);
-    if (this.#moveToBefore < this.#moveFrom) {
-      newJsonList.splice(this.#moveToBefore, 1);
+    newJsonList.splice(this.$p_moveFrom, 1);
+    if (this.$p_moveToBefore < this.$p_moveFrom) {
+      newJsonList.splice(this.$p_moveToBefore, 1);
     } else {
-      newJsonList.splice(this.#moveToBefore - 1, 1, itemToMove);
+      newJsonList.splice(this.$p_moveToBefore - 1, 1, itemToMove);
     }
     return {
-      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.#path, newJsonList) as Config,
+      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.$p_path, newJsonList) as Config,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      reverseConfigDelta: makeNodeConfigDeltaMoveInListAtPathFromIndexToIndex(this.#path, this.#moveToBefore, this.#moveFrom),
+      reverseConfigDelta: makeNodeConfigDeltaMoveInListAtPathFromIndexToIndex(this.$p_path, this.$p_moveToBefore, this.$p_moveFrom),
     };
   }
 }
 class NodeConfigDeltaSetInObjectAtPathAtKeyConflictMerger<Config extends JsonMap> implements NodeConfigDeltaConflictMerger<Config> {
-  #path: string[];
-  #value: any;
+  private $p_path: string[];
+  private $p_value: any;
   constructor(nodeConfigDelta: NodeConfigDeltaSetInObjectAtPathAtKey<Config, any>) {
-    this.#path = nodeConfigDelta.path as string[];
-    this.#value = nodeConfigDelta.value;
+    this.$p_path = nodeConfigDelta.path as string[];
+    this.$p_value = nodeConfigDelta.value;
   }
   updateConfig(originalConfig: Config): { newConfig: Config; reverseConfigDelta: NodeConfigDelta<Config, any> } {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const oldValue = accessValueAtPathInJsonMap(originalConfig, this.#path);
+    const oldValue = accessValueAtPathInJsonMap(originalConfig, this.$p_path);
     return {
-      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.#path, this.#value) as Config,
+      newConfig: setPropertyAtPathInJsonMap(originalConfig, this.$p_path, this.$p_value) as Config,
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-expect-error
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      reverseConfigDelta: makeNodeConfigDeltaSetInObjectAtPathAtKey(this.#path, oldValue),
+      reverseConfigDelta: makeNodeConfigDeltaSetInObjectAtPathAtKey(this.$p_path, oldValue),
     };
   }
 }

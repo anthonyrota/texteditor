@@ -18,39 +18,39 @@ interface Disposable {
 let lastId = 0;
 class RealDisposableImplementation implements Disposable {
   __$$DISPOSABLE$$_id = ++lastId;
-  #children: Disposable[] | null = [];
-  #parents: Disposable[] | null = [];
-  #markedForDisposal = false;
-  #onDispose: (() => void) | undefined;
+  private $p_$$DISPOSABLE$$_children: Disposable[] | null = [];
+  private $p_$$DISPOSABLE$$_parents: Disposable[] | null = [];
+  private $p_$$DISPOSABLE$$_markedForDisposal = false;
+  private $p_$$DISPOSABLE$$_onDispose: (() => void) | undefined;
   [$$Disposable]: DisposableImplementationIdentifier.RealDisposable = DisposableImplementationIdentifier.RealDisposable;
   constructor(__onDispose?: () => void) {
-    this.#onDispose = __onDispose;
+    this.$p_$$DISPOSABLE$$_onDispose = __onDispose;
   }
   get active(): boolean {
-    if (!this.#children) {
+    if (!this.$p_$$DISPOSABLE$$_children) {
       return false;
     }
     // If a disposable is determined to not be active, it should be ensured
     // that its dispose method was called.
-    if (this.#markedForDisposal) {
+    if (this.$p_$$DISPOSABLE$$_markedForDisposal) {
       this.dispose();
       return false;
     }
     return true;
   }
   __$$DISPOSABLE$$_children_(): Disposable[] | null {
-    return this.#children;
+    return this.$p_$$DISPOSABLE$$_children;
   }
   add(child: Disposable): void {
-    if (!this.#children) {
+    if (!this.$p_$$DISPOSABLE$$_children) {
       child.dispose();
       return;
     }
     if (!child.__$$DISPOSABLE$$_children_()) {
       return;
     }
-    if (this.#markedForDisposal) {
-      this.#children.push(child);
+    if (this.$p_$$DISPOSABLE$$_markedForDisposal) {
+      this.$p_$$DISPOSABLE$$_children.push(child);
       // Already marked children as disposed -> have to manually here.
       child.__$$DISPOSABLE$$_prepareForDisposal();
       this.dispose();
@@ -59,10 +59,10 @@ class RealDisposableImplementation implements Disposable {
     if (child.__$$DISPOSABLE$$_id === this.__$$DISPOSABLE$$_id) {
       return;
     }
-    this.#children.push(child);
+    this.$p_$$DISPOSABLE$$_children.push(child);
   }
   remove(child: Disposable): void {
-    if (this.#markedForDisposal) {
+    if (this.$p_$$DISPOSABLE$$_markedForDisposal) {
       // Note that there are two cases here:
       //     1. We have already been disposed, which means we have no
       //            children and should return.
@@ -82,14 +82,14 @@ class RealDisposableImplementation implements Disposable {
     // Note that this will only remove the specific instance revering to the Disposable, e.g. delineates between the fake and real implementation. This behavior
     // is unstable and TBD.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const index = this.#children!.indexOf(child);
+    const index = this.$p_$$DISPOSABLE$$_children!.indexOf(child);
     if (index !== -1) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      this.#children!.splice(index, 1);
+      this.$p_$$DISPOSABLE$$_children!.splice(index, 1);
     }
   }
   dispose(): void {
-    const children = this.#children;
+    const children = this.$p_$$DISPOSABLE$$_children;
     if (!children) {
       return;
     }
@@ -97,14 +97,14 @@ class RealDisposableImplementation implements Disposable {
     // has been disposed.
     this.__$$DISPOSABLE$$_prepareForDisposal();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const parents = this.#parents!;
+    const parents = this.$p_$$DISPOSABLE$$_parents!;
     const errors: unknown[] = [];
-    this.#children = null;
-    this.#parents = null;
+    this.$p_$$DISPOSABLE$$_children = null;
+    this.$p_$$DISPOSABLE$$_parents = null;
     for (let i = 0; i < parents.length; i++) {
       parents[i].remove(this);
     }
-    const onDispose = this.#onDispose;
+    const onDispose = this.$p_$$DISPOSABLE$$_onDispose;
     if (onDispose) {
       try {
         onDispose();
@@ -124,12 +124,12 @@ class RealDisposableImplementation implements Disposable {
     }
   }
   __$$DISPOSABLE$$_prepareForDisposal(): void {
-    if (this.#markedForDisposal) {
+    if (this.$p_$$DISPOSABLE$$_markedForDisposal) {
       return;
     }
-    this.#markedForDisposal = true;
+    this.$p_$$DISPOSABLE$$_markedForDisposal = true;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const children = this.#children!;
+    const children = this.$p_$$DISPOSABLE$$_children!;
     for (let i = 0; i < children.length; i++) {
       children[i].__$$DISPOSABLE$$_prepareForDisposal();
     }

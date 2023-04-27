@@ -13,15 +13,15 @@ interface IntlSegmenterConstructor {
 let IntlSegmenterPromise: Promise<IntlSegmenterConstructor> | undefined;
 function patchIntlSegmenter(BadIntlSegmenter: IntlSegmenterConstructor): IntlSegmenterConstructor {
   class IntlSegmenterFixed {
-    #segmenter: IntlSegmenter;
-    #options?: Intl.SegmenterOptions;
+    private $p_segmenter: IntlSegmenter;
+    private $p_options?: Intl.SegmenterOptions;
     constructor(locales?: Intl.BCP47LanguageTag | Intl.BCP47LanguageTag[], options?: Intl.SegmenterOptions) {
-      this.#segmenter = new BadIntlSegmenter(locales, options);
-      this.#options = options;
+      this.$p_segmenter = new BadIntlSegmenter(locales, options);
+      this.$p_options = options;
     }
     segment(input: string): IntlSegments {
-      const segments = this.#segmenter.segment(input);
-      if (this.#options?.granularity !== 'word') {
+      const segments = this.$p_segmenter.segment(input);
+      if (this.$p_options?.granularity !== 'word') {
         return segments;
       }
       let segmentsCached: Intl.SegmentData[] | null = null;

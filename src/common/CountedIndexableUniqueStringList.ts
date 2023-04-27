@@ -1,39 +1,39 @@
 import { assert, assertIsNotNullish } from '../common/util';
 class CountedIndexableUniqueStringList {
-  #valueToNode = Object.create(null) as Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
-  #root: AvlTreeCountedIndexableUniqueStringListNode = new AvlTreeCountedIndexableUniqueStringListLeafNode(null, this.#valueToNode);
+  private $p_valueToNode = Object.create(null) as Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
+  private $p_root: AvlTreeCountedIndexableUniqueStringListNode = new AvlTreeCountedIndexableUniqueStringListLeafNode(null, this.$p_valueToNode);
   constructor(valuesAndCounts: Iterable<readonly [value: string, count: number]>) {
     let i = 0;
     for (const valueAndCount of valuesAndCounts) {
-      this.#root = this.#root.insertBefore(i++, valueAndCount[0], valueAndCount[1]);
+      this.$p_root = this.$p_root.insertBefore(i++, valueAndCount[0], valueAndCount[1]);
     }
   }
   getLength(): number {
-    return this.#root.size;
+    return this.$p_root.size;
   }
   access(index: number): [value: string, count: number] {
-    assert(0 <= index && index < this.#root.size);
-    const node = (this.#root as AvlTreeCountedIndexableUniqueStringListInternalNode).getNodeAt(index);
+    assert(0 <= index && index < this.$p_root.size);
+    const node = (this.$p_root as AvlTreeCountedIndexableUniqueStringListInternalNode).getNodeAt(index);
     return [node.value, node.count];
   }
   insertBefore(index: number, valuesAndCounts: (readonly [value: string, count: number])[]): void {
-    assert(0 <= index && index <= this.#root.size);
+    assert(0 <= index && index <= this.$p_root.size);
     for (let i = 0; i < valuesAndCounts.length; i++) {
       const valueAndCount = valuesAndCounts[i];
-      this.#root = this.#root.insertBefore(index + i, valueAndCount[0], valueAndCount[1]);
+      this.$p_root = this.$p_root.insertBefore(index + i, valueAndCount[0], valueAndCount[1]);
     }
   }
   remove(fromIndex: number, toIndexInclusive: number): void {
-    assert(0 <= fromIndex && fromIndex <= toIndexInclusive && toIndexInclusive < this.#root.size);
+    assert(0 <= fromIndex && fromIndex <= toIndexInclusive && toIndexInclusive < this.$p_root.size);
     for (let i = fromIndex; i <= toIndexInclusive; i++) {
-      this.#root = (this.#root as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(fromIndex);
+      this.$p_root = (this.$p_root as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(fromIndex);
     }
   }
   indexOf(value: string): number {
-    if (!(value in this.#valueToNode)) {
+    if (!(value in this.$p_valueToNode)) {
       return -1;
     }
-    let node = this.#valueToNode[value];
+    let node = this.$p_valueToNode[value];
     let index = node.left.size;
     while (node.parent !== null) {
       if (node === node.parent.right) {
@@ -44,13 +44,13 @@ class CountedIndexableUniqueStringList {
     return index;
   }
   getTotalCount(): number {
-    return this.#root.totalCount;
+    return this.$p_root.totalCount;
   }
   getCount(value: string): number {
-    return this.#valueToNode[value].count;
+    return this.$p_valueToNode[value].count;
   }
   setCount(value: string, count: number): void {
-    const node = this.#valueToNode[value];
+    const node = this.$p_valueToNode[value];
     if (node.count === count) {
       return;
     }
@@ -62,7 +62,7 @@ class CountedIndexableUniqueStringList {
     }
   }
   calculatePrefixSumBefore(value: string): number {
-    let node = this.#valueToNode[value];
+    let node = this.$p_valueToNode[value];
     assertIsNotNullish(node);
     let prefixSum = node.left.totalCount;
     while (node.parent !== null) {
@@ -82,8 +82,8 @@ class CountedIndexableUniqueStringList {
     return this.getLength() === 0 ? [] : [...this.iterBetween(0, this.getLength() - 1)];
   }
   assertStructure(): void {
-    if (this.#root.size !== 0) {
-      (this.#root as AvlTreeCountedIndexableUniqueStringListInternalNode).assertStructure();
+    if (this.$p_root.size !== 0) {
+      (this.$p_root as AvlTreeCountedIndexableUniqueStringListInternalNode).assertStructure();
     }
   }
 }
@@ -99,16 +99,16 @@ class AvlTreeCountedIndexableUniqueStringListLeafNode implements AvlTreeCountedI
   height = 0;
   size = 0;
   totalCount = 0;
-  #valueToNode: Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
+  private $p_valueToNode: Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
   constructor(
     parent: AvlTreeCountedIndexableUniqueStringListInternalNode | null,
     valueToNode: Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>,
   ) {
     this.parent = parent;
-    this.#valueToNode = valueToNode;
+    this.$p_valueToNode = valueToNode;
   }
   insertBefore(_index: number, value: string, count: number): AvlTreeCountedIndexableUniqueStringListInternalNode {
-    return new AvlTreeCountedIndexableUniqueStringListInternalNode(value, count, this.parent, this.#valueToNode);
+    return new AvlTreeCountedIndexableUniqueStringListInternalNode(value, count, this.parent, this.$p_valueToNode);
   }
 }
 class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCountedIndexableUniqueStringListNode {
@@ -120,7 +120,7 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
   totalCount: number;
   left: AvlTreeCountedIndexableUniqueStringListNode;
   right: AvlTreeCountedIndexableUniqueStringListNode;
-  #valueToNode: Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
+  private $p_valueToNode: Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
   constructor(
     value: string,
     count: number,
@@ -133,8 +133,8 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
     this.parent = parent;
     this.left = new AvlTreeCountedIndexableUniqueStringListLeafNode(this, valueToNode);
     this.right = new AvlTreeCountedIndexableUniqueStringListLeafNode(this, valueToNode);
-    this.#valueToNode = valueToNode;
-    this.#valueToNode[this.value] = this;
+    this.$p_valueToNode = valueToNode;
+    this.$p_valueToNode[this.value] = this;
   }
   getNodeAt(index: number): AvlTreeCountedIndexableUniqueStringListInternalNode {
     const leftSize: number = this.left.size;
@@ -153,8 +153,8 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
     } else {
       this.right = this.right.insertBefore(index - leftSize - 1, value, count);
     }
-    this.#recalculate();
-    return this.#balance();
+    this.$p_recalculate();
+    return this.$p_balance();
   }
   removeAt(index: number): AvlTreeCountedIndexableUniqueStringListNode {
     const leftSize: number = this.left.size;
@@ -163,7 +163,7 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
     } else if (index > leftSize) {
       this.right = (this.right as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(index - leftSize - 1);
     } else {
-      delete this.#valueToNode[this.value];
+      delete this.$p_valueToNode[this.value];
       if (this.right.size === 0) {
         const newNode = this.left;
         newNode.parent = this.parent;
@@ -181,55 +181,55 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
       this.value = temp.value;
       this.count = temp.count;
       this.right = (this.right as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(0);
-      this.#valueToNode[this.value] = this;
+      this.$p_valueToNode[this.value] = this;
     }
-    this.#recalculate();
-    return this.#balance();
+    this.$p_recalculate();
+    return this.$p_balance();
   }
-  #balance(): AvlTreeCountedIndexableUniqueStringListInternalNode {
+  private $p_balance(): AvlTreeCountedIndexableUniqueStringListInternalNode {
     const parent = this.parent;
-    const balance: number = this.#getBalance();
+    const balance: number = this.$p_getBalance();
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     let result: AvlTreeCountedIndexableUniqueStringListInternalNode = this;
     if (balance === -2) {
       const left = this.left as AvlTreeCountedIndexableUniqueStringListInternalNode;
-      if (left.#getBalance() === +1) {
-        this.left = left.#rotateLeft();
+      if (left.$p_getBalance() === +1) {
+        this.left = left.$p_rotateLeft();
       }
-      result = this.#rotateRight();
+      result = this.$p_rotateRight();
     } else if (balance === +2) {
       const right = this.right as AvlTreeCountedIndexableUniqueStringListInternalNode;
-      if (right.#getBalance() === -1) {
-        this.right = right.#rotateRight();
+      if (right.$p_getBalance() === -1) {
+        this.right = right.$p_rotateRight();
       }
-      result = this.#rotateLeft();
+      result = this.$p_rotateLeft();
     }
     result.parent = parent;
     return result;
   }
-  #rotateLeft(): AvlTreeCountedIndexableUniqueStringListInternalNode {
+  private $p_rotateLeft(): AvlTreeCountedIndexableUniqueStringListInternalNode {
     const root = this.right as AvlTreeCountedIndexableUniqueStringListInternalNode;
     root.parent = this.parent;
     this.right = root.left;
     this.right.parent = this;
     root.left = this;
     root.left.parent = root;
-    this.#recalculate();
-    root.#recalculate();
+    this.$p_recalculate();
+    root.$p_recalculate();
     return root;
   }
-  #rotateRight(): AvlTreeCountedIndexableUniqueStringListInternalNode {
+  private $p_rotateRight(): AvlTreeCountedIndexableUniqueStringListInternalNode {
     const root = this.left as AvlTreeCountedIndexableUniqueStringListInternalNode;
     root.parent = this.parent;
     this.left = root.right;
     this.left.parent = this;
     root.right = this;
     root.right.parent = root;
-    this.#recalculate();
-    root.#recalculate();
+    this.$p_recalculate();
+    root.$p_recalculate();
     return root;
   }
-  #recalculate(): void {
+  private $p_recalculate(): void {
     this.height = Math.max(this.left.height, this.right.height) + 1;
     this.size = this.left.size + this.right.size + 1;
     this.totalCount = this.left.totalCount + this.right.totalCount + this.count;
@@ -237,7 +237,7 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
   recalculateTotalCount(): void {
     this.totalCount = this.left.totalCount + this.right.totalCount + this.count;
   }
-  #getBalance(): number {
+  private $p_getBalance(): number {
     return this.right.height - this.left.height;
   }
   assertStructure(): void {
@@ -250,7 +250,7 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
     assert(this.height === Math.max(this.left.height, this.right.height) + 1);
     assert(this.size === this.left.size + this.right.size + 1);
     assert(this.totalCount === this.left.totalCount + this.right.totalCount + this.count);
-    assert(Math.abs(this.#getBalance()) <= 1);
+    assert(Math.abs(this.$p_getBalance()) <= 1);
   }
 }
 export { CountedIndexableUniqueStringList };
