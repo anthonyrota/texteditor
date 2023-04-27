@@ -7004,6 +7004,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               );
               const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
               const selection = matita.makeSelection([selectionRange]);
+              this.#useSearchScrollMargins = true;
               this.stateControl.delta.setSelection(selection, undefined, { [SearchQueryGoToSearchResultImmediatelyKey]: true });
             };
             if (this.stateControl.isInUpdate) {
@@ -7526,6 +7527,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const { newSelectionRange, word, isAway } = result;
       this.#setSearchQuery(word);
       if (isAway) {
+        this.#useSearchScrollMargins = true;
         this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
       } else {
         this.stateControl.delta.applyUpdate(this.selectNextSearchMatch(true));
@@ -7542,22 +7544,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const { newSelectionRange, word, isAway } = result;
       this.#setSearchQuery(word);
       if (isAway) {
-        this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
-      } else {
-        this.stateControl.delta.applyUpdate(this.selectPreviousSearchMatch(true));
-      }
-      this.stateControl.delta.applyUpdate(this.openSearch());
-    };
-  }
-  selectPreviousInstanceOfSearchQuery(): matita.RunUpdateFn {
-    return () => {
-      const result = this.#getNearestWordToFocusSelectionRangeIfCollapsedElseFocusSelectionRangeText();
-      if (result === null) {
-        return;
-      }
-      const { newSelectionRange, word, isAway } = result;
-      this.#setSearchQuery(word);
-      if (isAway) {
+        this.#useSearchScrollMargins = true;
         this.stateControl.delta.setSelection(matita.makeSelection([newSelectionRange]));
       } else {
         this.stateControl.delta.applyUpdate(this.selectPreviousSearchMatch(true));
@@ -7583,6 +7570,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         matita.generateId(),
       );
       const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+      this.#useSearchScrollMargins = true;
       if (extendSelection) {
         this.stateControl.delta.setSelection(matita.makeSelection([...this.stateControl.stateView.selection.selectionRanges, selectionRange]));
       } else {
@@ -7608,6 +7596,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         matita.generateId(),
       );
       const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+      this.#useSearchScrollMargins = true;
       if (extendSelection) {
         this.stateControl.delta.setSelection(matita.makeSelection([selectionRange, ...this.stateControl.stateView.selection.selectionRanges]));
       } else {
@@ -7974,7 +7963,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#getScrollElementAdditionalNonVisibleMargins,
     );
   }
-  // TODO: Not always when search box is open.
+  #useSearchScrollMargins = false;
   #getScrollElementAdditionalNonVisibleMargins = (element: Element): AdditionalMargins => {
     let visibleTop: number;
     let visibleBottom: number;
@@ -7985,10 +7974,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         ((this.#searchElementContainerElement.firstChild as HTMLElement | null)?.getBoundingClientRect().height ?? 0) + searchBoxMargin * 2;
       const visibleTopAndBottom = this.#getVisibleTopAndBottom();
       const visibleHeight = visibleTopAndBottom.visibleBottom - visibleTopAndBottom.visibleTop;
-      visibleTop = searchElementPaddingTop;
-      visibleBottom = visibleHeight / 5;
-      notVisibleTop = Math.max(searchElementPaddingTop, searchElementPaddingTop + visibleHeight / 4);
-      notVisibleBottom = Math.min((visibleHeight * 3) / 5, visibleHeight - searchElementPaddingTop);
+      if (this.#useSearchScrollMargins) {
+        visibleTop = searchElementPaddingTop;
+        visibleBottom = visibleHeight / 5;
+        notVisibleTop = Math.max(searchElementPaddingTop, searchElementPaddingTop + visibleHeight / 4);
+        notVisibleBottom = Math.min((visibleHeight * 3) / 5, visibleHeight - searchElementPaddingTop);
+      } else {
+        visibleTop = searchElementPaddingTop;
+        visibleBottom = 0;
+        notVisibleTop = searchElementPaddingTop;
+        notVisibleBottom = 0;
+      }
     } else {
       visibleTop = 0;
       visibleBottom = 0;
@@ -9217,6 +9213,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.#replaceViewSelectionRanges(didApplyMutation);
       this.#syncInputElement();
     }
+    this.#useSearchScrollMargins = false;
   }
   #syncInputElement(): void {
     if (!this.#hasFocusIncludingNotActiveWindow()) {
