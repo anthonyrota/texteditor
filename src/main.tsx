@@ -63,6 +63,7 @@ import {
   setIntervalDisposable,
   addWindowEventListener,
   addEventListener,
+  setTimeoutDisposable,
 } from './ruscel/util';
 import './index.css';
 // eslint-disable-next-line @typescript-eslint/ban-types
@@ -1842,14 +1843,34 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     resultInfoText = ' '.repeat(15);
   }
   const searchBoxChildren: React.ReactNode[] = [];
+  const safariCompositionEndTimerDisposableRef = useRef<Disposable | null>(null);
+  function onCompositionStart(): void {
+    safariCompositionEndTimerDisposableRef.current?.dispose();
+    isInCompositionSink(Push(true));
+  }
+  function onCompositionEnd(): void {
+    if (isSafari) {
+      safariCompositionEndTimerDisposableRef.current?.dispose();
+      safariCompositionEndTimerDisposableRef.current = Disposable();
+      setTimeoutDisposable(
+        () => {
+          isInCompositionSink(Push(false));
+        },
+        100,
+        safariCompositionEndTimerDisposableRef.current,
+      );
+    } else {
+      isInCompositionSink(Push(false));
+    }
+  }
   searchBoxChildren.push(
     <div className="search-box__line-container search-box__line-container--search" key="search">
       <div className="search-box__line-container--search__sub-container search-box__line-container--search__grow-dominate">
         <input
           type="search"
           className="search-box__search-input"
-          onCompositionStart={() => isInCompositionSink(Push(true))}
-          onCompositionEnd={() => isInCompositionSink(Push(false))}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           onChange={(event) => {
             setQuery(event.target.value);
           }}
