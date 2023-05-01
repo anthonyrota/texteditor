@@ -5801,6 +5801,9 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     );
   }
   private $p_onCompositionEnd(): void {
+    if (!this.$p_isInComposition_syncStartDelayedEnd) {
+      return;
+    }
     this.$p_isInComposition_syncStartDelayedEndDisposable?.dispose();
     this.$p_isInComposition_syncStartDelayedEndDisposable = Disposable();
     // TODO: This looks like a hack and it most definitely is. We don't want to wipe the input between compositions or allow keyboard events straight after.
