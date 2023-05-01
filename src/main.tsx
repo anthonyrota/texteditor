@@ -2139,7 +2139,6 @@ enum StandardCommand {
   ApplyUnorderedList = 'standard.applyUnorderedList',
   ApplyChecklist = 'standard.applyChecklist',
   ResetParagraphStyle = 'standard.resetParagraphStyle',
-  KeyPressSpace = 'standard.keyPressSpace',
 }
 enum Platform {
   Apple = 'Apple',
@@ -2471,7 +2470,6 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Alt+Digit9', command: StandardCommand.ApplyChecklist, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Digit0', command: StandardCommand.ApplyBlockquote, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Alt?+Shift?+Space', command: StandardCommand.KeyPressSpace, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Control+Enter', command: StandardCommand.ToggleChecklistChecked, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   {
     key: 'Control+Alt+Enter',
@@ -3549,6 +3547,149 @@ function makeInsertPlainTextAtSelectionUpdateFn(
         selection,
         treatAsSelection,
       ),
+    );
+  };
+}
+function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
+  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  topLevelContentReference: matita.ContentReference,
+): matita.RunUpdateFn {
+  return () => {
+    const minimumPartialParagraphPointOffsetMap = new Map<string, number>();
+    for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+      const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+      for (let i = 0; i < selectionRange.ranges.length; i++) {
+        const range = selectionRange.ranges[i];
+        if (matita.isParagraphPoint(range.startPoint)) {
+          const paragraphId = matita.getParagraphIdFromParagraphPoint(range.startPoint);
+          const currentMinimum = minimumPartialParagraphPointOffsetMap.get(paragraphId) ?? Infinity;
+          minimumPartialParagraphPointOffsetMap.set(paragraphId, Math.min(currentMinimum, range.startPoint.offset));
+        }
+        if (matita.isParagraphPoint(range.endPoint)) {
+          const paragraphId = matita.getParagraphIdFromParagraphPoint(range.endPoint);
+          const currentMinimum = minimumPartialParagraphPointOffsetMap.get(paragraphId) ?? Infinity;
+          minimumPartialParagraphPointOffsetMap.set(paragraphId, Math.min(currentMinimum, range.endPoint.offset));
+        }
+      }
+    }
+    const trackedSelectionRangeIds = new Set<string>();
+    for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+      const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+      if (!matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+        continue;
+      }
+      const collapsedRange = selectionRange.ranges[0];
+      const point = collapsedRange.startPoint;
+      matita.assertIsParagraphPoint(point);
+      const paragraphId = matita.getParagraphIdFromParagraphPoint(point);
+      const minimum = minimumPartialParagraphPointOffsetMap.get(paragraphId);
+      assertIsNotNullish(minimum);
+      if (point.offset !== minimum) {
+        continue;
+      }
+      const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
+      const inlineNodesBeforePoint = matita.sliceParagraphChildren(paragraph, 0, point.offset);
+      if (!inlineNodesBeforePoint.every(matita.isText)) {
+        continue;
+      }
+      const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
+      if (
+        inlineNodeText === '-' ||
+        inlineNodeText === '*' ||
+        inlineNodeText === '>' ||
+        inlineNodeText === '#' ||
+        inlineNodeText === '##' ||
+        inlineNodeText === '###' ||
+        inlineNodeText === '####' ||
+        inlineNodeText === '#####' ||
+        inlineNodeText === '######'
+      ) {
+        trackedSelectionRangeIds.add(selectionRange.id);
+      }
+    }
+    stateControl.delta.applyUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, ' '), { [matita.RedoUndoUpdateKey.InsertText]: true });
+    const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    const applyUnorderedListSelectionRanges: matita.SelectionRange[] = [];
+    const handledParagraphIds = new Set<string>();
+    for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
+      const selectionRange = stateControl.stateView.selection.selectionRanges[i];
+      if (!trackedSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+        continue;
+      }
+      const collapsedRange = selectionRange.ranges[0];
+      const point = collapsedRange.startPoint;
+      matita.assertIsParagraphPoint(point);
+      const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
+      if (handledParagraphIds.has(paragraph.id)) {
+        continue;
+      }
+      handledParagraphIds.add(paragraph.id);
+      const inlineNodesBeforePoint = matita.sliceParagraphChildren(paragraph, 0, point.offset);
+      if (!inlineNodesBeforePoint.every(matita.isText)) {
+        continue;
+      }
+      const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
+      if (inlineNodeText === '- ' || inlineNodeText === '* ') {
+        if (paragraph.config.type === ParagraphType.ListItem) {
+          continue;
+        }
+        const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+        mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
+        applyUnorderedListSelectionRanges.push(selectionRange);
+        continue;
+      }
+      if (
+        inlineNodeText === '> ' ||
+        inlineNodeText === '# ' ||
+        inlineNodeText === '## ' ||
+        inlineNodeText === '### ' ||
+        inlineNodeText === '#### ' ||
+        inlineNodeText === '##### ' ||
+        inlineNodeText === '###### '
+      ) {
+        const newParagraphType =
+          inlineNodeText === '> '
+            ? ParagraphType.Quote
+            : inlineNodeText === '# '
+            ? ParagraphType.Heading1
+            : inlineNodeText === '## '
+            ? ParagraphType.Heading2
+            : inlineNodeText === '### '
+            ? ParagraphType.Heading3
+            : inlineNodeText === '#### '
+            ? ParagraphType.Heading4
+            : inlineNodeText === '##### '
+            ? ParagraphType.Heading5
+            : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            inlineNodeText === '###### '
+            ? ParagraphType.Heading6
+            : assertUnreachable(inlineNodeText);
+        if (paragraph.config.type === newParagraphType) {
+          continue;
+        }
+        const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+        const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+        mutations.push(
+          matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []),
+          matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: newParagraphType }),
+        );
+      }
+    }
+    if (mutations.length === 0) {
+      return;
+    }
+    stateControl.delta.applyUpdate(
+      () => {
+        if (applyUnorderedListSelectionRanges.length > 0) {
+          const applyUnorderedListSelection = matita.makeSelection(applyUnorderedListSelectionRanges);
+          stateControl.delta.applyUpdate(
+            makeApplyListTypeAtSelectionUpdateFn(stateControl, topLevelContentReference, AccessedListStyleType.UnorderedList, applyUnorderedListSelection),
+          );
+        }
+        const batchMutation = matita.makeBatchMutation(mutations);
+        stateControl.delta.applyMutation(batchMutation);
+      },
+      { [matita.RedoUndoUpdateKey.UniqueGroupedUpdate]: matita.makeUniqueGroupedChangeType() },
     );
   };
 }
@@ -4704,8 +4845,14 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
     },
   },
   [StandardCommand.InsertPlainText]: {
-    execute(stateControl, _viewControl, data: InsertPlainTextCommandData): void {
+    execute(stateControl, viewControl, data: InsertPlainTextCommandData): void {
       const { insertText } = data;
+      // TODO: Hybrid approach here? E.g. Japanese composition, hitting space bar doesn't insert space.
+      if (insertText === ' ') {
+        const documentRenderControl = viewControl.accessDocumentRenderControl();
+        stateControl.queueUpdate(makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference));
+        return;
+      }
       stateControl.queueUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, insertText), { [matita.RedoUndoUpdateKey.InsertText]: true });
     },
   },
@@ -4759,155 +4906,6 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       ]);
       stateControl.queueUpdate(() => {
         stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, () => contentFragment));
-      });
-    },
-  },
-  [StandardCommand.KeyPressSpace]: {
-    // TODO: In IME, space might not enter char 32, but we override that here.あw会う
-    execute(stateControl, viewControl): void {
-      const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(() => {
-        const minimumPartialParagraphPointOffsetMap = new Map<string, number>();
-        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
-          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-          for (let i = 0; i < selectionRange.ranges.length; i++) {
-            const range = selectionRange.ranges[i];
-            if (matita.isParagraphPoint(range.startPoint)) {
-              const paragraphId = matita.getParagraphIdFromParagraphPoint(range.startPoint);
-              const currentMinimum = minimumPartialParagraphPointOffsetMap.get(paragraphId) ?? Infinity;
-              minimumPartialParagraphPointOffsetMap.set(paragraphId, Math.min(currentMinimum, range.startPoint.offset));
-            }
-            if (matita.isParagraphPoint(range.endPoint)) {
-              const paragraphId = matita.getParagraphIdFromParagraphPoint(range.endPoint);
-              const currentMinimum = minimumPartialParagraphPointOffsetMap.get(paragraphId) ?? Infinity;
-              minimumPartialParagraphPointOffsetMap.set(paragraphId, Math.min(currentMinimum, range.endPoint.offset));
-            }
-          }
-        }
-        const trackedSelectionRangeIds = new Set<string>();
-        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
-          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-          if (!matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
-            continue;
-          }
-          const collapsedRange = selectionRange.ranges[0];
-          const point = collapsedRange.startPoint;
-          matita.assertIsParagraphPoint(point);
-          const paragraphId = matita.getParagraphIdFromParagraphPoint(point);
-          const minimum = minimumPartialParagraphPointOffsetMap.get(paragraphId);
-          assertIsNotNullish(minimum);
-          if (point.offset !== minimum) {
-            continue;
-          }
-          const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
-          const inlineNodesBeforePoint = matita.sliceParagraphChildren(paragraph, 0, point.offset);
-          if (!inlineNodesBeforePoint.every(matita.isText)) {
-            continue;
-          }
-          const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
-          if (
-            inlineNodeText === '-' ||
-            inlineNodeText === '*' ||
-            inlineNodeText === '>' ||
-            inlineNodeText === '#' ||
-            inlineNodeText === '##' ||
-            inlineNodeText === '###' ||
-            inlineNodeText === '####' ||
-            inlineNodeText === '#####' ||
-            inlineNodeText === '######'
-          ) {
-            trackedSelectionRangeIds.add(selectionRange.id);
-          }
-        }
-        stateControl.delta.applyUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, ' '), { [matita.RedoUndoUpdateKey.InsertText]: true });
-        const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
-        const applyUnorderedListSelectionRanges: matita.SelectionRange[] = [];
-        const handledParagraphIds = new Set<string>();
-        for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
-          const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-          if (!trackedSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
-            continue;
-          }
-          const collapsedRange = selectionRange.ranges[0];
-          const point = collapsedRange.startPoint;
-          matita.assertIsParagraphPoint(point);
-          const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
-          if (handledParagraphIds.has(paragraph.id)) {
-            continue;
-          }
-          handledParagraphIds.add(paragraph.id);
-          const inlineNodesBeforePoint = matita.sliceParagraphChildren(paragraph, 0, point.offset);
-          if (!inlineNodesBeforePoint.every(matita.isText)) {
-            continue;
-          }
-          const inlineNodeText = inlineNodesBeforePoint.map((textNode) => textNode.text).join('');
-          if (inlineNodeText === '- ' || inlineNodeText === '* ') {
-            if (paragraph.config.type === ParagraphType.ListItem) {
-              continue;
-            }
-            const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
-            mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
-            applyUnorderedListSelectionRanges.push(selectionRange);
-            continue;
-          }
-          if (
-            inlineNodeText === '> ' ||
-            inlineNodeText === '# ' ||
-            inlineNodeText === '## ' ||
-            inlineNodeText === '### ' ||
-            inlineNodeText === '#### ' ||
-            inlineNodeText === '##### ' ||
-            inlineNodeText === '###### '
-          ) {
-            const newParagraphType =
-              inlineNodeText === '> '
-                ? ParagraphType.Quote
-                : inlineNodeText === '# '
-                ? ParagraphType.Heading1
-                : inlineNodeText === '## '
-                ? ParagraphType.Heading2
-                : inlineNodeText === '### '
-                ? ParagraphType.Heading3
-                : inlineNodeText === '#### '
-                ? ParagraphType.Heading4
-                : inlineNodeText === '##### '
-                ? ParagraphType.Heading5
-                : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                inlineNodeText === '###### '
-                ? ParagraphType.Heading6
-                : assertUnreachable(inlineNodeText);
-            if (paragraph.config.type === newParagraphType) {
-              continue;
-            }
-            const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
-            const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
-            mutations.push(
-              matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []),
-              matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: newParagraphType }),
-            );
-          }
-        }
-        if (mutations.length === 0) {
-          return;
-        }
-        stateControl.delta.applyUpdate(
-          () => {
-            if (applyUnorderedListSelectionRanges.length > 0) {
-              const applyUnorderedListSelection = matita.makeSelection(applyUnorderedListSelectionRanges);
-              stateControl.delta.applyUpdate(
-                makeApplyListTypeAtSelectionUpdateFn(
-                  stateControl,
-                  documentRenderControl.topLevelContentReference,
-                  AccessedListStyleType.UnorderedList,
-                  applyUnorderedListSelection,
-                ),
-              );
-            }
-            const batchMutation = matita.makeBatchMutation(mutations);
-            stateControl.delta.applyMutation(batchMutation);
-          },
-          { [matita.RedoUndoUpdateKey.UniqueGroupedUpdate]: matita.makeUniqueGroupedChangeType() },
-        );
       });
     },
   },
