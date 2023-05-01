@@ -3913,7 +3913,10 @@ interface StateControlConfig<
   ) => SelectionRange | null;
   IntlSegmenter: import('../common/IntlSegmenter').IntlSegmenterConstructor;
 }
-interface FinishedUpdatingMessage {
+interface BeforeUpdateBatchMessage {
+  updateQueue: QueuedUpdate[];
+}
+interface AfterUpdateBatchMessage {
   didApplyMutation: boolean;
 }
 interface SelectionChangeMessage {
@@ -3966,7 +3969,8 @@ interface StateControl<
   queueUpdate: (runUpdate: RunUpdateFn, data?: UpdateData) => Disposable;
   beforeMutationPart$: Source<BeforeMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
   afterMutationPart$: Source<AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
-  finishedUpdating$: Source<FinishedUpdatingMessage>;
+  beforeUpdateBatch$: Source<BeforeUpdateBatchMessage>;
+  afterUpdateBatch$: Source<AfterUpdateBatchMessage>;
   selectionChange$: Source<SelectionChangeMessage>;
   customCollapsedSelectionTextConfigChange$: Source<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>;
   snapshotStateThroughStateView: () => StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -4261,8 +4265,9 @@ function makeStateControl<
   disposable.add(beforeMutationPart$);
   const afterMutationPart$ = Distributor<AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
   disposable.add(afterMutationPart$);
-  const finishedUpdating$ = Distributor<FinishedUpdatingMessage>();
-  disposable.add(finishedUpdating$);
+  const beforeUpdateBatch$ = Distributor<BeforeUpdateBatchMessage>();
+  const afterUpdateBatch$ = Distributor<AfterUpdateBatchMessage>();
+  disposable.add(afterUpdateBatch$);
   const selectionChange$ = Distributor<SelectionChangeMessage>();
   disposable.add(selectionChange$);
   const customCollapsedSelectionTextConfig$ = Distributor<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>();
@@ -4454,6 +4459,11 @@ function makeStateControl<
     updateQueue = [];
     updateDisposable = null;
     updateDataStack = [];
+    beforeUpdateBatch$(
+      Push({
+        updateQueue: updateQueue_,
+      }),
+    );
     updateQueue_.forEach((update) => {
       assertIsNotNullish(updateDataStack);
       if (update.data) {
@@ -4466,7 +4476,7 @@ function makeStateControl<
     });
     updateDataStack = null;
     delta = null;
-    finishedUpdating$(
+    afterUpdateBatch$(
       Push({
         didApplyMutation,
       }),
@@ -4490,11 +4500,12 @@ function makeStateControl<
         return delta !== null;
       },
       queueUpdate,
-      beforeMutationPart$: Source(beforeMutationPart$),
-      afterMutationPart$: Source(afterMutationPart$),
-      finishedUpdating$: Source(finishedUpdating$),
-      selectionChange$: Source(selectionChange$),
-      customCollapsedSelectionTextConfigChange$: Source(customCollapsedSelectionTextConfig$),
+      beforeUpdateBatch$: beforeUpdateBatch$,
+      beforeMutationPart$: beforeMutationPart$,
+      afterMutationPart$: afterMutationPart$,
+      afterUpdateBatch$: afterUpdateBatch$,
+      selectionChange$: selectionChange$,
+      customCollapsedSelectionTextConfigChange$: customCollapsedSelectionTextConfig$,
       snapshotStateThroughStateView,
       transformSelectionForwardsFromFirstStateViewToSecondStateView,
     },
@@ -7597,7 +7608,7 @@ function makeDefaultPointTransformFn<
   movementGranularity: MovementGranularity,
   pointMovement: PointMovement,
 ): PointTransformFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
-  return (document, stateControlConfig, selectionRangeIntention, range, point) => {
+  return (document, stateControlConfig, range, point, selectionRange) => {
     if (movementGranularity === MovementGranularity.TopLevelContent) {
       const parentContentReferences = makeListOfAllParentContentReferencesOfContentAtContentReference(document, range.contentReference);
       const topLevelContentReference =
@@ -7605,10 +7616,10 @@ function makeDefaultPointTransformFn<
       if (pointMovement === PointMovement.Previous || pointMovement === PointMovement.PreviousBoundByEdge) {
         const firstBlock = accessBlockAtIndexInContentAtContentReference(document, topLevelContentReference, 0);
         const newPoint = isParagraph(firstBlock)
-          ? selectionRangeIntention === SelectionRangeIntention.Block
+          ? selectionRange.intention === SelectionRangeIntention.Block
             ? makeBlockPointFromBlock(firstBlock)
             : makeParagraphPointFromParagraphAndOffset(firstBlock, 0)
-          : accessFirstPointInEmbedAtBlockReference(document, makeBlockReferenceFromBlock(firstBlock), selectionRangeIntention) ??
+          : accessFirstPointInEmbedAtBlockReference(document, makeBlockReferenceFromBlock(firstBlock), selectionRange.intention) ??
             makeBlockPointFromBlock(firstBlock);
         return {
           contentReference: makeContentReferenceFromContent(
@@ -7619,10 +7630,10 @@ function makeDefaultPointTransformFn<
       }
       const lastBlock = accessLastBlockInContentAtContentReference(document, topLevelContentReference);
       const newPoint = isParagraph(lastBlock)
-        ? selectionRangeIntention === SelectionRangeIntention.Block
+        ? selectionRange.intention === SelectionRangeIntention.Block
           ? makeBlockPointFromBlock(lastBlock)
           : makeParagraphPointFromParagraphAndOffset(lastBlock, getParagraphLength(lastBlock))
-        : accessLastPointInEmbedAtBlockReference(document, makeBlockReferenceFromBlock(lastBlock), selectionRangeIntention) ??
+        : accessLastPointInEmbedAtBlockReference(document, makeBlockReferenceFromBlock(lastBlock), selectionRange.intention) ??
           makeBlockPointFromBlock(lastBlock);
       return {
         contentReference: makeContentReferenceFromContent(
@@ -7632,7 +7643,7 @@ function makeDefaultPointTransformFn<
       };
     }
     if (
-      selectionRangeIntention === SelectionRangeIntention.Block &&
+      selectionRange.intention === SelectionRangeIntention.Block &&
       (movementGranularity !== MovementGranularity.Paragraph ||
         pointMovement === PointMovement.PreviousBoundByEdge ||
         pointMovement === PointMovement.NextBoundByEdge)
@@ -7653,8 +7664,8 @@ function makeDefaultPointTransformFn<
         const blockReference = makeBlockReferenceFromBlockPoint(point);
         const newPoint =
           (pointMovement === PointMovement.Previous
-            ? accessLastPreviousPointToBlockAtBlockReference(document, blockReference, selectionRangeIntention, true)
-            : accessFirstNextPointToBlockAtBlockReference(document, blockReference, selectionRangeIntention, true)) ?? point;
+            ? accessLastPreviousPointToBlockAtBlockReference(document, blockReference, selectionRange.intention, true)
+            : accessFirstNextPointToBlockAtBlockReference(document, blockReference, selectionRange.intention, true)) ?? point;
         return {
           contentReference: makeContentReferenceFromContent(
             isBlockPoint(newPoint) ? accessContentFromBlockPoint(document, newPoint) : accessContentFromParagraphPoint(document, newPoint),
@@ -7954,7 +7965,6 @@ type PointTransformFn<
 > = (
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-  selectionRangeIntention: SelectionRangeIntention,
   range: Range,
   point: Point,
   selectionRange: SelectionRange,
@@ -8011,7 +8021,7 @@ function moveSelectionByPointTransformFnThroughAnchorPoint<
         return [];
       }
       const anchorPoint = getAnchorPointFromRange(range);
-      const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, anchorPoint, selectionRange);
+      const { contentReference, point } = pointTransformFn(document, stateControlConfig, range, anchorPoint, selectionRange);
       return [makeRange(contentReference, point, point, range.id)];
     });
     const newSelectionRange = makeSelectionRange(
@@ -8077,7 +8087,7 @@ function moveSelectionByPointTransformFnThroughFocusPoint<
         return [];
       }
       const focusPoint = getFocusPointFromRange(range);
-      const { contentReference, point } = pointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint, selectionRange);
+      const { contentReference, point } = pointTransformFn(document, stateControlConfig, range, focusPoint, selectionRange);
       return [makeRange(contentReference, point, point, range.id)];
     });
     const newSelectionRange = makeSelectionRange(
@@ -8165,7 +8175,7 @@ function extendSelectionByPointTransformFns<
       let movedAnchorPointContentReference: ContentReference;
       let movedAnchorPoint: Point;
       if (shouldTransformRangeAnchor) {
-        const movedPointInfo = anchorPointTransformFn(document, stateControlConfig, selectionRange.intention, range, anchorPoint, selectionRange);
+        const movedPointInfo = anchorPointTransformFn(document, stateControlConfig, range, anchorPoint, selectionRange);
         movedAnchorPointContentReference = movedPointInfo.contentReference;
         movedAnchorPoint = movedPointInfo.point;
       } else {
@@ -8175,7 +8185,7 @@ function extendSelectionByPointTransformFns<
       let movedFocusPointContentReference: ContentReference;
       let movedFocusPoint: Point;
       if (shouldTransformRangeFocus) {
-        const movedPointInfo = focusPointTransformFn(document, stateControlConfig, selectionRange.intention, range, focusPoint, selectionRange);
+        const movedPointInfo = focusPointTransformFn(document, stateControlConfig, range, focusPoint, selectionRange);
         movedFocusPointContentReference = movedPointInfo.contentReference;
         movedFocusPoint = movedPointInfo.point;
       } else {
@@ -8366,7 +8376,6 @@ function makeRemoveSelectionContentsUpdateFn<
   return (updateDataStack) => {
     const lastUpdateData = getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
     const updateData = isSome(lastUpdateData) ? undefined : { [RedoUndoUpdateKey.UniqueGroupedUpdate]: makeUniqueGroupedChangeType() };
-    const { delta } = stateControl;
     let selectionToRemove = selection ?? stateControl.stateView.selection;
     while (true) {
       const rangesToRemoveWithSelectionRange = selectionToRemove.selectionRanges.flatMap((selectionRange) =>
@@ -8405,7 +8414,7 @@ function makeRemoveSelectionContentsUpdateFn<
           stateControl.stateView,
         );
       } else {
-        delta.applyUpdate(removeRangeUpdate, updateData);
+        stateControl.delta.applyUpdate(removeRangeUpdate, updateData);
         break;
       }
     }
@@ -8461,7 +8470,6 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
   return (updateDataStack) => {
     const lastUpdateData = getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
     const updateData = isSome(lastUpdateData) ? undefined : { [RedoUndoUpdateKey.UniqueGroupedUpdate]: makeUniqueGroupedChangeType() };
-    const { delta } = stateControl;
     let selectionToTransform = selection ?? stateControl.stateView.selection;
     while (true) {
       const rangesToRemoveWithSelectionRange = selectionToTransform.selectionRanges.flatMap((selectionRange) => {
@@ -8506,7 +8514,10 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
           selection && !treatAsSelection
             ? undefined
             : (selectionRange) => {
-                return areSelectionRangesCoveringSameContent(selectionRange, lastRangeWithSelectionRange.selectionRange);
+                return (
+                  selectionRange.id === lastRangeWithSelectionRange.selectionRange.id ||
+                  areSelectionRangesCoveringSameContent(selectionRange, lastRangeWithSelectionRange.selectionRange)
+                );
               },
         );
       } else {
@@ -8524,7 +8535,7 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
           stateControl.stateView,
         );
       } else {
-        delta.applyUpdate(updateFn, updateData);
+        stateControl.delta.applyUpdate(updateFn, updateData);
         break;
       }
     }
@@ -8574,7 +8585,6 @@ function makeTransposeAtSelectionUpdateFn<
       let transposeParagraphGraphemeEdgePoint = graphemePreviousEdgeTransform(
         stateControl.stateView.document,
         stateControl.stateControlConfig,
-        SelectionRangeIntention.Text,
         collapsedTransposeRange,
         transposeParagraphPoint,
         selectionRange,
@@ -8588,7 +8598,6 @@ function makeTransposeAtSelectionUpdateFn<
       let previousGraphemePoint = graphemePreviousTransform(
         stateControl.stateView.document,
         stateControl.stateControlConfig,
-        SelectionRangeIntention.Text,
         collapsedTransposeRange,
         transposeParagraphGraphemeEdgePoint,
         selectionRange,
@@ -8602,7 +8611,6 @@ function makeTransposeAtSelectionUpdateFn<
         transposeParagraphGraphemeEdgePoint = graphemeNextTransform(
           stateControl.stateView.document,
           stateControl.stateControlConfig,
-          SelectionRangeIntention.Text,
           collapsedTransposeRange,
           transposeParagraphGraphemeEdgePoint,
           selectionRange,
@@ -8618,7 +8626,6 @@ function makeTransposeAtSelectionUpdateFn<
       let nextGraphemePoint = graphemeNextTransform(
         stateControl.stateView.document,
         stateControl.stateControlConfig,
-        SelectionRangeIntention.Text,
         collapsedTransposeRange,
         transposeParagraphGraphemeEdgePoint,
         selectionRange,
@@ -8633,7 +8640,6 @@ function makeTransposeAtSelectionUpdateFn<
         previousGraphemePoint = graphemePreviousTransform(
           stateControl.stateView.document,
           stateControl.stateControlConfig,
-          SelectionRangeIntention.Text,
           collapsedTransposeRange,
           transposeParagraphGraphemeEdgePoint,
           selectionRange,
@@ -9409,7 +9415,7 @@ export {
   type Embed,
   type EmbedRenderControl,
   type EndOfContentPoint,
-  type FinishedUpdatingMessage,
+  type AfterUpdateBatchMessage,
   type Inline,
   type InlineNodeWithStartOffset,
   type InsertBlocksAfterMutation,
@@ -9790,4 +9796,5 @@ export {
   makeUniqueGroupedChangeType,
   getRangesInSelectionSorted,
   type AnyMutation,
+  type BeforeUpdateBatchMessage,
 };
