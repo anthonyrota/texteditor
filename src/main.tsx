@@ -7658,7 +7658,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$p_isSearchElementContainerVisible$(Push(true));
       }
       if (focusSearchInput) {
-        this.$p_searchInputRef.current?.select();
+        queueMicrotaskDisposable(() => {
+          this.$p_searchInputRef.current?.focus();
+        }, this);
       }
     };
   }
@@ -7667,7 +7669,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (this.$p_isSearchElementContainerVisible$.currentValue) {
         this.$p_isSearchElementContainerVisible$(Push(false));
       }
-      this.$p_inputControl.focusButDoNotScrollTo();
+      queueMicrotaskDisposable(() => {
+        this.$p_inputControl.focusButDoNotScrollTo();
+      }, this);
     };
   }
   private $p_setSearchQuery(query: string): void {
