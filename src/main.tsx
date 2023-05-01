@@ -5844,6 +5844,80 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
       );
     });
   }
+  private $p_insertTextWithAdjustAmounts(text: string, startOffsetAdjustAmount: number, endOffsetAdjustAmount: number): void {
+    const adjustPointIfParagraphPoint = (range: matita.Range, point: matita.Point, adjustAmount: number): matita.PointWithContentReference => {
+      if (!matita.isParagraphPoint(point)) {
+        return {
+          contentReference: range.contentReference,
+          point,
+        };
+      }
+      const newPointOffset =
+        adjustAmount > 0
+          ? Math.min(
+              point.offset + adjustAmount,
+              matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.$p_stateControl.stateView.document, point)),
+            )
+          : Math.max(point.offset + adjustAmount, 0);
+      return {
+        contentReference: range.contentReference,
+        point: matita.changeParagraphPointOffset(point, newPointOffset),
+      };
+    };
+    // TODO: Collisions with multiple selection range, and limit backwards/forwards shifting?
+    // TODO: Consecutive composition selection ranges in safari with long composition text merges them whereas it doesn't in firefox/chrome.
+    const insertSelection =
+      startOffsetAdjustAmount === 0 && endOffsetAdjustAmount === 0
+        ? undefined
+        : matita.extendSelectionByPointTransformFns(
+            this.$p_stateControl.stateView.document,
+            this.$p_stateControl.stateControlConfig,
+            this.$p_stateControl.stateView.selection,
+            () => true,
+            (_document, _stateControlConfig, range, point, selectionRange) => {
+              if (matita.getIsSelectionRangeAnchorAfterFocus(this.$p_stateControl.stateView.document, selectionRange)) {
+                return adjustPointIfParagraphPoint(range, point, endOffsetAdjustAmount);
+              }
+              return adjustPointIfParagraphPoint(range, point, startOffsetAdjustAmount);
+            },
+            (_document, _stateControlConfig, range, point, selectionRange) => {
+              if (matita.getIsSelectionRangeAnchorAfterFocus(this.$p_stateControl.stateView.document, selectionRange)) {
+                return adjustPointIfParagraphPoint(range, point, startOffsetAdjustAmount);
+              }
+              return adjustPointIfParagraphPoint(range, point, endOffsetAdjustAmount);
+            },
+          );
+    const getContentFragmentFromSelectionRange = (
+      customCollapsedSelectionTextConfig: TextConfig | null,
+      selectionRange: matita.SelectionRange,
+    ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
+      return matita.makeContentFragment([
+        matita.makeContentFragmentParagraph(
+          matita.makeParagraph(
+            {},
+            text === ''
+              ? []
+              : [
+                  matita.makeText(
+                    getInsertTextConfigAtSelectionRange(this.$p_stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
+                    text,
+                  ),
+                ],
+            matita.generateId(),
+          ),
+        ),
+      ]);
+    };
+    const { customCollapsedSelectionTextConfig } = this.$p_stateControl.stateView;
+    this.$p_stateControl.delta.applyUpdate(
+      matita.makeInsertContentFragmentAtSelectionUpdateFn(
+        this.$p_stateControl,
+        (selectionRange) => getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
+        insertSelection,
+        true,
+      ),
+    );
+  }
   private $p_handleCompositionUpdate(startOffset: number, endOffset: number, text: string): void {
     assert(endOffset >= startOffset);
     const runUpdate: matita.RunUpdateFn = () => {
@@ -5864,78 +5938,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
         startOffsetAdjustAmount = startOffset - this.$p_lastCompositionSelectionTextInputUpdateOffsets.startOffset;
         endOffsetAdjustAmount = endOffset - this.$p_lastCompositionSelectionTextInputUpdateOffsets.endOffset;
       }
-      const adjustPointIfParagraphPoint = (range: matita.Range, point: matita.Point, adjustAmount: number): matita.PointWithContentReference => {
-        if (!matita.isParagraphPoint(point)) {
-          return {
-            contentReference: range.contentReference,
-            point,
-          };
-        }
-        const newPointOffset =
-          adjustAmount > 0
-            ? Math.min(
-                point.offset + adjustAmount,
-                matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.$p_stateControl.stateView.document, point)),
-              )
-            : Math.max(point.offset + adjustAmount, 0);
-        return {
-          contentReference: range.contentReference,
-          point: matita.changeParagraphPointOffset(point, newPointOffset),
-        };
-      };
-      // TODO: Collisions with multiple selection range, and limit backwards/forwards shifting?
-      // TODO: Consecutive composition selection ranges in safari with long composition text merges them whereas it doesn't in firefox/chrome.
-      const insertSelection =
-        startOffsetAdjustAmount === 0 && endOffsetAdjustAmount === 0
-          ? undefined
-          : matita.extendSelectionByPointTransformFns(
-              this.$p_stateControl.stateView.document,
-              this.$p_stateControl.stateControlConfig,
-              this.$p_stateControl.stateView.selection,
-              () => true,
-              (_document, _stateControlConfig, range, point, selectionRange) => {
-                if (matita.getIsSelectionRangeAnchorAfterFocus(this.$p_stateControl.stateView.document, selectionRange)) {
-                  return adjustPointIfParagraphPoint(range, point, endOffsetAdjustAmount);
-                }
-                return adjustPointIfParagraphPoint(range, point, startOffsetAdjustAmount);
-              },
-              (_document, _stateControlConfig, range, point, selectionRange) => {
-                if (matita.getIsSelectionRangeAnchorAfterFocus(this.$p_stateControl.stateView.document, selectionRange)) {
-                  return adjustPointIfParagraphPoint(range, point, startOffsetAdjustAmount);
-                }
-                return adjustPointIfParagraphPoint(range, point, endOffsetAdjustAmount);
-              },
-            );
-      const getContentFragmentFromSelectionRange = (
-        customCollapsedSelectionTextConfig: TextConfig | null,
-        selectionRange: matita.SelectionRange,
-      ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
-        return matita.makeContentFragment([
-          matita.makeContentFragmentParagraph(
-            matita.makeParagraph(
-              {},
-              text === ''
-                ? []
-                : [
-                    matita.makeText(
-                      getInsertTextConfigAtSelectionRange(this.$p_stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
-                      text,
-                    ),
-                  ],
-              matita.generateId(),
-            ),
-          ),
-        ]);
-      };
-      const { customCollapsedSelectionTextConfig } = this.$p_stateControl.stateView;
-      this.$p_stateControl.delta.applyUpdate(
-        matita.makeInsertContentFragmentAtSelectionUpdateFn(
-          this.$p_stateControl,
-          (selectionRange) => getContentFragmentFromSelectionRange(customCollapsedSelectionTextConfig, selectionRange),
-          insertSelection,
-          true,
-        ),
-      );
+      this.$p_insertTextWithAdjustAmounts(text, startOffsetAdjustAmount, endOffsetAdjustAmount);
       if (text.length > 0) {
         this.$p_stateControl.delta.applyUpdate(
           matita.makeExtendSelectionByPointTransformFnsUpdateFn(
@@ -5984,13 +5987,42 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
       if (targetRanges.length !== 1) {
         return;
       }
-      const { startOffset, endOffset } = targetRanges[0];
+      const { startContainer, startOffset, endContainer, endOffset } = targetRanges[0];
+      if (startContainer !== endContainer) {
+        this.$p_stateControl.queueUpdate(() => {
+          if (this.$p_isInComposition_syncedToQueueUpdate) {
+            this.$p_unexpectedCompositionInterruption = true;
+          }
+        });
+        return;
+      }
       this.$p_handleCompositionUpdate(startOffset, endOffset, text);
       return;
     }
-    if (inputType === 'insertText') {
+    if (inputType === 'insertText' || (isSafari && inputType === 'insertReplacementText')) {
       const text = this.$p_getTextFromInputEvent(event);
       if (text === '' || /\r|\n/.test(text)) {
+        event.preventDefault();
+        return;
+      }
+      const targetRanges = event.getTargetRanges();
+      if (targetRanges.length !== 1) {
+        event.preventDefault();
+        return;
+      }
+      const { startContainer, startOffset, endContainer, endOffset } = targetRanges[0];
+      if (startContainer !== endContainer) {
+        event.preventDefault();
+        return;
+      }
+      if (startOffset !== endOffset) {
+        assert(endOffset > startOffset);
+        this.$p_stateControl.queueUpdate(() => {
+          const startOffsetAdjustAmount = Math.min(startOffset - this.$p_lastNativeOffset, 0);
+          const endOffsetAdjustAmount = Math.min(endOffset - this.$p_lastNativeOffset, 0);
+          this.$p_insertTextWithAdjustAmounts(text, startOffsetAdjustAmount, endOffsetAdjustAmount);
+        });
+        event.preventDefault();
         return;
       }
       this.$p_runCommand(makeInsertPlainTextCommandInfo(text));
@@ -9736,7 +9768,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         cursorHeight = cursorPositionAndHeight.height;
       }
       const cursorLeft = Math.min(containerWidth - cursorWidth / 2, cursorPositionAndHeight.position.left + relativeOffsetLeft);
-      9;
       const viewCursorInfo: ViewCursorInfo = {
         position: {
           left: cursorLeft,
