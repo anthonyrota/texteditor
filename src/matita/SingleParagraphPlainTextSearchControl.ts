@@ -5,7 +5,6 @@ import { UniqueStringQueue } from '../common/UniqueStringQueue';
 import { assert, assertIsNotNullish, assertUnreachable, throwUnreachable } from '../common/util';
 import { Disposable, DisposableClass, implDisposableMethods } from '../ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor, LastValueDistributor, LastValueSource } from '../ruscel/distributor';
-import { Maybe, None, Some } from '../ruscel/maybe';
 import { End, EndType, Push, PushType, subscribe, take, takeUntil, ThrowType } from '../ruscel/source';
 import { pipe, requestIdleCallbackDisposable } from '../ruscel/util';
 import * as matita from '.';
@@ -54,21 +53,17 @@ interface TrackAllControlBase {
   totalMatches$: CurrentValueSource<TotalMatchesMessage>;
 }
 interface TrackAllControl extends TrackAllControlBase, Disposable {}
-class TextPart {
+interface TextPart {
   text: string;
   startOffset: number;
   endOffset: number;
-  constructor(text: string, startOffset: number, endOffset: number) {
-    this.text = text;
-    this.startOffset = startOffset;
-    this.endOffset = endOffset;
-  }
 }
-class TextPartGroup {
-  textParts: TextPart[];
-  constructor(textParts: TextPart[]) {
-    this.textParts = textParts;
-  }
+function makeTextPart(text: string, startOffset: number, endOffset: number): TextPart {
+  return {
+    text,
+    startOffset,
+    endOffset,
+  };
 }
 function normalizePunctuation(char: string): string {
   return char.replace(/[^\p{L}\p{N}]/gu, '');
@@ -114,7 +109,7 @@ function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextS
       previousNormalizedTextPart.text += normalizedChar;
       previousNormalizedTextPart.endOffset = endOffset;
     } else {
-      normalizedTextParts.push(new TextPart(normalizedChar, textPart.startOffset + segmentOffset, textPart.startOffset + endOffset));
+      normalizedTextParts.push(makeTextPart(normalizedChar, textPart.startOffset + segmentOffset, textPart.startOffset + endOffset));
     }
     previousNormalizedEndOffset = segmentOffset + normalizedChar.length;
   }
@@ -135,13 +130,15 @@ interface SearchPatternData {
   pattern: string;
   kmpLpsArray: LpsArray;
 }
-class ProcessedParagraph {
-  textPartGroups: TextPartGroup[];
+interface ProcessedParagraph {
+  textPartGroups: TextPart[][];
   wordBoundaryIndices: number[] | null;
-  constructor(textPartGroups: TextPartGroup[], wordBoundaryIndices: number[] | null) {
-    this.textPartGroups = textPartGroups;
-    this.wordBoundaryIndices = wordBoundaryIndices;
-  }
+}
+function makeProcessedParagraph(textPartGroups: TextPart[][], wordBoundaryIndices: number[] | null): ProcessedParagraph {
+  return {
+    textPartGroups,
+    wordBoundaryIndices,
+  };
 }
 // TODO: Match return selection range instead of range, e.g. to exclude voids in middle of match.
 // TODO: Simplify with previous and next paragraph iterator.
@@ -565,7 +562,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
   private $p_processParagraphAtParagraphReference(paragraphReference: matita.BlockReference): ProcessedParagraph {
     const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
     matita.assertIsParagraph(paragraph);
-    const textPartGroups: TextPartGroup[] = [];
+    const textPartGroups: TextPart[][] = [];
     let startOffset = 0;
     const wordBoundaryIndices: number[] | null = this.$p_config.wholeWords ? [] : null;
     let i = 0;
@@ -588,10 +585,10 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         text += inline.text;
       }
       const textRunEndOffset = textRunStartOffset + text.length;
-      const textPart = new TextPart(text, textRunStartOffset, textRunEndOffset);
+      const textPart = makeTextPart(text, textRunStartOffset, textRunEndOffset);
       const normalizedTextParts = normalizeTextPart(textPart, this.$p_config, this.$p_graphemeSegmenter);
       if (normalizedTextParts.length > 0) {
-        textPartGroups.push(new TextPartGroup(normalizedTextParts));
+        textPartGroups.push(normalizedTextParts);
       }
       if (this.$p_config.wholeWords) {
         const segments = this.$p_wordSegmenter.segment(text);
@@ -603,7 +600,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         }
       }
     }
-    return new ProcessedParagraph(textPartGroups, wordBoundaryIndices);
+    return makeProcessedParagraph(textPartGroups, wordBoundaryIndices);
   }
   private $p_matchTextPartGroupsAtParagraphReference(paragraphReference: matita.BlockReference, processedParagraph: ProcessedParagraph): ParagraphMatch[] {
     const { textPartGroups, wordBoundaryIndices } = processedParagraph;
@@ -615,8 +612,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     }
     const matches: ParagraphMatch[] = [];
     for (let i = 0; i < textPartGroups.length; i++) {
-      const textPartGroup = textPartGroups[i];
-      const { textParts } = textPartGroup;
+      const textParts = textPartGroups[i];
       const firstTextPart = textParts[0];
       let searchStringLength = firstTextPart.text.length;
       for (let j = 1; j < textParts.length; j++) {
@@ -1260,9 +1256,9 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     };
     return implDisposableMethods(trackAllControlBase, disposable);
   }
-  findAllMatchesSyncLimitedToMaxAmount(maxMatches: number): Maybe<Map<string, ParagraphMatches>> {
+  findAllMatchesSyncLimitedToMaxAmount(maxMatches: number): Map<string, ParagraphMatches> | null {
     if (this.$p_searchPatterns.length === 0) {
-      return Some(new Map<string, ParagraphMatches>());
+      return new Map<string, ParagraphMatches>();
     }
     const paragraphIdToParagraphMatches = new Map<string, ParagraphMatches>();
     let totalMatches = 0;
@@ -1273,12 +1269,12 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       }
       totalMatches += paragraphMatches.matches.length;
       if (totalMatches > maxMatches) {
-        return None;
+        return null;
       }
       const paragraphId = matita.getBlockIdFromBlockReference(paragraphReference);
       paragraphIdToParagraphMatches.set(paragraphId, paragraphMatches);
     }
-    return Some(paragraphIdToParagraphMatches);
+    return paragraphIdToParagraphMatches;
   }
 }
 export {

@@ -2456,6 +2456,7 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Backslash', command: StandardCommand.ResetInlineStyle, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+KeyL', command: StandardCommand.AlignParagraphLeft, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+KeyE', command: StandardCommand.AlignParagraphCenter, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  // TODO: Doesn't work for safari, reloads page.
   { key: 'Meta+Alt+KeyR', command: StandardCommand.AlignParagraphRight, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Meta+Alt+KeyJ', command: StandardCommand.AlignParagraphJustify, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
   { key: 'Tab', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
@@ -7902,12 +7903,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   }
   selectAllInstancesOfSearchQuery(focusSelectionRange?: matita.SelectionRange): matita.RunUpdateFn {
     return () => {
-      const paragraphIdToParagraphMatchesMapMaybe = this.$p_searchControl.findAllMatchesSyncLimitedToMaxAmount(200);
-      if (isNone(paragraphIdToParagraphMatchesMapMaybe)) {
+      const paragraphIdToParagraphMatchesMap = this.$p_searchControl.findAllMatchesSyncLimitedToMaxAmount(200);
+      if (paragraphIdToParagraphMatchesMap === null) {
         // TODO: Show feedback.
         return;
       }
-      const paragraphIdToParagraphMatchesMap = paragraphIdToParagraphMatchesMapMaybe.value;
       if (paragraphIdToParagraphMatchesMap.size === 0) {
         return;
       }
