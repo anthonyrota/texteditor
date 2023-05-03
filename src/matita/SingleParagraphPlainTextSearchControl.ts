@@ -73,8 +73,13 @@ class TextPartGroup {
 function normalizePunctuation(char: string): string {
   return char.replace(/[^\p{L}\p{N}]/gu, '');
 }
-function normalizeDiacritics(char: string): string {
-  return char.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+function normalizeExtraDiacritics(char: string): string {
+  const normalizedNfd = char.normalize('NFD');
+  const withoutDiacritics = normalizedNfd.replace(/\p{Diacritic}/gu, '');
+  if (withoutDiacritics.length === 0) {
+    return normalizedNfd;
+  }
+  return withoutDiacritics;
 }
 function normalizeCase(char: string): string {
   return char.toLocaleLowerCase();
@@ -95,7 +100,7 @@ function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextS
       normalizedChar = normalizeCase(normalizedChar);
     }
     if (ignoreDiacritics) {
-      normalizedChar = normalizeDiacritics(normalizedChar);
+      normalizedChar = normalizeExtraDiacritics(normalizedChar);
     }
     if (stripNonLettersAndNumbers) {
       normalizedChar = normalizePunctuation(normalizedChar);
