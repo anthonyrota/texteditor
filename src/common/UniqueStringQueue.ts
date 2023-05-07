@@ -38,6 +38,9 @@ class UniqueStringQueue {
     this.$p_valueToNode[value] = this.$p_firstNode;
     this.$p_queueLength++;
   }
+  getIsQueued(value: string): boolean {
+    return value in this.$p_valueToNode;
+  }
   queueIfNotQueuedAlready(value: string): void {
     if (value in this.$p_valueToNode) {
       return;
@@ -48,10 +51,10 @@ class UniqueStringQueue {
     this.dequeue(value);
     this.$p_queueNotAddedValue(value);
   }
-  dequeue(value: string): void {
+  dequeue(value: string): boolean {
     const node = this.$p_valueToNode[value];
     if (node === undefined) {
-      return;
+      return false;
     }
     delete this.$p_valueToNode[value];
     const { previousNode, nextNode } = node;
@@ -71,6 +74,7 @@ class UniqueStringQueue {
       }
     }
     this.$p_queueLength--;
+    return true;
   }
   shift(): string | null {
     if (this.$p_firstNode === null) {

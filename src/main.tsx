@@ -1,7 +1,7 @@
 import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync, createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
-import { v4 as uuidV4 } from 'uuid';
+import { v4 } from 'uuid';
 import { isFirefox, isSafari } from './common/browserDetection';
 import { IndexableUniqueStringList } from './common/IndexableUniqueStringList';
 import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
@@ -16,6 +16,7 @@ import {
   TrackAllControl,
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
+import { SpellCheckControl, getDefaultLanguageIdentifier, loadDictionariesForLanguageIdentifier } from './matita/SpellCheckControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
@@ -1674,6 +1675,7 @@ interface SearchBoxControlConfig {
 }
 interface SearchBoxProps {
   isVisible$: CurrentValueSource<boolean>;
+  selectAllText$: Source<undefined>;
   containerStaticViewRectangle$: CurrentValueSource<ViewRectangle>;
   goToSearchResultImmediatelySink: Sink<boolean>;
   querySink: Sink<string>;
@@ -1688,7 +1690,7 @@ interface SearchBoxProps {
   initialGoToSearchResultImmediately: boolean;
   initialQuery: string;
   initialConfig: SearchBoxControlConfig;
-  inputRef: React.Ref<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLInputElement>;
 }
 function useToggle(initialValue = false): [value: boolean, toggleValue: () => void] {
   const [value, setValue] = useState<boolean>(initialValue);
@@ -1699,6 +1701,7 @@ const searchBoxMargin = 8;
 function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
     isVisible$,
+    selectAllText$,
     containerStaticViewRectangle$,
     goToSearchResultImmediatelySink,
     querySink,
@@ -1722,6 +1725,23 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const calculateWidthFromContainerStaticViewRectangle = (rectangle: ViewRectangle): number => {
     return rectangle.width - searchBoxMargin * 2;
   };
+  const selectAllTextCounter = use$(
+    useMemo(
+      () =>
+        pipe(
+          selectAllText$,
+          map((_, i) => i),
+        ),
+      [],
+    ),
+  );
+  useEffect(() => {
+    if (isNone(selectAllTextCounter)) {
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    inputRef.current!.select();
+  }, [selectAllTextCounter]);
   const { value: position } = use$<Position>(
     useCallback((sink: Sink<Position>) => {
       const width$ = pipe(containerStaticViewRectangle$, map(calculateWidthFromContainerStaticViewRectangle));
@@ -4031,7 +4051,7 @@ function makeApplyListTypeAtSelectionUpdateFn(
         }
         const paragraphReferenceRange = nonWellDefinedListParagraphReferenceRanges[i];
         const { firstParagraphReference, lastParagraphReference } = paragraphReferenceRange;
-        const listId = uuidV4();
+        const listId = v4();
         const listIndent = 0;
         topLevelContentConfigMutations.push(
           matita.makeUpdateContentConfigMutation(
@@ -5546,8 +5566,7 @@ interface NumberedListItemInfo {
   paragraphId: string;
   indentLevel: NumberedListIndent;
 }
-// TODO: Insertion can be done more efficiently w/o binary search and instead directly through the tree as the blocks are ordered.
-class NumberedListIndexer {
+class ListIndexer {
   private $p_listItemInfos: IndexableUniqueStringList;
   private $p_paragraphIdToNumber = Object.create(null) as Record<string, number>;
   private $p_paragraphIdToIndentLevel = Object.create(null) as Record<string, NumberedListIndent>;
@@ -5608,39 +5627,19 @@ class NumberedListIndexer {
     listItemInfoToInsert: NumberedListItemInfo[],
   ): void {
     assert(listItemInfoToInsert.length > 0);
-    const paragraphIdsToInsert: string[] = Array<string>(listItemInfoToInsert.length);
+    this.$p_isDirty = true;
     for (let i = 0; i < listItemInfoToInsert.length; i++) {
       const listItemInfo = listItemInfoToInsert[i];
       assert(!this.$p_listItemInfos.has(listItemInfo.paragraphId));
       this.$p_paragraphIdToIndentLevel[listItemInfo.paragraphId] = listItemInfo.indentLevel;
-      paragraphIdsToInsert[i] = listItemInfo.paragraphId;
+      const paragraphReference = matita.makeBlockReferenceFromBlockId(listItemInfo.paragraphId);
+      const paragraphBlockIndices = matita.indexBlockAtBlockReference(document, paragraphReference);
+      this.$p_listItemInfos.insertValueUsingComparisonFunction(listItemInfo.paragraphId, (paragraphId) => {
+        const compareWithParagraphBlockReference = matita.makeBlockReferenceFromBlockId(paragraphId);
+        const compareWithParagraphBlockIndices = matita.indexBlockAtBlockReference(document, compareWithParagraphBlockReference);
+        return matita.compareBlockIndicesForUniqueParagraphsAtBlockReferences(paragraphBlockIndices, compareWithParagraphBlockIndices);
+      });
     }
-    this.$p_isDirty = true;
-    const getCompareValueFromParagraphId = (paragraphId: string): number[] => {
-      const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
-      const contentReference = matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(document, paragraphReference));
-      const pointKey = matita.makePointKeyFromPoint(document, contentReference, matita.makeBlockPointFromBlockReference(paragraphReference));
-      return pointKey.indices;
-    };
-    const indexBeforeWhereFirstListItemToInsertWillBe = indexOfNearestLessThanEqDynamic<number[], number[]>(
-      (index) => getCompareValueFromParagraphId(this.$p_listItemInfos.access(index)),
-      this.$p_listItemInfos.getLength(),
-      getCompareValueFromParagraphId(listItemInfoToInsert[0].paragraphId),
-      (value, needle) => {
-        for (let i = 0; i < value.length; i++) {
-          const a = value[i];
-          const b = needle[i];
-          if (a < b) {
-            return -1;
-          }
-          if (a > b) {
-            return 1;
-          }
-        }
-        throwUnreachable();
-      },
-    );
-    this.$p_listItemInfos.insertBefore(indexBeforeWhereFirstListItemToInsertWillBe + 1, paragraphIdsToInsert);
   }
   onListItemRemoved(paragraphId: string): void {
     assert(this.$p_listItemInfos.has(paragraphId));
@@ -6057,76 +6056,34 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
 }
 const SeparateSelectionIdKey = 'virtualized.separateSelectionId';
 const SearchQueryGoToSearchResultImmediatelyKey = 'virtualized.searchQueryGoToSearchResultImmediately';
-class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
-  rootHtmlElement: HTMLElement;
-  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
-  viewControl: VirtualizedViewControl;
-  topLevelContentReference: matita.ContentReference;
-  htmlElementToNodeRenderControlMap: Map<HTMLElement, VirtualizedContentRenderControl | VirtualizedParagraphRenderControl>;
-  dirtyParagraphIdQueue: UniqueStringQueue;
-  private $p_numberedListIndexerMap: Map<string, NumberedListIndexer>;
-  private $p_containerHtmlElement!: HTMLElement;
-  private $p_topLevelContentViewContainerElement!: HTMLElement;
-  private $p_selectionRectsViewContainerElement!: HTMLElement;
-  private $p_selectionCursorsViewContainerElement!: HTMLElement;
-  private $p_searchOverlayContainerElement!: HTMLElement;
-  private $p_searchElementContainerElement!: HTMLElement;
-  private $p_searchInputRef = createRef<HTMLInputElement>();
-  private $p_selectionView$: CurrentValueDistributor<SelectionViewMessage>;
-  private $p_searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
-  relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
-  private $p_keyCommands: KeyCommands;
-  private $p_commandRegister: VirtualizedCommandRegister;
-  private $p_undoControl: LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
-  private $p_graphemeSegmenter: IntlSegmenter;
+class ListStyleInjectionControl extends DisposableClass {
+  private $p_numberedListIndexerMap = new Map<string, ListIndexer>();
   constructor(
-    rootHtmlElement: HTMLElement,
-    stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
-    viewControl: VirtualizedViewControl,
-    topLevelContentReference: matita.ContentReference,
+    private $p_stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+    private $p_viewControl: VirtualizedViewControl,
+    private $p_topLevelContentReference: matita.ContentReference,
+    private $p_queueDirtyParagraph: (paragraphId: string) => void,
   ) {
-    super(() => this.$p_dispose());
-    this.rootHtmlElement = rootHtmlElement;
-    this.stateControl = stateControl;
-    this.viewControl = viewControl;
-    this.topLevelContentReference = topLevelContentReference;
-    this.htmlElementToNodeRenderControlMap = new Map();
-    this.dirtyParagraphIdQueue = new UniqueStringQueue([]);
-    this.$p_numberedListIndexerMap = new Map<string, NumberedListIndexer>();
-    this.$p_selectionView$ = CurrentValueDistributor<SelectionViewMessage>({
-      viewCursorAndRangeInfos: {
-        viewCursorAndRangeInfosForSelectionRanges: [],
-        isDragging: false,
-      },
-      renderSync: false,
-    });
-    this.$p_searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
-      calculateMatchInfos: () => [],
-      renderSync: false,
-      roundCorners: true,
-    });
-    this.relativeParagraphMeasurementCache = new LruCache(250);
-    this.$p_keyCommands = defaultTextEditingKeyCommands;
-    this.$p_commandRegister = combineCommandRegistersOverride<
-      DocumentConfig,
-      ContentConfig,
-      ParagraphConfig,
-      EmbedConfig,
-      TextConfig,
-      VoidConfig,
-      VirtualizedDocumentRenderControl,
-      VirtualizedContentRenderControl,
-      VirtualizedParagraphRenderControl,
-      matita.EmbedRenderControl
-    >([genericCommandRegister, virtualizedCommandRegister]);
-    this.$p_undoControl = new LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(this.stateControl);
-    this.add(this.$p_undoControl);
-    this.$p_undoControl.registerCommands(this.$p_commandRegister);
-    this.$p_graphemeSegmenter = new this.stateControl.stateControlConfig.IntlSegmenter();
+    super();
+    this.$p_trackChanges();
   }
-  private $p_commitDirtyChanges(): void {
-    let paragraphId: string | null;
-    const topLevelContent = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+  injectStyle(paragraphReference: matita.BlockReference, injectedStyle: ParagraphStyleInjection): void {
+    const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
+    matita.assertIsParagraph(paragraph);
+    if (paragraph.config.type === ParagraphType.ListItem) {
+      const topLevelContent = matita.accessContentFromContentReference(this.$p_stateControl.stateView.document, this.$p_topLevelContentReference);
+      const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+      injectedStyle.ListItem_type = listType;
+      if (listType === AccessedListStyleType.OrderedList) {
+        assert(typeof paragraph.config.ListItem_listId === 'string');
+        const numberedListIndexer = this.$p_numberedListIndexerMap.get(paragraph.config.ListItem_listId as string);
+        assertIsNotNullish(numberedListIndexer);
+        injectedStyle.ListItem_OrderedList_number = numberedListIndexer.getListItemNumber(paragraph.id);
+      }
+    }
+  }
+  computeIndices(): void {
+    const topLevelContent = matita.accessContentFromContentReference(this.$p_stateControl.stateView.document, this.$p_topLevelContentReference);
     const { listStyles } = topLevelContent.config;
     if (matita.isJsonMap(listStyles)) {
       const { listIdToStyle } = listStyles;
@@ -6153,52 +6110,21 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               }
             }
             if (numberedIndentLevels.size > 0) {
-              numberedListIndexer.recomputeListNumbers(this.viewControl, numberedIndentLevels);
+              numberedListIndexer.recomputeListNumbers(this.$p_viewControl, numberedIndentLevels);
             }
           }
         }
       }
     }
-    while ((paragraphId = this.dirtyParagraphIdQueue.shift()) !== null) {
-      const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
-      const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
-      matita.assertIsParagraph(paragraph);
-      const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
-      const injectedStyle: ParagraphStyleInjection = {};
-      if (paragraph.config.type === ParagraphType.ListItem) {
-        const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
-        injectedStyle.ListItem_type = listType;
-        if (listType === AccessedListStyleType.OrderedList) {
-          assert(typeof paragraph.config.ListItem_listId === 'string');
-          const numberedListIndexer = this.$p_numberedListIndexerMap.get(paragraph.config.ListItem_listId as string);
-          assertIsNotNullish(numberedListIndexer);
-          injectedStyle.ListItem_OrderedList_number = numberedListIndexer.getListItemNumber(paragraph.id);
-        }
-      }
-      paragraphRenderControl.commitDirtyChanges(injectedStyle);
-    }
   }
-  private $p_isDraggingSelection = false;
-  private $p_endSelectionDrag$ = Distributor<undefined>();
-  private $p_searchControl!: SingleParagraphPlainTextSearchControl;
-  private $p_isSearchElementContainerVisible$ = CurrentValueDistributor<boolean>(false);
-  private $p_searchElementTrackAllControl: TrackAllControl | null = null;
-  private $p_matchNumberMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
-  private $p_totalMatchesMaybe$ = CurrentValueDistributor<Maybe<TotalMatchesMessage>>(None);
-  private $p_isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
-  private $p_renderOverlayAsync = false;
-  private $p_changeQuery$ = Distributor<string>();
-  private $p_selectionViewHasFocus$ = CurrentValueDistributor(false);
-  private $p_resetSynchronizedCursorVisibility$ = CurrentValueDistributor<undefined>(undefined);
-  private $p_inputControl!: FloatingVirtualizedTextInputControl;
-  init(): void {
+  $p_trackChanges(): void {
     const registerParagraphAtParagraphIdWithListIdAndNumberedListIndent = (paragraphId: string, listId: string, indentLevel: NumberedListIndent) => {
       let indexer = this.$p_numberedListIndexerMap.get(listId);
       if (indexer === undefined) {
-        indexer = new NumberedListIndexer();
+        indexer = new ListIndexer();
         this.$p_numberedListIndexerMap.set(listId, indexer);
       }
-      indexer.insertListItems(this.stateControl.stateView.document, [{ paragraphId, indentLevel }]);
+      indexer.insertListItems(this.$p_stateControl.stateView.document, [{ paragraphId, indentLevel }]);
     };
     const unregisterParagraphAtParagraphIdWithListId = (paragraphId: string, listId: string) => {
       const indexer = this.$p_numberedListIndexerMap.get(listId);
@@ -6208,8 +6134,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$p_numberedListIndexerMap.delete(listId);
       }
     };
-    for (const paragraphReference of matita.iterContentSubParagraphs(this.stateControl.stateView.document, this.topLevelContentReference)) {
-      const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+    for (const paragraphReference of matita.iterContentSubParagraphs(this.$p_stateControl.stateView.document, this.$p_topLevelContentReference)) {
+      const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
       matita.assertIsParagraph(paragraph);
       if (paragraph.config.type === ParagraphType.ListItem && typeof paragraph.config.ListItem_listId === 'string') {
         registerParagraphAtParagraphIdWithListIdAndNumberedListIndent(
@@ -6222,27 +6148,51 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const untrackNumberedListBlocksBeforeRemoved = (blockReferences: matita.BlockReference[]): void => {
       for (let i = 0; i < blockReferences.length; i++) {
         const blockReference = blockReferences[i];
-        const block = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, blockReference);
-        if (matita.isParagraph(block) && block.config.type === ParagraphType.ListItem && typeof block.config.ListItem_listId === 'string') {
-          unregisterParagraphAtParagraphIdWithListId(block.id, block.config.ListItem_listId);
+        const block = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, blockReference);
+        if (matita.isParagraph(block)) {
+          if (block.config.type === ParagraphType.ListItem && typeof block.config.ListItem_listId === 'string') {
+            unregisterParagraphAtParagraphIdWithListId(block.id, block.config.ListItem_listId);
+          }
+        } else {
+          for (const paragraphReference of matita.iterEmbedSubParagraphs(this.$p_stateControl.stateView.document, blockReference)) {
+            const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
+            matita.assertIsParagraph(paragraph);
+            if (paragraph.config.type === ParagraphType.ListItem && typeof paragraph.config.ListItem_listId === 'string') {
+              unregisterParagraphAtParagraphIdWithListId(paragraph.id, paragraph.config.ListItem_listId);
+            }
+          }
         }
       }
     };
     const trackNumberedListBlocksAfterInserted = (blockReferences: matita.BlockReference[]): void => {
       for (let i = 0; i < blockReferences.length; i++) {
         const blockReference = blockReferences[i];
-        const block = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, blockReference);
-        if (matita.isParagraph(block) && block.config.type === ParagraphType.ListItem && typeof block.config.ListItem_listId === 'string') {
-          registerParagraphAtParagraphIdWithListIdAndNumberedListIndent(
-            block.id,
-            block.config.ListItem_listId,
-            convertStoredListIndentLevelToNumberedIndentLevel(block.config.ListItem_indentLevel),
-          );
+        const block = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, blockReference);
+        if (matita.isParagraph(block)) {
+          if (block.config.type === ParagraphType.ListItem && typeof block.config.ListItem_listId === 'string') {
+            registerParagraphAtParagraphIdWithListIdAndNumberedListIndent(
+              block.id,
+              block.config.ListItem_listId,
+              convertStoredListIndentLevelToNumberedIndentLevel(block.config.ListItem_indentLevel),
+            );
+          }
+        } else {
+          for (const paragraphReference of matita.iterEmbedSubParagraphs(this.$p_stateControl.stateView.document, blockReference)) {
+            const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
+            matita.assertIsParagraph(paragraph);
+            if (paragraph.config.type === ParagraphType.ListItem && typeof paragraph.config.ListItem_listId === 'string') {
+              registerParagraphAtParagraphIdWithListIdAndNumberedListIndent(
+                paragraph.id,
+                paragraph.config.ListItem_listId,
+                convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel),
+              );
+            }
+          }
         }
       }
     };
     pipe(
-      this.stateControl.beforeMutationPart$,
+      this.$p_stateControl.beforeMutationPart$,
       subscribe((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
@@ -6254,7 +6204,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             case matita.ViewDeltaChangeType.BlocksInserted: {
               const { blockReferences } = change;
               pipe(
-                this.stateControl.afterMutationPart$,
+                this.$p_stateControl.afterMutationPart$,
                 take(1),
                 subscribe((event) => {
                   if (event.type === ThrowType) {
@@ -6271,7 +6221,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               const { blockReferences } = change;
               untrackNumberedListBlocksBeforeRemoved(blockReferences);
               pipe(
-                this.stateControl.afterMutationPart$,
+                this.$p_stateControl.afterMutationPart$,
                 take(1),
                 subscribe((event) => {
                   if (event.type === ThrowType) {
@@ -6285,17 +6235,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               break;
             }
             case matita.ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated: {
-              const { blockReference } = change;
-              if (change.isParagraphChildrenUpdated) {
+              const { blockReference, isParagraphChildrenUpdated } = change;
+              if (isParagraphChildrenUpdated) {
                 break;
               }
-              let block = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, blockReference);
+              let block = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, blockReference);
               if (matita.isEmbed(block)) {
                 break;
               }
               const configBefore = block.config;
               pipe(
-                this.stateControl.afterMutationPart$,
+                this.$p_stateControl.afterMutationPart$,
                 take(1),
                 subscribe((event) => {
                   if (event.type === ThrowType) {
@@ -6304,7 +6254,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   if (event.type === EndType) {
                     return;
                   }
-                  block = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, blockReference);
+                  block = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, blockReference);
                   matita.assertIsParagraph(block);
                   const configAfter = block.config;
                   if (configAfter.type === ParagraphType.ListItem && typeof configAfter.ListItem_listId === 'string') {
@@ -6350,7 +6300,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             case matita.ViewDeltaChangeType.ContentsInserted: {
               const { contentReferences } = change;
               pipe(
-                this.stateControl.afterMutationPart$,
+                this.$p_stateControl.afterMutationPart$,
                 take(1),
                 subscribe((event) => {
                   if (event.type === ThrowType) {
@@ -6361,8 +6311,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   }
                   for (let i = 0; i < contentReferences.length; i++) {
                     const contentReference = contentReferences[i];
-                    for (const paragraphReference of matita.iterContentSubParagraphs(this.stateControl.stateView.document, contentReference)) {
-                      const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+                    for (const paragraphReference of matita.iterContentSubParagraphs(this.$p_stateControl.stateView.document, contentReference)) {
+                      const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
                       matita.assertIsParagraph(paragraph);
                       if (paragraph.config.type === ParagraphType.ListItem && typeof paragraph.config.ListItem_listId === 'string') {
                         registerParagraphAtParagraphIdWithListIdAndNumberedListIndent(
@@ -6381,8 +6331,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               const { contentReferences } = change;
               for (let i = 0; i < contentReferences.length; i++) {
                 const contentReference = contentReferences[i];
-                for (const paragraphReference of matita.iterContentSubParagraphs(this.stateControl.stateView.document, contentReference)) {
-                  const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+                for (const paragraphReference of matita.iterContentSubParagraphs(this.$p_stateControl.stateView.document, contentReference)) {
+                  const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
                   matita.assertIsParagraph(paragraph);
                   if (paragraph.config.type === ParagraphType.ListItem && typeof paragraph.config.ListItem_listId === 'string') {
                     unregisterParagraphAtParagraphIdWithListId(paragraph.id, paragraph.config.ListItem_listId);
@@ -6393,13 +6343,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             }
             case matita.ViewDeltaChangeType.ContentConfigUpdated: {
               const { contentReference } = change;
-              if (!matita.areContentReferencesAtSameContent(contentReference, this.topLevelContentReference)) {
+              if (!matita.areContentReferencesAtSameContent(contentReference, this.$p_topLevelContentReference)) {
                 break;
               }
-              let content = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+              let content = matita.accessContentFromContentReference(this.$p_stateControl.stateView.document, this.$p_topLevelContentReference);
               const configBefore = content.config;
               pipe(
-                this.stateControl.afterMutationPart$,
+                this.$p_stateControl.afterMutationPart$,
                 take(1),
                 subscribe((event) => {
                   if (event.type === ThrowType) {
@@ -6408,7 +6358,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   if (event.type === EndType) {
                     return;
                   }
-                  content = matita.accessContentFromContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+                  content = matita.accessContentFromContentReference(this.$p_stateControl.stateView.document, this.$p_topLevelContentReference);
                   const configAfter = content.config;
                   if (configBefore.listStyles === configAfter.listStyles) {
                     return;
@@ -6440,13 +6390,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                           if (previousListStartNumber !== listStartNumber) {
                             for (const paragraphId of numberedListIndexer.iterateParagraphIds()) {
                               const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
-                              const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+                              const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
                               matita.assertIsParagraph(paragraph);
                               if (convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel) === indentLevel) {
                                 numberedListIndexer.markDirty();
-                                const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
+                                const paragraphRenderControl = this.$p_viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
                                 paragraphRenderControl.markDirtyContainer();
-                                this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+                                this.$p_queueDirtyParagraph(paragraphId);
                               }
                             }
                           }
@@ -6454,15 +6404,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                       } else {
                         for (const paragraphId of numberedListIndexer.iterateParagraphIds()) {
                           const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
-                          const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+                          const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
                           matita.assertIsParagraph(paragraph);
                           if (convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel) === indentLevel) {
                             if (listType === AccessedListStyleType.OrderedList) {
                               numberedListIndexer.markDirty();
                             }
-                            const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
+                            const paragraphRenderControl = this.$p_viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
                             paragraphRenderControl.markDirtyContainer();
-                            this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+                            this.$p_queueDirtyParagraph(paragraphId);
                           }
                         }
                       }
@@ -6475,6 +6425,122 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
       }, this),
     );
+  }
+}
+class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
+  rootHtmlElement: HTMLElement;
+  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+  viewControl: VirtualizedViewControl;
+  topLevelContentReference: matita.ContentReference;
+  htmlElementToNodeRenderControlMap: Map<HTMLElement, VirtualizedContentRenderControl | VirtualizedParagraphRenderControl>;
+  dirtyParagraphIdQueue: UniqueStringQueue;
+  private $p_containerHtmlElement!: HTMLElement;
+  private $p_topLevelContentViewContainerElement!: HTMLElement;
+  private $p_selectionRectsViewContainerElement!: HTMLElement;
+  private $p_selectionCursorsViewContainerElement!: HTMLElement;
+  private $p_searchOverlayContainerElement!: HTMLElement;
+  private $p_searchElementContainerElement!: HTMLElement;
+  private $p_searchInputRef = createRef<HTMLInputElement>();
+  private $p_selectionView$: CurrentValueDistributor<SelectionViewMessage>;
+  private $p_searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
+  relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
+  private $p_keyCommands: KeyCommands;
+  private $p_commandRegister: VirtualizedCommandRegister;
+  private $p_undoControl: LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+  private $p_graphemeSegmenter: IntlSegmenter;
+  constructor(
+    rootHtmlElement: HTMLElement,
+    stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+    viewControl: VirtualizedViewControl,
+    topLevelContentReference: matita.ContentReference,
+  ) {
+    super(() => this.$p_dispose());
+    this.rootHtmlElement = rootHtmlElement;
+    this.stateControl = stateControl;
+    this.viewControl = viewControl;
+    this.topLevelContentReference = topLevelContentReference;
+    this.htmlElementToNodeRenderControlMap = new Map();
+    this.dirtyParagraphIdQueue = new UniqueStringQueue([]);
+    this.$p_selectionView$ = CurrentValueDistributor<SelectionViewMessage>({
+      viewCursorAndRangeInfos: {
+        viewCursorAndRangeInfosForSelectionRanges: [],
+        isDragging: false,
+      },
+      renderSync: false,
+    });
+    this.$p_searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
+      calculateMatchInfos: () => [],
+      renderSync: false,
+      roundCorners: true,
+    });
+    this.relativeParagraphMeasurementCache = new LruCache(250);
+    this.$p_keyCommands = defaultTextEditingKeyCommands;
+    this.$p_commandRegister = combineCommandRegistersOverride<
+      DocumentConfig,
+      ContentConfig,
+      ParagraphConfig,
+      EmbedConfig,
+      TextConfig,
+      VoidConfig,
+      VirtualizedDocumentRenderControl,
+      VirtualizedContentRenderControl,
+      VirtualizedParagraphRenderControl,
+      matita.EmbedRenderControl
+    >([genericCommandRegister, virtualizedCommandRegister]);
+    this.$p_undoControl = new LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(this.stateControl);
+    this.add(this.$p_undoControl);
+    this.$p_undoControl.registerCommands(this.$p_commandRegister);
+    this.$p_graphemeSegmenter = new this.stateControl.stateControlConfig.IntlSegmenter();
+  }
+  private $p_listStyleInjectionControl!: ListStyleInjectionControl;
+  private $p_commitDirtyChanges(): void {
+    this.$p_listStyleInjectionControl.computeIndices();
+    let paragraphId: string | null;
+    while ((paragraphId = this.dirtyParagraphIdQueue.shift()) !== null) {
+      const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
+      const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
+      const injectedStyle: ParagraphStyleInjection = {};
+      this.$p_listStyleInjectionControl.injectStyle(paragraphReference, injectedStyle);
+      paragraphRenderControl.commitDirtyChanges(injectedStyle);
+    }
+  }
+  private $p_isDraggingSelection = false;
+  private $p_endSelectionDrag$ = Distributor<undefined>();
+  private $p_searchControl!: SingleParagraphPlainTextSearchControl;
+  private $p_isSearchElementContainerVisible$ = CurrentValueDistributor<boolean>(false);
+  private $p_searchElementSelectAllText$ = Distributor<undefined>();
+  private $p_searchElementTrackAllControl: TrackAllControl | null = null;
+  private $p_matchNumberMaybe$ = CurrentValueDistributor<Maybe<number>>(None);
+  private $p_totalMatchesMaybe$ = CurrentValueDistributor<Maybe<TotalMatchesMessage>>(None);
+  private $p_isSearchInComposition$ = CurrentValueDistributor<boolean>(false);
+  private $p_renderOverlayAsync = false;
+  private $p_changeQuery$ = Distributor<string>();
+  private $p_selectionViewHasFocus$ = CurrentValueDistributor(false);
+  private $p_resetSynchronizedCursorVisibility$ = CurrentValueDistributor<undefined>(undefined);
+  private $p_inputControl!: FloatingVirtualizedTextInputControl;
+  private $p_spellCheckControl: SpellCheckControl | null = null;
+  init(): void {
+    const languageIdentifier = getDefaultLanguageIdentifier();
+    if (languageIdentifier !== null) {
+      loadDictionariesForLanguageIdentifier(languageIdentifier)
+        .then((dictionaries) => {
+          if (!this.active) {
+            return;
+          }
+          this.$p_spellCheckControl = new SpellCheckControl(this.stateControl, this.topLevelContentReference, dictionaries);
+          this.add(this.$p_spellCheckControl);
+          this.stateControl.queueUpdate(() => {
+            // HACK.
+          });
+        })
+        .catch((error) => {
+          console.error('error loading dictionary...', error);
+        });
+    }
+    this.$p_listStyleInjectionControl = new ListStyleInjectionControl(this.stateControl, this.viewControl, this.topLevelContentReference, (paragraphId) => {
+      this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+    });
+    this.add(this.$p_listStyleInjectionControl);
     this.$p_containerHtmlElement = document.createElement('div');
     this.$p_topLevelContentViewContainerElement = document.createElement('div');
     this.$p_selectionRectsViewContainerElement = document.createElement('div');
@@ -7511,6 +7577,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       renderReactNodeIntoHtmlContainerElement(
         <SearchBox
           isVisible$={this.$p_isSearchElementContainerVisible$}
+          selectAllText$={this.$p_searchElementSelectAllText$}
           containerStaticViewRectangle$={searchContainerStaticViewRectangle$}
           goToSearchResultImmediatelySink={goToSearchResultImmediatelySink}
           querySink={searchQuerySink}
@@ -7681,9 +7748,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$p_isSearchElementContainerVisible$(Push(true));
       }
       if (focusSearchInput) {
-        queueMicrotaskDisposable(() => {
-          this.$p_searchInputRef.current?.focus();
-        }, this);
+        this.$p_searchElementSelectAllText$(Push(undefined));
       }
     };
   }

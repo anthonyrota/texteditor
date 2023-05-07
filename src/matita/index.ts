@@ -8,6 +8,7 @@
 // TODO: Don't necessitate BatchMutation for reverseMutation.
 // TODO: Make sure range ids are generated unique each time in transformation functions, and not reused.
 import { IndexableUniqueStringList } from '../common/IndexableUniqueStringList';
+import { LeftRightComparisonResult } from '../common/LeftRightCompare';
 import {
   assertUnreachable,
   throwUnreachable,
@@ -2497,6 +2498,7 @@ type ViewDeltaChange =
     }
   | {
       type: ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated;
+      // TODO.
       isParagraphChildrenUpdated: boolean;
       isParagraphTextUpdated: boolean;
       blockReference: BlockReference;
@@ -9389,6 +9391,36 @@ function copyBlocksFromContentBetweenBlockReferencesIntoContentFragmentAndChange
   }
   return makeContentFragment(contentFragmentBlocks);
 }
+type BlockIndices = number[];
+function indexBlockAtBlockReference(
+  document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
+  blockReference: BlockReference,
+): BlockIndices {
+  const indices: number[] = [getIndexOfBlockInContentFromBlockReference(document, blockReference)];
+  let lastContentReference = makeContentReferenceFromContent(accessContentFromBlockReference(document, blockReference));
+  while (isContentAtContentReferenceInEmbed(document, lastContentReference)) {
+    indices.unshift(getIndexOfEmbedContentFromContentReference(document, lastContentReference));
+    const embed = accessEmbedFromContentReference(document, lastContentReference);
+    const embedReference = makeBlockReferenceFromBlock(embed);
+    indices.unshift(getIndexOfBlockInContentFromBlockReference(document, embedReference));
+    lastContentReference = makeContentReferenceFromContent(accessContentFromBlockReference(document, embedReference));
+  }
+  return indices;
+}
+function compareBlockIndicesForUniqueParagraphsAtBlockReferences(blockIndices1: BlockIndices, blockIndices2: BlockIndices): LeftRightComparisonResult {
+  for (let i = 0; i < blockIndices1.length; i++) {
+    assert(i < blockIndices2.length);
+    const index1 = blockIndices1[i];
+    const index2 = blockIndices2[i];
+    if (index1 < index2) {
+      return LeftRightComparisonResult.IsLeft;
+    }
+    if (index1 > index2) {
+      return LeftRightComparisonResult.IsRight;
+    }
+  }
+  throwUnreachable();
+}
 export {
   type AnyNode,
   type BaseRenderControl,
@@ -9797,4 +9829,7 @@ export {
   getRangesInSelectionSorted,
   type AnyMutation,
   type BeforeUpdateBatchMessage,
+  type BlockIndices,
+  indexBlockAtBlockReference,
+  compareBlockIndicesForUniqueParagraphsAtBlockReferences,
 };

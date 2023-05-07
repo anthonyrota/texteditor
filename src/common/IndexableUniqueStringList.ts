@@ -1,4 +1,5 @@
 import { assert } from '../common/util';
+import { LeftRightCompareWithFunction, LeftRightComparisonResult } from './LeftRightCompare';
 class IndexableUniqueStringList {
   private $p_valueToNode = Object.create(null) as Record<string, AvlTreeIndexableUniqueStringListInternalNode>;
   private $p_root: AvlTreeIndexableUniqueStringListNode = new AvlTreeIndexableUniqueStringListLeafNode(null, this.$p_valueToNode);
@@ -20,6 +21,10 @@ class IndexableUniqueStringList {
     for (let i = 0; i < values.length; i++) {
       this.$p_root = this.$p_root.insertBefore(index + i, values[i]);
     }
+  }
+  insertValueUsingComparisonFunction(value: string, compareWithFn: LeftRightCompareWithFunction<string>): void {
+    assert(!(value in this.$p_valueToNode));
+    this.$p_root = this.$p_root.insertValueUsingComparisonFunction(value, compareWithFn);
   }
   remove(fromIndex: number, toIndexInclusive: number): void {
     assert(0 <= fromIndex && fromIndex <= toIndexInclusive && toIndexInclusive < this.$p_root.size);
@@ -62,6 +67,7 @@ interface AvlTreeIndexableUniqueStringListNode {
   parent: AvlTreeIndexableUniqueStringListInternalNode | null;
   height: number;
   size: number;
+  insertValueUsingComparisonFunction(value: string, compareWithFn: LeftRightCompareWithFunction<string>): AvlTreeIndexableUniqueStringListInternalNode;
   insertBefore(index: number, value: string): AvlTreeIndexableUniqueStringListInternalNode;
 }
 class AvlTreeIndexableUniqueStringListLeafNode implements AvlTreeIndexableUniqueStringListNode {
@@ -72,6 +78,9 @@ class AvlTreeIndexableUniqueStringListLeafNode implements AvlTreeIndexableUnique
   constructor(parent: AvlTreeIndexableUniqueStringListInternalNode | null, valueToNode: Record<string, AvlTreeIndexableUniqueStringListInternalNode>) {
     this.parent = parent;
     this.$p_valueToNode = valueToNode;
+  }
+  insertValueUsingComparisonFunction(value: string, _compare: LeftRightCompareWithFunction<string>): AvlTreeIndexableUniqueStringListInternalNode {
+    return new AvlTreeIndexableUniqueStringListInternalNode(value, this.parent, this.$p_valueToNode);
   }
   insertBefore(_index: number, value: string): AvlTreeIndexableUniqueStringListInternalNode {
     return new AvlTreeIndexableUniqueStringListInternalNode(value, this.parent, this.$p_valueToNode);
@@ -106,6 +115,16 @@ class AvlTreeIndexableUniqueStringListInternalNode implements AvlTreeIndexableUn
       return (this.right as AvlTreeIndexableUniqueStringListInternalNode).getNodeAt(index - leftSize - 1);
     }
     return this;
+  }
+  insertValueUsingComparisonFunction(value: string, compareWithFn: LeftRightCompareWithFunction<string>): AvlTreeIndexableUniqueStringListInternalNode {
+    const comparisonResultWithMyValue = compareWithFn(this.value);
+    if (comparisonResultWithMyValue === LeftRightComparisonResult.IsLeft) {
+      this.left = this.left.insertValueUsingComparisonFunction(value, compareWithFn);
+    } else {
+      this.right = this.right.insertValueUsingComparisonFunction(value, compareWithFn);
+    }
+    this.$p_recalculate();
+    return this.$p_balance();
   }
   insertBefore(index: number, value: string): AvlTreeIndexableUniqueStringListInternalNode {
     const leftSize: number = this.left.size;

@@ -312,14 +312,15 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
               break;
             }
             case matita.ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated: {
-              const { blockReference } = change;
-              if (change.isParagraphTextUpdated) {
-                const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
-                this.$p_pendingParagraphIds.queue(paragraphId);
-                this.$p_processedParagraphCache.delete(paragraphId);
-                this.$p_paragraphMatchesCache.delete(paragraphId);
-                this.$p_pendingParagraphIdsQueued(Push(undefined));
+              const { blockReference, isParagraphTextUpdated } = change;
+              if (!isParagraphTextUpdated) {
+                break;
               }
+              const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
+              this.$p_pendingParagraphIds.queue(paragraphId);
+              this.$p_processedParagraphCache.delete(paragraphId);
+              this.$p_paragraphMatchesCache.delete(paragraphId);
+              this.$p_pendingParagraphIdsQueued(Push(undefined));
               break;
             }
             case matita.ViewDeltaChangeType.BlocksRemoved: {

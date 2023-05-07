@@ -1,4 +1,5 @@
 import { assert, assertIsNotNullish } from '../common/util';
+import { LeftRightCompareWithFunction, LeftRightComparisonResult } from './LeftRightCompare';
 class CountedIndexableUniqueStringList {
   private $p_valueToNode = Object.create(null) as Record<string, AvlTreeCountedIndexableUniqueStringListInternalNode>;
   private $p_root: AvlTreeCountedIndexableUniqueStringListNode = new AvlTreeCountedIndexableUniqueStringListLeafNode(null, this.$p_valueToNode);
@@ -23,11 +24,18 @@ class CountedIndexableUniqueStringList {
       this.$p_root = this.$p_root.insertBefore(index + i, valueAndCount[0], valueAndCount[1]);
     }
   }
+  insertValueAndCountUsingComparisonFunction(value: string, count: number, compareWithFn: LeftRightCompareWithFunction<string>): void {
+    assert(!(value in this.$p_valueToNode));
+    this.$p_root = this.$p_root.insertValueAndCountUsingComparisonFunction(value, count, compareWithFn);
+  }
   remove(fromIndex: number, toIndexInclusive: number): void {
     assert(0 <= fromIndex && fromIndex <= toIndexInclusive && toIndexInclusive < this.$p_root.size);
     for (let i = fromIndex; i <= toIndexInclusive; i++) {
       this.$p_root = (this.$p_root as AvlTreeCountedIndexableUniqueStringListInternalNode).removeAt(fromIndex);
     }
+  }
+  has(value: string): boolean {
+    return value in this.$p_valueToNode;
   }
   indexOf(value: string): number {
     if (!(value in this.$p_valueToNode)) {
@@ -92,6 +100,11 @@ interface AvlTreeCountedIndexableUniqueStringListNode {
   height: number;
   size: number;
   totalCount: number;
+  insertValueAndCountUsingComparisonFunction(
+    value: string,
+    count: number,
+    compareWithFn: LeftRightCompareWithFunction<string>,
+  ): AvlTreeCountedIndexableUniqueStringListInternalNode;
   insertBefore(index: number, value: string, count: number): AvlTreeCountedIndexableUniqueStringListInternalNode;
 }
 class AvlTreeCountedIndexableUniqueStringListLeafNode implements AvlTreeCountedIndexableUniqueStringListNode {
@@ -106,6 +119,13 @@ class AvlTreeCountedIndexableUniqueStringListLeafNode implements AvlTreeCountedI
   ) {
     this.parent = parent;
     this.$p_valueToNode = valueToNode;
+  }
+  insertValueAndCountUsingComparisonFunction(
+    value: string,
+    count: number,
+    _compare: LeftRightCompareWithFunction<string>,
+  ): AvlTreeCountedIndexableUniqueStringListInternalNode {
+    return new AvlTreeCountedIndexableUniqueStringListInternalNode(value, count, this.parent, this.$p_valueToNode);
   }
   insertBefore(_index: number, value: string, count: number): AvlTreeCountedIndexableUniqueStringListInternalNode {
     return new AvlTreeCountedIndexableUniqueStringListInternalNode(value, count, this.parent, this.$p_valueToNode);
@@ -145,6 +165,20 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
       return (this.right as AvlTreeCountedIndexableUniqueStringListInternalNode).getNodeAt(index - leftSize - 1);
     }
     return this;
+  }
+  insertValueAndCountUsingComparisonFunction(
+    value: string,
+    count: number,
+    compareWithFn: LeftRightCompareWithFunction<string>,
+  ): AvlTreeCountedIndexableUniqueStringListInternalNode {
+    const comparisonResultWithMyValue = compareWithFn(this.value);
+    if (comparisonResultWithMyValue === LeftRightComparisonResult.IsLeft) {
+      this.left = this.left.insertValueAndCountUsingComparisonFunction(value, count, compareWithFn);
+    } else {
+      this.right = this.right.insertValueAndCountUsingComparisonFunction(value, count, compareWithFn);
+    }
+    this.$p_recalculate();
+    return this.$p_balance();
   }
   insertBefore(index: number, value: string, count: number): AvlTreeCountedIndexableUniqueStringListInternalNode {
     const leftSize: number = this.left.size;

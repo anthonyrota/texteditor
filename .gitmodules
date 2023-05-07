@@ -1,0 +1,3 @@
+[submodule "src/hunspell/hunspell"]
+	path = src/hunspell/hunspell
+	url = https://github.com/hunspell/hunspell
