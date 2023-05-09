@@ -6,7 +6,9 @@ import { assert, throwUnreachable } from '../common/util';
 import { Dictionaries } from '../dictionaries';
 import { Hunspell, HunspellFactory, loadModule } from '../hunspell';
 import { Disposable, DisposableClass } from '../ruscel/disposable';
-import { PushType, ThrowType, subscribe, take } from '../ruscel/source';
+import { Distributor } from '../ruscel/distributor';
+import { isNone } from '../ruscel/maybe';
+import { End, PushType, ThrowType, subscribe, take } from '../ruscel/source';
 import { pipe, requestIdleCallbackDisposable } from '../ruscel/util';
 import * as matita from '.';
 enum LanguageIdentifier {
@@ -60,13 +62,6 @@ interface ParagraphSpellingMistake {
   startOffset: number;
   endOffset: number;
 }
-const hunspellFactoryPromise: Promise<HunspellFactory> | null = null;
-function loadHunspellAsm(): Promise<HunspellFactory> {
-  if (hunspellFactoryPromise !== null) {
-    return hunspellFactoryPromise;
-  }
-  return loadModule();
-}
 const mountedFileInfoMap = new Map<string, { filePath: string; refCount: number }>();
 function ensureMounted(hunspellFactory: HunspellFactory, fileIdentifier: string, fileContents: string, disposable: Disposable): string {
   const existingMountedFileInfo = mountedFileInfoMap.get(fileIdentifier);
@@ -103,15 +98,18 @@ class SpellCheckControl extends DisposableClass {
     matita.NodeConfig
   >;
   private $p_topLevelContentReference: matita.ContentReference;
-  private $p_spellchecker!: Hunspell;
+  private $p_spellChecker!: Hunspell;
   private $p_pendingParagraphIds!: UniqueStringQueue;
+  private $p_insertTextParagraphsIds = new Set<string>();
+  private $p_pendingTextEditParagraphCollapsedCursorOffsetsMap = new Map<string, number[]>();
   private $p_spellingMistakesMap = new Map<string, ParagraphSpellingMistake[]>();
   private $p_spellingMistakesParagraphCounts = new CountedIndexableUniqueStringList([]);
   private $p_wordSegmenter: IntlSegmenter;
+  private $p_isLoaded = false;
+  didLoad$: Distributor<never>;
   constructor(
     stateControl: matita.StateControl<matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig>,
     topLevelContentReference: matita.ContentReference,
-    dictionaries: Dictionaries,
   ) {
     super();
     this.$p_stateControl = stateControl;
@@ -119,26 +117,36 @@ class SpellCheckControl extends DisposableClass {
     this.$p_wordSegmenter = new stateControl.stateControlConfig.IntlSegmenter(undefined, {
       granularity: 'word',
     });
-    loadHunspellAsm()
-      .then((hunspellFactory) => {
-        if (!this.active) {
-          return;
-        }
+    this.didLoad$ = Distributor<never>();
+    this.add(this.didLoad$);
+    const languageIdentifier = getDefaultLanguageIdentifier();
+    if (languageIdentifier === null) {
+      this.dispose();
+      return;
+    }
+    Promise.all([loadDictionariesForLanguageIdentifier(languageIdentifier), loadModule()])
+      .then(([dictionaries, hunspellFactory]) => {
+        this.$p_isLoaded = true;
         const affFilePath = ensureMounted(hunspellFactory, JSON.stringify([dictionaries.identifier, 'aff']), dictionaries.aff, this);
         const dicFilePath = ensureMounted(hunspellFactory, JSON.stringify([dictionaries.identifier, 'dic']), dictionaries.dic, this);
-        this.$p_spellchecker = hunspellFactory.create(affFilePath, dicFilePath);
+        this.$p_spellChecker = hunspellFactory.create(affFilePath, dicFilePath);
         this.add(
           Disposable(() => {
-            this.$p_spellchecker.dispose();
+            this.$p_spellChecker.dispose();
           }),
         );
         this.$p_pendingParagraphIds = new UniqueStringQueue(this.$p_iterateAllParagraphIds());
         this.$p_queueWorkIfNeeded();
         this.$p_trackChanges();
+        this.didLoad$(End);
       })
       .catch((error) => {
-        console.error('error loading hunspell asm', error);
+        console.error('error loading spellchecker resources', error);
+        this.dispose();
       });
+  }
+  getIsLoaded(): boolean {
+    return this.$p_isLoaded;
   }
   getSpellingMistakesInParagraphAtParagraphReference(paragraphReference: matita.BlockReference): ParagraphSpellingMistake[] | null {
     const paragraphId = matita.getBlockIdFromBlockReference(paragraphReference);
@@ -151,7 +159,68 @@ class SpellCheckControl extends DisposableClass {
     }
     return paragraphSpellingMistakes;
   }
+  private $p_getIsTextEditUpdateFromUpdateDataStack(updateDataStack: matita.UpdateData[]): boolean {
+    const updateDataMaybe = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
+    if (isNone(updateDataMaybe)) {
+      return false;
+    }
+    const updateData = updateDataMaybe.value;
+    return (
+      matita.RedoUndoUpdateKey.InsertText in updateData ||
+      matita.RedoUndoUpdateKey.RemoveTextForwards in updateData ||
+      matita.RedoUndoUpdateKey.RemoveTextBackwards in updateData ||
+      matita.RedoUndoUpdateKey.CompositionUpdate in updateData
+    );
+  }
   private $p_trackChanges(): void {
+    pipe(
+      this.$p_stateControl.beforeRunUpdate$,
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        for (const paragraphId of this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.keys()) {
+          this.$p_pendingParagraphIds.queue(paragraphId);
+        }
+        this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.clear();
+      }, this),
+    );
+    pipe(
+      this.$p_stateControl.afterRunUpdate$,
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const message = event.value;
+        const { updateDataStack } = message;
+        const isTextEditUpdate = this.$p_getIsTextEditUpdateFromUpdateDataStack(updateDataStack);
+        if (!isTextEditUpdate) {
+          return;
+        }
+        for (let i = 0; i < this.$p_stateControl.stateView.selection.selectionRanges.length; i++) {
+          const selectionRange = this.$p_stateControl.stateView.selection.selectionRanges[i];
+          if (!matita.isSelectionRangeCollapsedInText(selectionRange)) {
+            continue;
+          }
+          const collapsedRange = selectionRange.ranges[0];
+          const paragraphPoint = collapsedRange.startPoint;
+          matita.assertIsParagraphPoint(paragraphPoint);
+          const cursorOffset = paragraphPoint.offset;
+          const paragraphId = matita.getParagraphIdFromParagraphPoint(paragraphPoint);
+          if (!this.$p_insertTextParagraphsIds.has(paragraphId)) {
+            continue;
+          }
+          let cursorOffsetsForParagraph = this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.get(paragraphId);
+          if (cursorOffsetsForParagraph === undefined) {
+            cursorOffsetsForParagraph = [cursorOffset];
+            this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.set(paragraphId, cursorOffsetsForParagraph);
+            continue;
+          }
+          cursorOffsetsForParagraph.push(cursorOffset);
+        }
+        this.$p_insertTextParagraphsIds.clear();
+      }, this),
+    );
     pipe(
       this.$p_stateControl.beforeMutationPart$,
       subscribe((event) => {
@@ -159,22 +228,30 @@ class SpellCheckControl extends DisposableClass {
           throwUnreachable();
         }
         const message = event.value;
-        for (let i = 0; i < message.viewDelta.changes.length; i++) {
-          const change = message.viewDelta.changes[i];
-          this.$p_onViewDeltaChange(change);
+        const { viewDelta, updateDataStack } = message;
+        const isTextEditUpdate = this.$p_getIsTextEditUpdateFromUpdateDataStack(updateDataStack);
+        for (let i = 0; i < viewDelta.changes.length; i++) {
+          const change = viewDelta.changes[i];
+          this.$p_onViewDeltaChange(change, isTextEditUpdate);
         }
       }, this),
     );
   }
-  private $p_handleBlockReferencesAfterInserted(blockReferences: matita.BlockReference[]): void {
+  private $p_queueParagraphWithParagraphId(paragraphId: string, isTextEditUpdate: boolean): void {
+    this.$p_pendingParagraphIds.queue(paragraphId);
+    if (isTextEditUpdate) {
+      this.$p_insertTextParagraphsIds.add(paragraphId);
+    }
+  }
+  private $p_handleBlockReferencesAfterInserted(blockReferences: matita.BlockReference[], isTextEditUpdate: boolean): void {
     for (let i = 0; i < blockReferences.length; i++) {
       const blockReference = blockReferences[i];
       const block = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, blockReference);
       if (matita.isParagraph(block)) {
-        this.$p_pendingParagraphIds.queue(block.id);
+        this.$p_queueParagraphWithParagraphId(block.id, isTextEditUpdate);
       } else {
         for (const paragraphReference of matita.iterEmbedSubParagraphs(this.$p_stateControl.stateView.document, blockReference)) {
-          this.$p_pendingParagraphIds.queue(matita.getBlockIdFromBlockReference(paragraphReference));
+          this.$p_queueParagraphWithParagraphId(matita.getBlockIdFromBlockReference(paragraphReference), isTextEditUpdate);
         }
       }
     }
@@ -189,6 +266,7 @@ class SpellCheckControl extends DisposableClass {
   }
   private $p_removeParagraphWithParagraphId(paragraphId: string): void {
     this.$p_pendingParagraphIds.dequeue(paragraphId);
+    this.$p_insertTextParagraphsIds.delete(paragraphId);
     this.$p_removeCachedSpellingMistakesOfParagraphWithParagraphId(paragraphId);
   }
   private $p_handleBlockReferencesBeforeRemoved(blockReferences: matita.BlockReference[]): void {
@@ -205,12 +283,12 @@ class SpellCheckControl extends DisposableClass {
       }
     }
   }
-  private $p_handleContentReferencesAfterInserted(contentReferences: matita.ContentReference[]): void {
+  private $p_handleContentReferencesAfterInserted(contentReferences: matita.ContentReference[], isTextEditUpdate: boolean): void {
     for (let i = 0; i < contentReferences.length; i++) {
       const contentReference = contentReferences[i];
       for (const paragraphReference of matita.iterContentSubParagraphs(this.$p_stateControl.stateView.document, contentReference)) {
         const paragraphId = matita.getBlockIdFromBlockReference(paragraphReference);
-        this.$p_pendingParagraphIds.queue(paragraphId);
+        this.$p_queueParagraphWithParagraphId(paragraphId, isTextEditUpdate);
       }
     }
     this.$p_queueWorkIfNeeded();
@@ -224,7 +302,7 @@ class SpellCheckControl extends DisposableClass {
       }
     }
   }
-  private $p_onViewDeltaChange(change: matita.ViewDeltaChange): void {
+  private $p_onViewDeltaChange(change: matita.ViewDeltaChange, isTextEditUpdate: boolean): void {
     switch (change.type) {
       case matita.ViewDeltaChangeType.BlocksInserted: {
         const { blockReferences } = change;
@@ -236,7 +314,7 @@ class SpellCheckControl extends DisposableClass {
               throw event.error;
             }
             if (event.type === PushType) {
-              this.$p_handleBlockReferencesAfterInserted(blockReferences);
+              this.$p_handleBlockReferencesAfterInserted(blockReferences, isTextEditUpdate);
             }
           }, this),
         );
@@ -253,7 +331,7 @@ class SpellCheckControl extends DisposableClass {
               throw event.error;
             }
             if (event.type === PushType) {
-              this.$p_handleBlockReferencesAfterInserted(blockReferences);
+              this.$p_handleBlockReferencesAfterInserted(blockReferences, isTextEditUpdate);
             }
           }, this),
         );
@@ -261,11 +339,12 @@ class SpellCheckControl extends DisposableClass {
       }
       case matita.ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated: {
         const { blockReference, isParagraphTextUpdated } = change;
-        if (isParagraphTextUpdated) {
-          const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
-          this.$p_pendingParagraphIds.queue(paragraphId);
-          this.$p_queueWorkIfNeeded();
+        if (!isParagraphTextUpdated) {
+          return;
         }
+        const paragraphId = matita.getBlockIdFromBlockReference(blockReference);
+        this.$p_queueParagraphWithParagraphId(paragraphId, isTextEditUpdate);
+        this.$p_queueWorkIfNeeded();
         break;
       }
       case matita.ViewDeltaChangeType.BlocksRemoved: {
@@ -283,7 +362,7 @@ class SpellCheckControl extends DisposableClass {
               throw event.error;
             }
             if (event.type === PushType) {
-              this.$p_handleContentReferencesAfterInserted(contentReferences);
+              this.$p_handleContentReferencesAfterInserted(contentReferences, isTextEditUpdate);
             }
           }, this),
         );
@@ -321,6 +400,7 @@ class SpellCheckControl extends DisposableClass {
     this.$p_queueWorkIfNeeded();
   };
   private $p_checkParagraph(paragraphId: string): void {
+    const pendingTextEditParagraphCollapsedCursorOffsets = this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.get(paragraphId);
     const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
     const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
     matita.assertIsParagraph(paragraph);
@@ -331,7 +411,7 @@ class SpellCheckControl extends DisposableClass {
       const inlineNode = paragraph.children[i];
       if (matita.isVoid(inlineNode)) {
         if (text.length > 0) {
-          paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset));
+          paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphCollapsedCursorOffsets));
         }
         text = '';
         textStartOffset += text.length + 1;
@@ -340,7 +420,7 @@ class SpellCheckControl extends DisposableClass {
       text += inlineNode.text;
     }
     if (text.length > 0) {
-      paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset));
+      paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphCollapsedCursorOffsets));
     }
     if (paragraphSpellingMistakes.length === 0) {
       this.$p_removeCachedSpellingMistakesOfParagraphWithParagraphId(paragraphId);
@@ -363,20 +443,38 @@ class SpellCheckControl extends DisposableClass {
       );
     }
   }
-  private *$p_findMistakesInTextAtStartOffset(text: string, textStartOffset: number): IterableIterator<ParagraphSpellingMistake> {
+  private *$p_findMistakesInTextAtStartOffset(
+    text: string,
+    textStartOffset: number,
+    pendingTextEditParagraphCollapsedCursorOffsets: number[] | undefined,
+  ): IterableIterator<ParagraphSpellingMistake> {
     const segments = this.$p_wordSegmenter.segment(text);
-    for (const segmentData of segments) {
-      if (!segmentData.isWordLike) {
+    wordSegmentLoop: for (const segmentData of segments) {
+      const { segment, index, isWordLike } = segmentData;
+      if (!isWordLike) {
         continue;
       }
-      const paragraphSpellingMistake = this.$p_spellCheckWordAtOffsetInParagraph(segmentData.segment, textStartOffset + segmentData.index);
+      const wordStartParagraphOffset = textStartOffset + index;
+      if (pendingTextEditParagraphCollapsedCursorOffsets !== undefined) {
+        const wordEndParagraphOffset = wordStartParagraphOffset + segment.length;
+        for (let i = 0; i < pendingTextEditParagraphCollapsedCursorOffsets.length; i++) {
+          const pendingTextEditParagraphCollapsedCursorOffset = pendingTextEditParagraphCollapsedCursorOffsets[i];
+          if (
+            wordStartParagraphOffset <= pendingTextEditParagraphCollapsedCursorOffset &&
+            pendingTextEditParagraphCollapsedCursorOffset <= wordEndParagraphOffset
+          ) {
+            continue wordSegmentLoop;
+          }
+        }
+      }
+      const paragraphSpellingMistake = this.$p_spellCheckWordAtOffsetInParagraph(segment, wordStartParagraphOffset);
       if (paragraphSpellingMistake !== null) {
         yield paragraphSpellingMistake;
       }
     }
   }
   private $p_spellCheckWordAtOffsetInParagraph(word: string, offsetInParagraph: number): ParagraphSpellingMistake | null {
-    const isCorrect = this.$p_spellchecker.spell(word);
+    const isCorrect = this.$p_spellChecker.spell(word);
     if (isCorrect) {
       return null;
     }

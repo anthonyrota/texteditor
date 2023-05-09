@@ -1,11 +1,8 @@
 {
   "name": "hunspell",
-  "version": "1.0.0",
+  "version": "",
   "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "",
-  "license": "ISC"
+  "main": "",
+  "scripts": {},
+  "author": ""
 }

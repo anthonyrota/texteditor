@@ -2794,24 +2794,10 @@ function makeViewControl<
     }
   }
   function applyViewDelta(viewDelta: ViewDelta): void {
-    groupConsecutiveItemsInArray(
-      viewDelta.changes,
-      (change) => change,
-      (a, b) => {
-        if (a.type === ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated && b.type === ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated) {
-          return areBlockReferencesAtSameBlock(a.blockReference, b.blockReference);
-        }
-        if (a.type === ViewDeltaChangeType.ContentConfigUpdated && b.type === ViewDeltaChangeType.ContentConfigUpdated) {
-          return areContentReferencesAtSameContent(a.contentReference, b.contentReference);
-        }
-        if (a.type === ViewDeltaChangeType.DocumentConfigUpdated && b.type === ViewDeltaChangeType.DocumentConfigUpdated) {
-          return true;
-        }
-        return false;
-      },
-    ).forEach((group) => {
-      applyViewDeltaChange(group.items[0]);
-    });
+    for (let i = 0; i < viewDelta.changes.length; i++) {
+      const viewDeltaChange = viewDelta.changes[i];
+      applyViewDeltaChange(viewDeltaChange);
+    }
   }
   const contentRenderControlRegisterUnregister$ = Distributor<ContentRenderControlRegisterUnregisterEvent<MyContentRenderControl>>();
   const paragraphRenderControlRegisterUnregister$ = Distributor<ParagraphRenderControlRegisterUnregisterEvent<MyParagraphRenderControl>>();
@@ -3921,6 +3907,12 @@ interface BeforeUpdateBatchMessage {
 interface AfterUpdateBatchMessage {
   didApplyMutation: boolean;
 }
+interface BeforeRunUpdateMessage {
+  updateDataStack: UpdateData[];
+}
+interface AfterRunUpdateMessage {
+  updateDataStack: UpdateData[];
+}
 interface SelectionChangeMessage {
   previousSelection: Selection;
   data?: SelectionChangeData;
@@ -3973,6 +3965,8 @@ interface StateControl<
   afterMutationPart$: Source<AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>;
   beforeUpdateBatch$: Source<BeforeUpdateBatchMessage>;
   afterUpdateBatch$: Source<AfterUpdateBatchMessage>;
+  beforeRunUpdate$: Source<BeforeRunUpdateMessage>;
+  afterRunUpdate$: Source<AfterRunUpdateMessage>;
   selectionChange$: Source<SelectionChangeMessage>;
   customCollapsedSelectionTextConfigChange$: Source<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>;
   snapshotStateThroughStateView: () => StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -3982,14 +3976,18 @@ interface StateControl<
     secondStateView: StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   ) => Selection;
 }
-function isSelectionRangeCollapsedInText(
-  document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>,
-  selectionRange: SelectionRange,
-): boolean {
-  return selectionRange.ranges.length === 1 && getRangeDirection(document, selectionRange.ranges[0]) === RangeDirection.NeutralText;
+function isSelectionRangeCollapsedInText(selectionRange: SelectionRange): boolean {
+  if (selectionRange.ranges.length !== 1) {
+    return false;
+  }
+  const range = selectionRange.ranges[0];
+  if (!isParagraphPoint(range.startPoint) || !isParagraphPoint(range.endPoint)) {
+    return false;
+  }
+  return range.startPoint.offset === range.endPoint.offset;
 }
-function isSelectionCollapsedInText(document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>, selection: Selection): boolean {
-  return selection.selectionRanges.length > 0 && selection.selectionRanges.every((selectionRange) => isSelectionRangeCollapsedInText(document, selectionRange));
+function isSelectionCollapsedInText(selection: Selection): boolean {
+  return selection.selectionRanges.length > 0 && selection.selectionRanges.every((selectionRange) => isSelectionRangeCollapsedInText(selectionRange));
 }
 interface MutationReference {
   mutationId: string | null;
@@ -4268,12 +4266,17 @@ function makeStateControl<
   const afterMutationPart$ = Distributor<AfterMutationPartMessage<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>>();
   disposable.add(afterMutationPart$);
   const beforeUpdateBatch$ = Distributor<BeforeUpdateBatchMessage>();
+  disposable.add(beforeUpdateBatch$);
   const afterUpdateBatch$ = Distributor<AfterUpdateBatchMessage>();
   disposable.add(afterUpdateBatch$);
+  const beforeRunUpdate$ = Distributor<BeforeRunUpdateMessage>();
+  disposable.add(beforeRunUpdate$);
+  const afterRunUpdate$ = Distributor<AfterRunUpdateMessage>();
+  disposable.add(afterRunUpdate$);
   const selectionChange$ = Distributor<SelectionChangeMessage>();
   disposable.add(selectionChange$);
-  const customCollapsedSelectionTextConfig$ = Distributor<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>();
-  disposable.add(customCollapsedSelectionTextConfig$);
+  const customCollapsedSelectionTextConfigChange$ = Distributor<CustomCollapsedSelectionTextConfigChangeMessage<TextConfig>>();
+  disposable.add(customCollapsedSelectionTextConfigChange$);
   let updateDataStack: UpdateData[] | null = null;
   function runUpdates(): void {
     let didApplyMutation = false;
@@ -4409,7 +4412,17 @@ function makeStateControl<
       if (data) {
         updateDataStack.push(data);
       }
+      beforeRunUpdate$(
+        Push({
+          updateDataStack,
+        }),
+      );
       runUpdate(updateDataStack);
+      afterRunUpdate$(
+        Push({
+          updateDataStack,
+        }),
+      );
       if (data) {
         updateDataStack.pop();
       }
@@ -4426,7 +4439,7 @@ function makeStateControl<
         const currentSelection = sortAndMergeAndFixSelectionRanges(state.document, stateControlConfig, selection.selectionRanges);
         const previousSelection = state.selection;
         state.selection = currentSelection;
-        if (!keepCollapsedSelectionTextConfigWhenSelectionChanges || !isSelectionCollapsedInText(state.document, selection)) {
+        if (!keepCollapsedSelectionTextConfigWhenSelectionChanges || !isSelectionCollapsedInText(selection)) {
           delta.setCustomCollapsedSelectionTextConfig(null);
         }
         selectionChange$(
@@ -4449,7 +4462,7 @@ function makeStateControl<
         }
         const previousCustomCollapsedSelectionTextConfig = state.customCollapsedSelectionTextConfig;
         state.customCollapsedSelectionTextConfig = newTextConfig;
-        customCollapsedSelectionTextConfig$(
+        customCollapsedSelectionTextConfigChange$(
           Push({
             previousCustomCollapsedSelectionTextConfig,
             updateDataStack,
@@ -4471,7 +4484,17 @@ function makeStateControl<
       if (update.data) {
         updateDataStack.push(update.data);
       }
+      beforeRunUpdate$(
+        Push({
+          updateDataStack,
+        }),
+      );
       update.runUpdate(updateDataStack);
+      afterRunUpdate$(
+        Push({
+          updateDataStack,
+        }),
+      );
       if (update.data) {
         updateDataStack.push(update.data);
       }
@@ -4502,12 +4525,14 @@ function makeStateControl<
         return delta !== null;
       },
       queueUpdate,
-      beforeUpdateBatch$: beforeUpdateBatch$,
-      beforeMutationPart$: beforeMutationPart$,
-      afterMutationPart$: afterMutationPart$,
-      afterUpdateBatch$: afterUpdateBatch$,
-      selectionChange$: selectionChange$,
-      customCollapsedSelectionTextConfigChange$: customCollapsedSelectionTextConfig$,
+      beforeMutationPart$,
+      afterMutationPart$,
+      beforeUpdateBatch$,
+      afterUpdateBatch$,
+      beforeRunUpdate$,
+      afterRunUpdate$,
+      selectionChange$,
+      customCollapsedSelectionTextConfigChange$,
       snapshotStateThroughStateView,
       transformSelectionForwardsFromFirstStateViewToSecondStateView,
     },
@@ -9071,7 +9096,7 @@ function makeToggleUpdateTextConfigAtCurrentSelectionAndCustomCollapsedSelection
   ) => TextConfig,
 ): RunUpdateFn {
   return () => {
-    if (isSelectionCollapsedInText(stateControl.stateView.document, stateControl.stateView.selection)) {
+    if (isSelectionCollapsedInText(stateControl.stateView.selection)) {
       const customCollapsedSelectionTextConfig = stateControl.stateView.customCollapsedSelectionTextConfig ?? {};
       const isAllActive = stateControl.stateView.selection.selectionRanges.every((selectionRange) =>
         isTextConfigActive(
@@ -9098,14 +9123,14 @@ function calculateParagraphReferenceRangesAndIsAllActiveFromParagraphConfigToggl
 >(
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   isParagraphConfigActive: ((paragraphConfig: ParagraphConfig) => boolean) | null,
-  orderedRanges: Range[],
+  nonOverlappingRanges: Range[],
 ): { paragraphReferenceRanges: ParagraphReferenceRange[]; isAllActive: boolean } {
   const paragraphReferenceRanges: ParagraphReferenceRange[] = [];
   // Note the selection is always sorted, so we can simplify the logic here.
   const visitedParagraphIds = new Set<string>();
   let isAllActive = true;
-  for (let i = 0; i < orderedRanges.length; i++) {
-    const range = orderedRanges[i];
+  for (let i = 0; i < nonOverlappingRanges.length; i++) {
+    const range = nonOverlappingRanges[i];
     const direction = getRangeDirection(document, range);
     if (direction === RangeDirection.NeutralEmptyContent) {
       continue;

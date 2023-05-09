@@ -373,7 +373,7 @@ function getInsertTextConfigAtSelectionRangeWithoutCustomCollapsedSelectionTextC
     }
     return inlineNodeWithStartOffsetAfter.inline.config;
   }
-  if (!matita.isSelectionRangeCollapsedInText(document, selectionRange)) {
+  if (!matita.isSelectionRangeCollapsedInText(selectionRange)) {
     const inlineNodeWithStartOffsetAfter = matita.getInlineNodeWithStartOffsetAfterParagraphPoint(document, paragraphPoint);
     if (inlineNodeWithStartOffsetAfter && matita.isText(inlineNodeWithStartOffsetAfter.inline)) {
       return inlineNodeWithStartOffsetAfter.inline.config;
@@ -386,7 +386,7 @@ function getInsertTextConfigAtSelectionRange(
   customCollapsedSelectionTextConfig: TextConfig | null,
   selectionRange: matita.SelectionRange,
 ): TextConfig {
-  if (customCollapsedSelectionTextConfig === null || !matita.isSelectionRangeCollapsedInText(document, selectionRange)) {
+  if (customCollapsedSelectionTextConfig === null || !matita.isSelectionRangeCollapsedInText(selectionRange)) {
     return getInsertTextConfigAtSelectionRangeWithoutCustomCollapsedSelectionTextConfig(document, selectionRange);
   }
   return { ...getInsertTextConfigAtSelectionRangeWithoutCustomCollapsedSelectionTextConfig(document, selectionRange), ...customCollapsedSelectionTextConfig };
@@ -949,7 +949,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   }
   onConfigOrChildrenChanged(isParagraphChildrenUpdated: boolean): void {
     const documentRenderControl = this.$p_viewControl.accessDocumentRenderControl();
-    documentRenderControl.dirtyParagraphIdQueue.queueIfNotQueuedAlready(matita.getBlockIdFromBlockReference(this.paragraphReference));
+    documentRenderControl.dirtyParagraphIdQueue.queue(matita.getBlockIdFromBlockReference(this.paragraphReference));
     if (isParagraphChildrenUpdated) {
       this.$p_dirtyChildren = true;
     } else {
@@ -1021,7 +1021,7 @@ class VirtualizedContentRenderControl extends DisposableClass implements matita.
     this.add(paragraphRenderControl);
     this.$p_viewControl.renderControlRegister.registerParagraphRenderControl(paragraphRenderControl);
     documentRenderControl.htmlElementToNodeRenderControlMap.set(paragraphRenderControl.containerHtmlElement, paragraphRenderControl);
-    documentRenderControl.dirtyParagraphIdQueue.queueIfNotQueuedAlready(matita.getBlockIdFromBlockReference(paragraphReference));
+    documentRenderControl.dirtyParagraphIdQueue.queue(matita.getBlockIdFromBlockReference(paragraphReference));
     return paragraphRenderControl;
   }
   // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -1596,6 +1596,53 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
       }}
     />
   );
+}
+interface TextDecorationInfo {
+  charactersBoundingRectangle: ViewRectangle;
+  paragraphReference: matita.BlockReference;
+}
+interface SpellingMistakeOverlayInfo {
+  textDecorationInfos: TextDecorationInfo[];
+}
+interface SpellingMistakesOverlayMessage {
+  spellingMistakeOverlayInfos: SpellingMistakeOverlayInfo[];
+}
+interface SpellingMistakesOverlayProps {
+  spellingMistakeOverlay$: Source<SpellingMistakesOverlayMessage>;
+}
+function SpellingMistakesOverlay(props: SpellingMistakesOverlayProps): JSX.Element | null {
+  const { spellingMistakeOverlay$ } = props;
+  const spellingMistakesOverlayMaybe = use$(spellingMistakeOverlay$);
+  if (isNone(spellingMistakesOverlayMaybe)) {
+    return null;
+  }
+  const { spellingMistakeOverlayInfos } = spellingMistakesOverlayMaybe.value;
+  const uniqueKeyControl = new UniqueKeyControl();
+  const fragmentChildren: JSX.Element[] = [];
+  for (let i = 0; i < spellingMistakeOverlayInfos.length; i++) {
+    const spellingMistakeInfo = spellingMistakeOverlayInfos[i];
+    const { textDecorationInfos } = spellingMistakeInfo;
+    for (let j = 0; j < textDecorationInfos.length; j++) {
+      const viewRangeInfo = textDecorationInfos[j];
+      const { charactersBoundingRectangle, paragraphReference } = viewRangeInfo;
+      const key = uniqueKeyControl.makeUniqueKey(paragraphReference.blockId);
+      fragmentChildren.push(
+        <span
+          key={key}
+          style={{
+            position: 'absolute',
+            top: charactersBoundingRectangle.top,
+            left: charactersBoundingRectangle.left,
+            width: charactersBoundingRectangle.width,
+            height: charactersBoundingRectangle.height,
+            // eslint-disable-next-line max-len
+            background: `url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%206%203'%20enable-background%3D'new%200%200%206%203'%20height%3D'3'%20width%3D'6'%3E%3Cg%20fill%3D'%23e51400'%3E%3Cpolygon%20points%3D'5.5%2C0%202.5%2C3%201.1%2C3%204.1%2C0'%2F%3E%3Cpolygon%20points%3D'4%2C0%206%2C2%206%2C0.6%205.4%2C0'%2F%3E%3Cpolygon%20points%3D'0%2C2%201%2C3%202.4%2C3%200%2C0.6'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") repeat-x bottom left`,
+          }}
+        />,
+      );
+    }
+  }
+  return <>{fragmentChildren}</>;
 }
 interface SearchOverlayMatchInfo {
   viewRangeInfos: ViewRangeInfo[];
@@ -2193,125 +2240,37 @@ type KeyCommands = {
   command: string | null;
   platform?: Selector<Platform> | null;
   context?: Selector<Context> | null;
-  cancelKeyEvent?: boolean;
 }[];
 const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'ArrowLeft,Control+KeyB', command: StandardCommand.MoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+ArrowLeft', command: StandardCommand.MoveSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Alt+ArrowUp', command: StandardCommand.MoveSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Alt+ArrowUp', command: StandardCommand.MoveSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+KeyA', command: StandardCommand.MoveSelectionParagraphStart, platform: Platform.Apple, context: Context.Editing },
   { key: 'ArrowRight,Control+KeyF', command: StandardCommand.MoveSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+ArrowRight', command: StandardCommand.MoveSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
-  {
-    key: 'Alt+ArrowDown',
-    command: StandardCommand.MoveSelectionParagraphForwards,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
+  { key: 'Alt+ArrowDown', command: StandardCommand.MoveSelectionParagraphForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+KeyE', command: StandardCommand.MoveSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
-  { key: 'Meta+ArrowLeft', command: StandardCommand.MoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+ArrowRight', command: StandardCommand.MoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  {
-    key: 'ArrowDown,Control+KeyN',
-    command: StandardCommand.MoveSelectionSoftLineDown,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'ArrowUp,Control+KeyP',
-    command: StandardCommand.MoveSelectionSoftLineUp,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  { key: 'Meta+ArrowUp', command: StandardCommand.MoveSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+ArrowDown', command: StandardCommand.MoveSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  {
-    key: 'Shift+ArrowLeft,Control+Shift+KeyB',
-    command: StandardCommand.ExtendSelectionGraphemeBackwards,
-    platform: Platform.Apple,
-    context: Context.Editing,
-  },
+  { key: 'Meta+ArrowLeft', command: StandardCommand.MoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+ArrowRight', command: StandardCommand.MoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing },
+  { key: 'ArrowDown,Control+KeyN', command: StandardCommand.MoveSelectionSoftLineDown, platform: Platform.Apple, context: Context.Editing },
+  { key: 'ArrowUp,Control+KeyP', command: StandardCommand.MoveSelectionSoftLineUp, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+ArrowUp', command: StandardCommand.MoveSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+ArrowDown', command: StandardCommand.MoveSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift+ArrowLeft,Control+Shift+KeyB', command: StandardCommand.ExtendSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+Shift+ArrowLeft', command: StandardCommand.ExtendSelectionWordBackwards, platform: Platform.Apple, context: Context.Editing },
-  {
-    key: 'Alt+Shift+ArrowUp',
-    command: StandardCommand.ExtendSelectionParagraphBackwards,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Control+Shift+KeyA',
-    command: StandardCommand.ExtendSelectionParagraphStart,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Shift+ArrowRight,Control+Shift+KeyF',
-    command: StandardCommand.ExtendSelectionGraphemeForwards,
-    platform: Platform.Apple,
-    context: Context.Editing,
-  },
+  { key: 'Alt+Shift+ArrowUp', command: StandardCommand.ExtendSelectionParagraphBackwards, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Shift+KeyA', command: StandardCommand.ExtendSelectionParagraphStart, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift+ArrowRight,Control+Shift+KeyF', command: StandardCommand.ExtendSelectionGraphemeForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Alt+Shift+ArrowRight', command: StandardCommand.ExtendSelectionWordForwards, platform: Platform.Apple, context: Context.Editing },
-  {
-    key: 'Alt+Shift+ArrowDown',
-    command: StandardCommand.ExtendSelectionParagraphForwards,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
+  { key: 'Alt+Shift+ArrowDown', command: StandardCommand.ExtendSelectionParagraphForwards, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+Shift+KeyE', command: StandardCommand.ExtendSelectionParagraphEnd, platform: Platform.Apple, context: Context.Editing },
-  {
-    key: 'Meta+Shift+ArrowLeft',
-    command: StandardCommand.ExtendSelectionSoftLineStart,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+ArrowRight',
-    command: StandardCommand.ExtendSelectionSoftLineEnd,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Shift+ArrowDown,Control+Shift+KeyN',
-    command: StandardCommand.ExtendSelectionSoftLineDown,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Shift+ArrowUp,Control+Shift+KeyP',
-    command: StandardCommand.ExtendSelectionSoftLineUp,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+ArrowUp',
-    command: StandardCommand.ExtendSelectionStartOfDocument,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+ArrowDown',
-    command: StandardCommand.ExtendSelectionEndOfDocument,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Shift?+Backspace',
-    command: StandardCommand.RemoveSelectionGraphemeBackwards,
-    platform: Platform.Apple,
-    context: Context.Editing,
-  },
+  { key: 'Meta+Shift+ArrowLeft', command: StandardCommand.ExtendSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+ArrowRight', command: StandardCommand.ExtendSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift+ArrowDown,Control+Shift+KeyN', command: StandardCommand.ExtendSelectionSoftLineDown, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift+ArrowUp,Control+Shift+KeyP', command: StandardCommand.ExtendSelectionSoftLineUp, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+ArrowUp', command: StandardCommand.ExtendSelectionStartOfDocument, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+ArrowDown', command: StandardCommand.ExtendSelectionEndOfDocument, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift?+Backspace', command: StandardCommand.RemoveSelectionGraphemeBackwards, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Alt+Shift?+Backspace,Control+Shift?+Backspace,Control+Alt+Shift?+Backspace',
     command: StandardCommand.RemoveSelectionWordBackwards,
@@ -2325,180 +2284,71 @@ const defaultTextEditingKeyCommands: KeyCommands = [
     platform: Platform.Apple,
     context: Context.Editing,
   },
-  {
-    key: 'Meta+Shift?+Backspace',
-    command: StandardCommand.RemoveSelectionSoftLineStart,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  { key: 'Meta+Shift?+Delete', command: StandardCommand.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Control+KeyT', command: StandardCommand.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Enter', command: StandardCommand.InsertParagraphAbove, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+Enter', command: StandardCommand.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyA', command: StandardCommand.SelectAll, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Shift+Enter,Control+KeyO', command: StandardCommand.InsertLineBreak, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Enter', command: StandardCommand.SplitParagraph, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: StandardCommand.Undo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+KeyZ,Meta+KeyY', command: StandardCommand.Redo, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+Shift?+Backspace', command: StandardCommand.RemoveSelectionSoftLineStart, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift?+Delete', command: StandardCommand.RemoveSelectionSoftLineEnd, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+KeyT', command: StandardCommand.TransposeGraphemes, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Enter', command: StandardCommand.InsertParagraphAbove, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+Enter', command: StandardCommand.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyA', command: StandardCommand.SelectAll, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift+Enter,Control+KeyO', command: StandardCommand.InsertLineBreak, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Enter', command: StandardCommand.SplitParagraph, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: StandardCommand.Undo, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+KeyZ,Meta+KeyY', command: StandardCommand.Redo, platform: Platform.Apple, context: Context.Editing },
   {
     key: 'Escape',
     command: StandardCommand.CollapseMultipleSelectionRangesToAnchorRange,
     platform: Platform.Apple,
     context: { all: [Context.Editing, { not: Context.DraggingSelection }] },
-    cancelKeyEvent: true,
   },
   {
     key: 'Shift+Escape',
     command: StandardCommand.CollapseMultipleSelectionRangesToFocusRange,
     platform: Platform.Apple,
     context: { all: [Context.Editing, { not: Context.DraggingSelection }] },
-    cancelKeyEvent: true,
   },
-  {
-    key: 'Meta+KeyF',
-    command: StandardCommand.OpenSearch,
-    platform: Platform.Apple,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+KeyG',
-    command: StandardCommand.SearchCurrentFocusSelectionRange,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+KeyG',
-    command: StandardCommand.SearchCurrentFocusSelectionRange,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Enter,Meta+KeyG',
-    command: StandardCommand.SelectNextSearchMatch,
-    platform: Platform.Apple,
-    context: Context.Searching,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Shift+Enter,Meta+Shift+KeyG',
-    command: StandardCommand.SelectPreviousSearchMatch,
-    platform: Platform.Apple,
-    context: Context.Searching,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Escape',
-    command: StandardCommand.CloseSearch,
-    platform: Platform.Apple,
-    context: Context.InSearchBox,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+KeyL',
-    command: StandardCommand.SelectAllInstancesOfWord,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Alt+Enter,Meta+Shift+KeyL',
-    command: StandardCommand.SelectAllInstancesOfSearchQuery,
-    platform: Platform.Apple,
-    context: Context.Searching,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+KeyD',
-    command: StandardCommand.SelectPreviousInstanceOfWordAtFocus,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+KeyD',
-    command: StandardCommand.SelectNextInstanceOfWordAtFocus,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+Shift+KeyD',
-    command: StandardCommand.SelectPreviousInstanceOfSearchQuery,
-    platform: Platform.Apple,
-    context: Context.Searching,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Meta+KeyD',
-    command: StandardCommand.SelectNextInstanceOfSearchQuery,
-    platform: Platform.Apple,
-    context: Context.Searching,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Control+Alt+ArrowUp',
-    command: StandardCommand.MoveCurrentBlocksAbove,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Control+Alt+ArrowDown',
-    command: StandardCommand.MoveCurrentBlocksBelow,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Control+Alt+Shift+ArrowUp',
-    command: StandardCommand.CloneCurrentBlocksBelow,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  {
-    key: 'Control+Alt+Shift+ArrowDown',
-    command: StandardCommand.CloneCurrentBlocksAbove,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
-  { key: 'Meta+KeyB', command: StandardCommand.ApplyBold, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyI', command: StandardCommand.ApplyItalic, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+KeyU', command: StandardCommand.ApplyUnderline, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+KeyJ', command: StandardCommand.ApplyCode, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+KeyX', command: StandardCommand.ApplyStrikethrough, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+Comma', command: StandardCommand.ApplySubscript, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Shift+Period', command: StandardCommand.ApplySuperscript, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Backslash', command: StandardCommand.ResetInlineStyle, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+KeyL', command: StandardCommand.AlignParagraphLeft, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+KeyE', command: StandardCommand.AlignParagraphCenter, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
+  { key: 'Meta+KeyF', command: StandardCommand.OpenSearch, platform: Platform.Apple },
+  { key: 'Meta+KeyG', command: StandardCommand.SearchCurrentFocusSelectionRange, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+KeyG', command: StandardCommand.SearchCurrentFocusSelectionRange, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Enter,Meta+KeyG', command: StandardCommand.SelectNextSearchMatch, platform: Platform.Apple, context: Context.Searching },
+  { key: 'Shift+Enter,Meta+Shift+KeyG', command: StandardCommand.SelectPreviousSearchMatch, platform: Platform.Apple, context: Context.Searching },
+  { key: 'Escape', command: StandardCommand.CloseSearch, platform: Platform.Apple, context: Context.InSearchBox },
+  { key: 'Meta+Shift+KeyL', command: StandardCommand.SelectAllInstancesOfWord, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Alt+Enter,Meta+Shift+KeyL', command: StandardCommand.SelectAllInstancesOfSearchQuery, platform: Platform.Apple, context: Context.Searching },
+  { key: 'Meta+Shift+KeyD', command: StandardCommand.SelectPreviousInstanceOfWordAtFocus, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyD', command: StandardCommand.SelectNextInstanceOfWordAtFocus, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+KeyD', command: StandardCommand.SelectPreviousInstanceOfSearchQuery, platform: Platform.Apple, context: Context.Searching },
+  { key: 'Meta+KeyD', command: StandardCommand.SelectNextInstanceOfSearchQuery, platform: Platform.Apple, context: Context.Searching },
+  { key: 'Control+Alt+ArrowUp', command: StandardCommand.MoveCurrentBlocksAbove, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Alt+ArrowDown', command: StandardCommand.MoveCurrentBlocksBelow, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Alt+Shift+ArrowUp', command: StandardCommand.CloneCurrentBlocksBelow, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Alt+Shift+ArrowDown', command: StandardCommand.CloneCurrentBlocksAbove, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyB', command: StandardCommand.ApplyBold, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyI', command: StandardCommand.ApplyItalic, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyU', command: StandardCommand.ApplyUnderline, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+KeyJ', command: StandardCommand.ApplyCode, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+KeyX', command: StandardCommand.ApplyStrikethrough, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+Comma', command: StandardCommand.ApplySubscript, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Shift+Period', command: StandardCommand.ApplySuperscript, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Backslash', command: StandardCommand.ResetInlineStyle, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+KeyL', command: StandardCommand.AlignParagraphLeft, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+KeyE', command: StandardCommand.AlignParagraphCenter, platform: Platform.Apple, context: Context.Editing },
   // TODO: Doesn't work for safari, reloads page.
-  { key: 'Meta+Alt+KeyR', command: StandardCommand.AlignParagraphRight, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+KeyJ', command: StandardCommand.AlignParagraphJustify, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Tab', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Shift+Tab', command: StandardCommand.DecreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+BracketRight', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+BracketLeft', command: StandardCommand.DecreaseListIndent, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit1', command: StandardCommand.ApplyHeading1, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit2', command: StandardCommand.ApplyHeading2, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit3', command: StandardCommand.ApplyHeading3, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit7', command: StandardCommand.ApplyUnorderedList, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit8', command: StandardCommand.ApplyOrderedList, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit9', command: StandardCommand.ApplyChecklist, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Digit0', command: StandardCommand.ApplyBlockquote, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  { key: 'Control+Enter', command: StandardCommand.ToggleChecklistChecked, platform: Platform.Apple, context: Context.Editing, cancelKeyEvent: true },
-  {
-    key: 'Control+Alt+Enter',
-    command: StandardCommand.ToggleChecklistCheckedIndividually,
-    platform: Platform.Apple,
-    context: Context.Editing,
-    cancelKeyEvent: true,
-  },
+  { key: 'Meta+Alt+KeyR', command: StandardCommand.AlignParagraphRight, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+KeyJ', command: StandardCommand.AlignParagraphJustify, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Tab', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Shift+Tab', command: StandardCommand.DecreaseListIndent, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+BracketRight', command: StandardCommand.IncreaseListIndent, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+BracketLeft', command: StandardCommand.DecreaseListIndent, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit1', command: StandardCommand.ApplyHeading1, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit2', command: StandardCommand.ApplyHeading2, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit3', command: StandardCommand.ApplyHeading3, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit7', command: StandardCommand.ApplyUnorderedList, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit8', command: StandardCommand.ApplyOrderedList, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit9', command: StandardCommand.ApplyChecklist, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit0', command: StandardCommand.ApplyBlockquote, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Enter', command: StandardCommand.ToggleChecklistChecked, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Control+Alt+Enter', command: StandardCommand.ToggleChecklistCheckedIndividually, platform: Platform.Apple, context: Context.Editing },
 ];
 function getPlatform(): Platform | null {
   const userAgent = window.navigator.userAgent;
@@ -3596,7 +3446,7 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
     const trackedSelectionRangeIds = new Set<string>();
     for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
       const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-      if (!matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+      if (!matita.isSelectionRangeCollapsedInText(selectionRange)) {
         continue;
       }
       const collapsedRange = selectionRange.ranges[0];
@@ -3634,7 +3484,7 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
     const handledParagraphIds = new Set<string>();
     for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
       const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-      if (!trackedSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+      if (!trackedSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(selectionRange)) {
         continue;
       }
       const collapsedRange = selectionRange.ranges[0];
@@ -4149,7 +3999,7 @@ function makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
     const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
     for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
       const selectionRange = stateControl.stateView.selection.selectionRanges[i];
-      if (!matita.isSelectionRangeCollapsedInText(stateControl.stateView.document, selectionRange)) {
+      if (!matita.isSelectionRangeCollapsedInText(selectionRange)) {
         removeBackwardsSelectionRanges.push(selectionRange);
         continue;
       }
@@ -4700,7 +4550,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
     execute(stateControl): void {
       stateControl.queueUpdate(
         () => {
-          if (matita.isSelectionCollapsedInText(stateControl.stateView.document, stateControl.stateView.selection)) {
+          if (matita.isSelectionCollapsedInText(stateControl.stateView.selection)) {
             stateControl.delta.setCustomCollapsedSelectionTextConfig(resetMergeTextConfig);
             return;
           }
@@ -5607,7 +5457,7 @@ class ListIndexer {
           const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
           const paragraphRenderControl = viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
           paragraphRenderControl.markDirtyContainer();
-          documentRenderControl.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+          documentRenderControl.dirtyParagraphIdQueue.queue(paragraphId);
         }
       }
       previousIndentLevel = indentLevel;
@@ -5684,6 +5534,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private $p_runCommand: (commandInfo: CommandInfo<any>) => void,
     private $p_getIsDraggingSelection: () => boolean,
+    private $p_endSelectionDrag: () => void,
   ) {
     super();
     this.inputElement = document.createElement('span');
@@ -5965,7 +5816,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
         this.$p_stateControl.delta.applyUpdate(
           matita.makeExtendSelectionByPointTransformFnsUpdateFn(
             this.$p_stateControl,
-            (_document, _stateControlConfig, selectionRange) => matita.isSelectionRangeCollapsedInText(this.$p_stateControl.stateView.document, selectionRange),
+            (_document, _stateControlConfig, selectionRange) => matita.isSelectionRangeCollapsedInText(selectionRange),
             (_document, _stateControlConfig, range, point, _selectionRange) => {
               matita.assertIsParagraphPoint(point);
               return {
@@ -5998,6 +5849,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     return text.replace(/[\r\x00-\x1f]/g, '');
   }
   private $p_onBeforeInput(event: InputEvent): void {
+    this.$p_endSelectionDrag();
     const { inputType } = event;
     if (
       inputType === 'insertCompositionText' ||
@@ -6117,7 +5969,7 @@ class ListStyleInjectionControl extends DisposableClass {
       }
     }
   }
-  $p_trackChanges(): void {
+  private $p_trackChanges(): void {
     const registerParagraphAtParagraphIdWithListIdAndNumberedListIndent = (paragraphId: string, listId: string, indentLevel: NumberedListIndent) => {
       let indexer = this.$p_numberedListIndexerMap.get(listId);
       if (indexer === undefined) {
@@ -6434,16 +6286,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   topLevelContentReference: matita.ContentReference;
   htmlElementToNodeRenderControlMap: Map<HTMLElement, VirtualizedContentRenderControl | VirtualizedParagraphRenderControl>;
   dirtyParagraphIdQueue: UniqueStringQueue;
+  relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
   private $p_containerHtmlElement!: HTMLElement;
   private $p_topLevelContentViewContainerElement!: HTMLElement;
   private $p_selectionRectsViewContainerElement!: HTMLElement;
   private $p_selectionCursorsViewContainerElement!: HTMLElement;
   private $p_searchOverlayContainerElement!: HTMLElement;
   private $p_searchElementContainerElement!: HTMLElement;
+  private $p_spellingMistakesOverlayContainerElement!: HTMLElement;
   private $p_searchInputRef = createRef<HTMLInputElement>();
   private $p_selectionView$: CurrentValueDistributor<SelectionViewMessage>;
   private $p_searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
-  relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
+  private $p_spellingMistakesOverlay$: CurrentValueDistributor<SpellingMistakesOverlayMessage>;
   private $p_keyCommands: KeyCommands;
   private $p_commandRegister: VirtualizedCommandRegister;
   private $p_undoControl: LocalUndoControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -6472,6 +6326,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       calculateMatchInfos: () => [],
       renderSync: false,
       roundCorners: true,
+    });
+    this.$p_spellingMistakesOverlay$ = CurrentValueDistributor<SpellingMistakesOverlayMessage>({
+      spellingMistakeOverlayInfos: [],
     });
     this.relativeParagraphMeasurementCache = new LruCache(250);
     this.$p_keyCommands = defaultTextEditingKeyCommands;
@@ -6520,30 +6377,30 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_inputControl!: FloatingVirtualizedTextInputControl;
   private $p_spellCheckControl: SpellCheckControl | null = null;
   init(): void {
-    const languageIdentifier = getDefaultLanguageIdentifier();
-    if (languageIdentifier !== null) {
-      loadDictionariesForLanguageIdentifier(languageIdentifier)
-        .then((dictionaries) => {
-          if (!this.active) {
-            return;
-          }
-          this.$p_spellCheckControl = new SpellCheckControl(this.stateControl, this.topLevelContentReference, dictionaries);
-          this.add(this.$p_spellCheckControl);
-          this.stateControl.queueUpdate(() => {
-            // HACK.
-          });
-        })
-        .catch((error) => {
-          console.error('error loading dictionary...', error);
+    this.$p_spellCheckControl = new SpellCheckControl(this.stateControl, this.topLevelContentReference);
+    this.add(this.$p_spellCheckControl);
+    this.$p_spellCheckControl.add(
+      Disposable(() => {
+        this.$p_spellCheckControl = null;
+      }),
+    );
+    pipe(
+      this.$p_spellCheckControl.didLoad$,
+      subscribe((event) => {
+        assert(event.type === EndType);
+        this.stateControl.queueUpdate(() => {
+          // HACK.
         });
-    }
+      }, this),
+    );
     this.$p_listStyleInjectionControl = new ListStyleInjectionControl(this.stateControl, this.viewControl, this.topLevelContentReference, (paragraphId) => {
-      this.dirtyParagraphIdQueue.queueIfNotQueuedAlready(paragraphId);
+      this.dirtyParagraphIdQueue.queue(paragraphId);
     });
     this.add(this.$p_listStyleInjectionControl);
     this.$p_containerHtmlElement = document.createElement('div');
     this.$p_topLevelContentViewContainerElement = document.createElement('div');
     this.$p_selectionRectsViewContainerElement = document.createElement('div');
+    this.$p_spellingMistakesOverlayContainerElement = document.createElement('div');
     this.$p_selectionCursorsViewContainerElement = document.createElement('div');
     this.$p_searchOverlayContainerElement = document.createElement('div');
     pipe(
@@ -6563,18 +6420,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_undoControl,
       this.runCommand.bind(this),
       () => this.$p_isDraggingSelection,
+      () => {
+        this.$p_endSelectionDrag$(Push(undefined));
+      },
     );
     this.add(this.$p_inputControl);
     addEventListener(this.$p_inputControl.inputElement, 'focus', this.$p_onInputElementFocus.bind(this), this);
     addEventListener(this.$p_inputControl.inputElement, 'blur', this.$p_onInputElementBlur.bind(this), this);
-    addEventListener(
-      this.$p_inputControl.inputElement,
-      'compositionstart',
-      () => {
-        this.$p_endSelectionDrag$(Push(undefined));
-      },
-      this,
-    );
     // TODO: Alt-pressing to drag new selection range while in composition breaks after as keys are cleared.
     addEventListener(this.$p_inputControl.inputElement, 'compositionend', this.$p_clearKeys.bind(this), this);
     addWindowEventListener('focus', () => this.$p_onWindowFocus.bind(this), this);
@@ -6584,6 +6436,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const filterLeft = filter<PointerEvent>((event) => event.pointerType === 'mouse' && event.button === 0);
     const dragElements = [
       this.$p_topLevelContentViewContainerElement,
+      this.$p_spellingMistakesOverlayContainerElement,
       this.$p_selectionRectsViewContainerElement,
       this.$p_selectionCursorsViewContainerElement,
       this.$p_searchOverlayContainerElement,
@@ -6741,11 +6594,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               endSelectionDragDisposable.dispose();
               currentDebounceTimer$(End);
             };
-            currentDebounceSink.add(
-              Disposable(() => {
-                pointerCaptureDisposable.add(endSelectionDragDisposable);
-              }),
-            );
+            const currentDebounceSinkChildDisposable = Disposable(() => {
+              pointerCaptureDisposable.add(endSelectionDragDisposable);
+            });
+            endSelectionDragDisposable.add(currentDebounceSinkChildDisposable);
+            currentDebounceSink.add(currentDebounceSinkChildDisposable);
             pipe(
               currentDebounceTimer$,
               subscribe((event) => {
@@ -7339,6 +7192,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       'selection-view-',
     );
     renderReactNodeIntoHtmlContainerElement(
+      <SpellingMistakesOverlay spellingMistakeOverlay$={this.$p_spellingMistakesOverlay$} />,
+      this.$p_spellingMistakesOverlayContainerElement,
+      'spelling-mistakes-overlay-',
+    );
+    renderReactNodeIntoHtmlContainerElement(
       <SearchOverlay searchOverlay$={this.$p_searchOverlay$} />,
       this.$p_searchOverlayContainerElement,
       'search-overlay-',
@@ -7348,6 +7206,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_containerHtmlElement.append(
       this.$p_searchOverlayContainerElement,
       this.$p_selectionRectsViewContainerElement,
+      this.$p_spellingMistakesOverlayContainerElement,
       this.$p_topLevelContentViewContainerElement,
       this.$p_selectionCursorsViewContainerElement,
       this.$p_searchElementContainerElement,
@@ -7601,36 +7460,30 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         'search-box-',
       );
     }, this);
+    this.rootHtmlElement.append(this.$p_containerHtmlElement);
+    const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
+    this.add(topLevelContentViewContainerElementReactiveResizeObserver);
+    const throttledScrollAndResize$ = pipe(
+      fromArray([
+        topLevelContentViewContainerElementReactiveResizeObserver.entries$,
+        fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+      ]),
+      flat()<unknown>,
+      throttle(() => timer(16)),
+    );
     pipe(
       fromArray([
         this.$p_isSearchElementContainerVisible$,
         pipe(
           this.$p_isSearchElementContainerVisible$,
-          map((isVisible) =>
-            isVisible
-              ? pipe(
-                  fromArray([
-                    topLevelContentViewContainerElementReactiveResizeObserver.entries$,
-                    pipe(
-                      fromReactiveValue<[globalThis.Event]>((callback, disposable) =>
-                        addWindowEventListener('scroll', callback, disposable, { passive: true }),
-                      ),
-                    ),
-                  ]),
-                  flat()<unknown>,
-                  throttle(() => timer(16)),
-                )
-              : empty$,
-          ),
+          map((isVisible) => (isVisible ? throttledScrollAndResize$ : empty$)),
           switchEach,
         ),
       ]),
       flat(),
       subscribe(this.$p_replaceVisibleSearchResults.bind(this), this),
     );
-    this.rootHtmlElement.append(this.$p_containerHtmlElement);
-    const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
-    this.add(topLevelContentViewContainerElementReactiveResizeObserver);
+    pipe(throttledScrollAndResize$, subscribe(this.$p_replaceVisibleSpellingMistakes.bind(this), this));
     pipe(
       fromArray([
         topLevelContentViewContainerElementReactiveResizeObserver.entries$,
@@ -7701,6 +7554,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
         this.relativeParagraphMeasurementCache.clear();
         this.$p_replaceVisibleSearchResults();
+        this.$p_replaceVisibleSpellingMistakes();
         this.$p_replaceViewSelectionRanges(true);
       }, this),
     );
@@ -8701,7 +8555,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     let shouldCancel = false;
     for (let i = 0; i < this.$p_keyCommands.length; i++) {
       const keyCommand = this.$p_keyCommands[i];
-      const { key, command, context, platform, cancelKeyEvent } = keyCommand;
+      const { key, command, context, platform } = keyCommand;
       if (key === null || command === null) {
         continue;
       }
@@ -8748,9 +8602,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         ) {
           continue;
         }
-        if (cancelKeyEvent) {
-          shouldCancel = true;
-        }
+        shouldCancel = true;
         this.$p_endSelectionDrag$(Push(undefined));
         this.runCommand({
           commandName: command,
@@ -9293,27 +9145,16 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (didApplyMutation) {
       this.$p_commitDirtyChanges();
     }
-    if (isSafari) {
-      this.$p_inputControl.sync();
-      if (this.$p_isSearchElementContainerVisible$.currentValue) {
-        this.$p_replaceVisibleSearchResults();
-      }
-      this.$p_replaceViewSelectionRanges(didApplyMutation);
-      if (this.$p_scrollSelectionIntoViewWhenFinishedUpdating) {
-        this.$p_scrollSelectionIntoView();
-      }
-      this.$p_scrollSelectionIntoViewWhenFinishedUpdating = false;
-    } else {
-      if (this.$p_scrollSelectionIntoViewWhenFinishedUpdating) {
-        this.$p_scrollSelectionIntoView();
-      }
-      this.$p_scrollSelectionIntoViewWhenFinishedUpdating = false;
-      if (this.$p_isSearchElementContainerVisible$.currentValue) {
-        this.$p_replaceVisibleSearchResults();
-      }
-      this.$p_replaceViewSelectionRanges(didApplyMutation);
-      this.$p_inputControl.sync();
+    if (this.$p_scrollSelectionIntoViewWhenFinishedUpdating) {
+      this.$p_scrollSelectionIntoView();
     }
+    this.$p_scrollSelectionIntoViewWhenFinishedUpdating = false;
+    if (this.$p_isSearchElementContainerVisible$.currentValue) {
+      this.$p_replaceVisibleSearchResults();
+    }
+    this.$p_replaceVisibleSpellingMistakes();
+    this.$p_replaceViewSelectionRanges(didApplyMutation);
+    this.$p_inputControl.sync();
     this.$p_useSearchScrollMargins = false;
   }
   private $p_trackMatchesDisposable: Disposable | null = null;
@@ -9465,6 +9306,74 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }),
     );
   }
+  private $p_replaceVisibleSpellingMistakes(): void {
+    if (this.$p_spellCheckControl === null || !this.$p_spellCheckControl.getIsLoaded()) {
+      return;
+    }
+    const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
+    const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
+    const marginTopBottom = this.$p_getBufferMarginTopBottom();
+    const accessParagraphReferenceAtIndex = (index: number) => {
+      return matita.makeBlockReferenceFromBlock(
+        matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference, index),
+      );
+    };
+    const numParagraphReferences = matita.getNumberOfBlocksInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference);
+    const startIndex = Math.max(
+      0,
+      indexOfNearestLessThanEqDynamic(
+        accessParagraphReferenceAtIndex,
+        numParagraphReferences,
+        visibleTop - marginTopBottom,
+        this.$p_compareParagraphTopToOffsetTop.bind(this),
+      ) - 1,
+    );
+    const endIndex = Math.min(
+      numParagraphReferences - 1,
+      indexOfNearestLessThanEqDynamic(
+        accessParagraphReferenceAtIndex,
+        numParagraphReferences,
+        visibleBottom + marginTopBottom,
+        this.$p_compareParagraphTopToOffsetTop.bind(this),
+        startIndex,
+      ) + 1,
+    );
+    let containerWidth_: number | undefined;
+    const containerWidth = (): number => {
+      if (containerWidth_ === undefined) {
+        containerWidth_ = this.$p_getContainerWidth();
+      }
+      return containerWidth_;
+    };
+    const spellingMistakeOverlayInfos: SpellingMistakeOverlayInfo[] = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      const paragraph = matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference, i);
+      const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
+      const spellingMistakes = this.$p_spellCheckControl.getSpellingMistakesInParagraphAtParagraphReference(paragraphReference);
+      if (spellingMistakes === null) {
+        continue;
+      }
+      for (let j = 0; j < spellingMistakes.length; j++) {
+        const spellingMistake = spellingMistakes[j];
+        const textDecorationInfos = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
+          paragraphReference,
+          spellingMistake.startOffset,
+          spellingMistake.endOffset,
+          containerWidth(),
+          relativeOffsetLeft,
+          relativeOffsetTop,
+        );
+        spellingMistakeOverlayInfos.push({
+          textDecorationInfos,
+        });
+      }
+    }
+    this.$p_spellingMistakesOverlay$(
+      Push({
+        spellingMistakeOverlayInfos,
+      }),
+    );
+  }
   private $p_virtualSelectionDisposable: Disposable | null = null;
   private $p_lastRenderedSelection: matita.Selection | null = null;
   private $p_lastRenderedCustomCollapsedSelectionTextConfig: TextConfig | null = null;
@@ -9575,8 +9484,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const visibleLineBreakPadding = 9;
     const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
     const viewRangeInfos: ViewRangeInfo[] = [];
-    for (let j = 0; j < paragraphMeasurement.measuredParagraphLineRanges.length; j++) {
-      const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[j];
+    for (let i = 0; i < paragraphMeasurement.measuredParagraphLineRanges.length; i++) {
+      const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[i];
       const includedLineStartOffset = Math.max(measuredParagraphLineRange.startOffset, includedParagraphStartOffset);
       const includedLineEndOffset = Math.min(measuredParagraphLineRange.endOffset, includedParagraphEndOffset);
       if (includedLineStartOffset > measuredParagraphLineRange.endOffset || includedLineEndOffset < measuredParagraphLineRange.startOffset) {
@@ -9614,7 +9523,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           if (lineRect !== undefined) {
             viewRangeInfos.push({
               rectangle: lineRect,
-              paragraphLineIndex: j,
+              paragraphLineIndex: i,
               startOffset: 0,
               endOffset: 0,
               paragraphReference,
@@ -9643,7 +9552,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (lineRectLeft < containerWidth) {
         viewRangeInfos.push({
           rectangle: makeViewRectangle(lineRectLeft, lineRectTop, Math.min(containerWidth - lineRectLeft, lineRectWidth), lineRectHeight),
-          paragraphLineIndex: j,
+          paragraphLineIndex: i,
           startOffset: includedLineStartOffset,
           endOffset: includedLineEndOffset,
           paragraphReference,
@@ -9652,11 +9561,61 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     return viewRangeInfos;
   }
+  private $p_calculateTextDecorationInfosForParagraphAtBlockReference(
+    paragraphReference: matita.BlockReference,
+    includedParagraphStartOffset: number,
+    includedParagraphEndOffset: number,
+    containerWidth: number,
+    relativeOffsetLeft: number,
+    relativeOffsetTop: number,
+  ): TextDecorationInfo[] {
+    const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
+    const textDecorationInfos: TextDecorationInfo[] = [];
+    for (let i = 0; i < paragraphMeasurement.measuredParagraphLineRanges.length; i++) {
+      const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[i];
+      const includedLineStartOffset = Math.max(measuredParagraphLineRange.startOffset, includedParagraphStartOffset);
+      const includedLineEndOffset = Math.min(measuredParagraphLineRange.endOffset, includedParagraphEndOffset);
+      if (
+        includedLineStartOffset === includedLineEndOffset ||
+        includedLineStartOffset > measuredParagraphLineRange.endOffset ||
+        includedLineEndOffset < measuredParagraphLineRange.startOffset ||
+        includedLineStartOffset === measuredParagraphLineRange.endOffset
+      ) {
+        continue;
+      }
+      const lineRectLeft =
+        measuredParagraphLineRange.characterRectangles[includedLineStartOffset - measuredParagraphLineRange.startOffset].left + relativeOffsetLeft;
+      let characterTopMinimum = Infinity;
+      let characterBottomMaximum = -Infinity;
+      for (let j = includedLineStartOffset; j < includedLineEndOffset; j++) {
+        const characterRectangle = measuredParagraphLineRange.characterRectangles[j - measuredParagraphLineRange.startOffset];
+        if (characterRectangle.top < characterTopMinimum) {
+          characterTopMinimum = characterRectangle.top;
+        }
+        if (characterRectangle.bottom > characterBottomMaximum) {
+          characterBottomMaximum = characterRectangle.bottom;
+        }
+      }
+      const lineRectTop = characterTopMinimum + relativeOffsetTop;
+      const lineRectHeight = characterBottomMaximum - characterTopMinimum + 1;
+      const lineRectWidth =
+        measuredParagraphLineRange.characterRectangles[includedLineEndOffset - measuredParagraphLineRange.startOffset - 1].right +
+        relativeOffsetLeft -
+        lineRectLeft;
+      if (lineRectLeft < containerWidth) {
+        textDecorationInfos.push({
+          charactersBoundingRectangle: makeViewRectangle(lineRectLeft, lineRectTop, Math.min(containerWidth - lineRectLeft, lineRectWidth), lineRectHeight),
+          paragraphReference,
+        });
+      }
+    }
+    return textDecorationInfos;
+  }
   private $p_getBufferMarginTopBottom(): number {
     return Math.min(isFirefox ? 300 : 600, window.innerHeight);
   }
   // TODO: check works when removing paragraphs?
-  // TODO: Batch ranges w/ IntersectionObserver/binary search?
+  // TODO: Batch ranges w/ binary search?
   // TODO: Make general control for underlays/overlays (combine logic for selection, search, spelling, errors, warnings, conflicts, etc.).
   private $p_makeViewCursorAndRangeInfosForRange(
     range: matita.Range,
@@ -9679,7 +9638,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const firstParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, firstParagraphReference);
     const lastParagraphIndex = matita.getIndexOfBlockInContentFromBlockReference(this.stateControl.stateView.document, lastParagraphReference);
     const observedParagraphReferences: matita.BlockReference[] = [];
-    const observingTargets = new Set<HTMLElement>();
     for (let i = firstParagraphIndex; i <= lastParagraphIndex; i++) {
       const paragraph = matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, contentReference, i);
       matita.assertIsParagraph(paragraph);
@@ -9687,115 +9645,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       observedParagraphReferences.push(paragraphReference);
     }
     const marginTopBottom = this.$p_getBufferMarginTopBottom();
-    const makeIntersectionObserver = (): ReactiveIntersectionObserver => {
-      const intersectionObserver = new ReactiveIntersectionObserver({
-        rootMargin: `${marginTopBottom}px 0px`,
-      });
-      disposable.add(intersectionObserver);
-      return intersectionObserver;
-    };
-    const observeParagraphs = (): void => {
-      const noTargetsTracked = observingTargets.size === 0;
-      for (let i = 0; i < observedParagraphReferences.length; i++) {
-        const paragraphReference = observedParagraphReferences[i];
-        const paragraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
-        const target = paragraphRenderControl.containerHtmlElement;
-        selectionIntersectionObserver.observe(target);
-        if (noTargetsTracked) {
-          observingTargets.add(target);
-        }
-      }
-      pipe(
-        selectionIntersectionObserver.entries$,
-        skip(1),
-        subscribe((event) => {
-          if (event.type !== PushType) {
-            throwUnreachable();
-          }
-          const entries = event.value;
-          const newRenderedViewParagraphInfos = viewCursorAndRangeInfosForRange$.currentValue.viewParagraphInfos.slice();
-          let containerWidth_: number | undefined;
-          const containerWidth = (): number => {
-            if (containerWidth_ === undefined) {
-              containerWidth_ = this.$p_getContainerWidth();
-            }
-            return containerWidth_;
-          };
-          entries.forEach((entry) => {
-            const target = entry.target as HTMLElement;
-            if (!observingTargets.has(target)) {
-              return;
-            }
-            const paragraphRenderControl = this.htmlElementToNodeRenderControlMap.get(target);
-            if (!(paragraphRenderControl instanceof VirtualizedParagraphRenderControl)) {
-              return;
-            }
-            const { paragraphReference } = paragraphRenderControl;
-            const currentRenderedIndex = newRenderedViewParagraphInfos.findIndex((renderedViewParagraphInfo) => {
-              return matita.areBlockReferencesAtSameBlock(renderedViewParagraphInfo.paragraphReference, paragraphReference);
-            });
-            if (!entry.isIntersecting) {
-              if (currentRenderedIndex === -1) {
-                return;
-              }
-              newRenderedViewParagraphInfos.splice(currentRenderedIndex, 1);
-              return;
-            }
-            const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
-            const viewRangeInfos = calculateViewRangeInfosForParagraphAtIndex(
-              observedParagraphReferences.findIndex((observedParagraphReference) => {
-                return matita.areBlockReferencesAtSameBlock(observedParagraphReference, paragraphReference);
-              }),
-              containerWidth(),
-              relativeOffsetLeft,
-              relativeOffsetTop,
-            );
-            const viewCursorInfos: ViewCursorInfo[] = [];
-            if (isFocus && matita.areBlockReferencesAtSameBlock(paragraphReference, focusParagraphReference)) {
-              viewCursorInfos.push(calculateViewCursorInfoForFocusPoint(containerWidth(), relativeOffsetLeft, relativeOffsetTop));
-            }
-            const newViewParagraphInfo: ViewCursorAndRangeInfosForParagraphInRange = {
-              paragraphReference,
-              viewRangeInfos,
-              viewCursorInfos,
-            };
-            if (currentRenderedIndex === -1) {
-              newRenderedViewParagraphInfos.push(newViewParagraphInfo);
-            } else {
-              newRenderedViewParagraphInfos[currentRenderedIndex] = newViewParagraphInfo;
-            }
-          });
-          viewCursorAndRangeInfosForRange$(Push({ viewParagraphInfos: newRenderedViewParagraphInfos }));
-        }, disposable),
-      );
-    };
-    let selectionIntersectionObserver!: ReactiveIntersectionObserver;
-    if (isSafari) {
-      pipe(
-        fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
-        throttle(() => ofEvent(End, scheduleMicrotask)),
-        subscribe((event) => {
-          assert(event.type === PushType);
-          viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
-        }, disposable),
-      );
-    } else {
-      // Safari intersection observer sucks.
-      selectionIntersectionObserver = makeIntersectionObserver();
-      observeParagraphs();
-      // Intersection observer doesn't track correctly, so fix when scroll stops.
-      pipe(
-        fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
-        isFirefox || observedParagraphReferences.length < 4000 ? debounce(() => timer(100)) : throttle(() => timer(50)),
-        subscribe((event) => {
-          assert(event.type === PushType);
-          viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
-          selectionIntersectionObserver.dispose();
-          selectionIntersectionObserver = makeIntersectionObserver();
-          observeParagraphs();
-        }, disposable),
-      );
-    }
+    pipe(
+      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+      throttle(() => ofEvent(End, scheduleMicrotask)),
+      subscribe((event) => {
+        assert(event.type === PushType);
+        viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
+      }, disposable),
+    );
     const calculateViewRangeInfosForParagraphAtIndex = (
       observedParagraphIndex: number,
       containerWidth: number,

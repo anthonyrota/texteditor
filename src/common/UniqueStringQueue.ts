@@ -27,7 +27,11 @@ class UniqueStringQueue {
       this.$p_queueLength++;
     }
   }
-  private $p_queueNotAddedValue(value: string): void {
+  getIsQueued(value: string): boolean {
+    return value in this.$p_valueToNode;
+  }
+  queue(value: string): void {
+    this.dequeue(value);
     if (this.$p_firstNode === null) {
       this.$p_firstNode = new LinkedListNode(value, null, null);
     } else {
@@ -37,19 +41,6 @@ class UniqueStringQueue {
     }
     this.$p_valueToNode[value] = this.$p_firstNode;
     this.$p_queueLength++;
-  }
-  getIsQueued(value: string): boolean {
-    return value in this.$p_valueToNode;
-  }
-  queueIfNotQueuedAlready(value: string): void {
-    if (value in this.$p_valueToNode) {
-      return;
-    }
-    this.$p_queueNotAddedValue(value);
-  }
-  queue(value: string): void {
-    this.dequeue(value);
-    this.$p_queueNotAddedValue(value);
   }
   dequeue(value: string): boolean {
     const node = this.$p_valueToNode[value];
@@ -100,6 +91,11 @@ class UniqueStringQueue {
       node = node.nextNode;
     }
     return values;
+  }
+  *[Symbol.iterator](): IterableIterator<string> {
+    for (const value in this.$p_valueToNode) {
+      yield value;
+    }
   }
 }
 export { UniqueStringQueue };

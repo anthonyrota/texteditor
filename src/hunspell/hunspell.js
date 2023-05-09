@@ -1,4 +1,5 @@
-// Need to tweak module definition here after build script for Safari for whatever reason, can't be bothered figuring out why.
+// Needed to tweak module definition here after build script for Safari for whatever reason, can't be bothered figuring out why.
+// I think emscripten shadows Module variable causing issues?
 export default (() => {
   var _scriptDir = import.meta.url;
   return async function (Module = {}) {
