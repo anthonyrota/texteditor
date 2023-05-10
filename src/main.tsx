@@ -1612,7 +1612,7 @@ interface SpellingMistakesOverlayProps {
 }
 function SpellingMistakesOverlay(props: SpellingMistakesOverlayProps): JSX.Element | null {
   const { spellingMistakeOverlay$ } = props;
-  const spellingMistakesOverlayMaybe = use$(spellingMistakeOverlay$);
+  const spellingMistakesOverlayMaybe = use$(spellingMistakeOverlay$, undefined, true);
   if (isNone(spellingMistakesOverlayMaybe)) {
     return null;
   }
@@ -9597,7 +9597,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }
       }
       const lineRectTop = characterTopMinimum + relativeOffsetTop;
-      const lineRectHeight = characterBottomMaximum - characterTopMinimum + 1;
+      const lineRectHeight = characterBottomMaximum - characterTopMinimum;
       const lineRectWidth =
         measuredParagraphLineRange.characterRectangles[includedLineEndOffset - measuredParagraphLineRange.startOffset - 1].right +
         relativeOffsetLeft -
