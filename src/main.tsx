@@ -16,12 +16,13 @@ import {
   TrackAllControl,
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
-import { SpellCheckControl, getDefaultLanguageIdentifier, loadDictionariesForLanguageIdentifier } from './matita/SpellCheckControl';
+import { SpellCheckControl } from './matita/SpellCheckControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
 import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
 import {
+  throttle,
   combine,
   debounce,
   empty$,
@@ -52,7 +53,6 @@ import {
   take,
   takeUntil,
   takeWhile,
-  throttle,
   ThrowType,
   timer,
   windowScheduledBySource,
@@ -1416,6 +1416,7 @@ interface SelectionViewProps {
   resetSynchronizedCursorVisibility$: Source<undefined>;
   cursorElement: HTMLElement;
 }
+// TODO: Vanilla JS.
 function SelectionView(props: SelectionViewProps): JSX.Element | null {
   const { selectionView$, hasFocus$, resetSynchronizedCursorVisibility$, cursorElement } = props;
   const selectionViewMaybe = use$(
@@ -1506,7 +1507,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
             nextLineRect = nextParagraphViewRangeInfos[0]?.rectangle;
           }
           const key = uniqueKeyControl.makeUniqueKey(JSON.stringify([paragraphReference.blockId, paragraphLineIndex, false]));
-          const backgroundColor = isInComposition ? '#accef766' : hasFocus ? '#accef7cc' : '#d3d3d36c';
+          const backgroundColor = isInComposition ? '#accef766' : hasFocus || isDragging ? '#accef7cc' : '#d3d3d36c';
           if (isInComposition) {
             selectionRectElements.push(
               <span
@@ -1579,7 +1580,14 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
     return null;
   }
   const isVisibleMaybe = use$(
-    useMemo(() => (isDragging ? ofEvent(Push(true)) : pipe(synchronizedCursorVisibility$)), [isDragging]),
+    useMemo(
+      () =>
+        pipe(
+          isDragging ? ofEvent(Push(true)) : pipe(synchronizedCursorVisibility$),
+          debounce(() => ofEvent(End, scheduleMicrotask)),
+        ),
+      [isDragging],
+    ),
     Some(true),
   );
   return (
@@ -1590,7 +1598,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         left: viewCursorInfo.position.left - cursorWidth / 2,
         width: cursorWidth,
         height: viewCursorInfo.height,
-        backgroundColor: hasFocus ? '#222' : '#88888899',
+        backgroundColor: hasFocus || isDragging ? '#222' : '#88888899',
         transform: isItalic ? 'skew(-7deg)' : undefined,
         visibility: isVisibleMaybe.value ? 'visible' : 'hidden',
       }}
@@ -1612,7 +1620,18 @@ interface SpellingMistakesOverlayProps {
 }
 function SpellingMistakesOverlay(props: SpellingMistakesOverlayProps): JSX.Element | null {
   const { spellingMistakeOverlay$ } = props;
-  const spellingMistakesOverlayMaybe = use$(spellingMistakeOverlay$, undefined, true);
+  const spellingMistakesOverlayMaybe = use$(
+    useMemo(
+      () =>
+        pipe(
+          spellingMistakeOverlay$,
+          debounce(() => ofEvent(End, scheduleMicrotask)),
+        ),
+      [],
+    ),
+    undefined,
+    true,
+  );
   if (isNone(spellingMistakesOverlayMaybe)) {
     return null;
   }
@@ -1723,7 +1742,7 @@ interface SearchBoxControlConfig {
 interface SearchBoxProps {
   isVisible$: CurrentValueSource<boolean>;
   selectAllText$: Source<undefined>;
-  containerStaticViewRectangle$: CurrentValueSource<ViewRectangle>;
+  containerWidth$: CurrentValueSource<number>;
   goToSearchResultImmediatelySink: Sink<boolean>;
   querySink: Sink<string>;
   configSink: Sink<SearchBoxControlConfig>;
@@ -1749,7 +1768,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
     isVisible$,
     selectAllText$,
-    containerStaticViewRectangle$,
+    containerWidth$,
     goToSearchResultImmediatelySink,
     querySink,
     configSink,
@@ -1769,8 +1788,8 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     width: number;
     dropDownPercent: number;
   };
-  const calculateWidthFromContainerStaticViewRectangle = (rectangle: ViewRectangle): number => {
-    return rectangle.width - searchBoxMargin * 2;
+  const calculateWisthFromContainerWidth = (containerWidth: number): number => {
+    return containerWidth - searchBoxMargin * 2;
   };
   const selectAllTextCounter = use$(
     useMemo(
@@ -1791,7 +1810,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   }, [selectAllTextCounter]);
   const { value: position } = use$<Position>(
     useCallback((sink: Sink<Position>) => {
-      const width$ = pipe(containerStaticViewRectangle$, map(calculateWidthFromContainerStaticViewRectangle));
+      const width$ = pipe(containerWidth$, map(calculateWisthFromContainerWidth));
       const dropDownPercent$ = CurrentValueDistributor<number>(isVisible$.currentValue ? 1 : 0);
       pipe(
         isVisible$,
@@ -1832,7 +1851,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     useMemo(
       () =>
         Some<Position>({
-          width: calculateWidthFromContainerStaticViewRectangle(containerStaticViewRectangle$.currentValue),
+          width: calculateWisthFromContainerWidth(containerWidth$.currentValue),
           dropDownPercent: isVisible$.currentValue ? 1 : 0,
         }),
       [],
@@ -7212,11 +7231,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_searchElementContainerElement,
       this.$p_inputControl.inputElement,
     );
-    let searchContainerStaticViewRectangle$: CurrentValueDistributor<ViewRectangle> | undefined;
-    const calculateCurrentSearchContainerStaticViewRectangle = (): ViewRectangle => {
-      const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
-      const { visibleLeft, visibleRight } = this.$p_getVisibleLeftAndRight();
-      return makeViewRectangle(visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+    let searchContainerWidth$: CurrentValueDistributor<number> | undefined;
+    const getContainerWidth = (): number => {
+      return this.$p_topLevelContentViewContainerElement.offsetWidth;
     };
     const initialGoToSearchResultImmediately = true;
     const initialQuery = '';
@@ -7260,7 +7277,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       }, this.$p_searchControl),
     );
     requestAnimationFrameDisposable(() => {
-      searchContainerStaticViewRectangle$ = CurrentValueDistributor(calculateCurrentSearchContainerStaticViewRectangle());
+      searchContainerWidth$ = CurrentValueDistributor(getContainerWidth());
       let goToSearchResultImmediately = initialGoToSearchResultImmediately as boolean;
       let goToSearchResultImmediatelyCancelDisposable: Disposable | null;
       if (goToSearchResultImmediately) {
@@ -7437,7 +7454,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         <SearchBox
           isVisible$={this.$p_isSearchElementContainerVisible$}
           selectAllText$={this.$p_searchElementSelectAllText$}
-          containerStaticViewRectangle$={searchContainerStaticViewRectangle$}
+          containerWidth$={searchContainerWidth$}
           goToSearchResultImmediatelySink={goToSearchResultImmediatelySink}
           querySink={searchQuerySink}
           configSink={searchConfigSink}
@@ -7463,61 +7480,54 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.rootHtmlElement.append(this.$p_containerHtmlElement);
     const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
     this.add(topLevelContentViewContainerElementReactiveResizeObserver);
-    const throttledScrollAndResize$ = pipe(
-      fromArray([
-        topLevelContentViewContainerElementReactiveResizeObserver.entries$,
-        fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
-      ]),
-      flat()<unknown>,
+    const topLevelContentViewContentWidthResize$ = pipe(
+      topLevelContentViewContainerElementReactiveResizeObserver.entries$,
+      filterMap((entries) => {
+        // TODO.
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const entry = entries[i];
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if (entry.borderBoxSize && entry.borderBoxSize.length > 0) {
+            return Some(entry.borderBoxSize[0].inlineSize);
+          }
+        }
+        return None;
+      }),
+      memoConsecutive((lastWidth, currentWidth) => lastWidth === currentWidth),
+      debounce(() => timer(400), true),
+    );
+    const scroll$ = pipe(
+      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
       throttle(() => timer(16)),
     );
+    const scrollAndResize$ = pipe(fromArray([topLevelContentViewContentWidthResize$, scroll$]), flat()<unknown>);
     pipe(
       fromArray([
         this.$p_isSearchElementContainerVisible$,
         pipe(
           this.$p_isSearchElementContainerVisible$,
-          map((isVisible) => (isVisible ? throttledScrollAndResize$ : empty$)),
+          map((isVisible) => (isVisible ? scrollAndResize$ : empty$)),
           switchEach,
         ),
       ]),
       flat(),
       subscribe(this.$p_replaceVisibleSearchResults.bind(this), this),
     );
-    pipe(throttledScrollAndResize$, subscribe(this.$p_replaceVisibleSpellingMistakes.bind(this), this));
+    pipe(scrollAndResize$, subscribe(this.$p_replaceVisibleSpellingMistakes.bind(this), this));
     pipe(
-      fromArray([
-        topLevelContentViewContainerElementReactiveResizeObserver.entries$,
-        pipe(fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true }))),
-      ]),
-      flat()<unknown>,
-      debounce(() => timer(400)),
-      map(calculateCurrentSearchContainerStaticViewRectangle),
-      memoConsecutive(areViewRectanglesEqual),
+      topLevelContentViewContentWidthResize$,
+      map(getContainerWidth),
+      memoConsecutive(),
       subscribe((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
         }
-        searchContainerStaticViewRectangle$?.(event);
+        searchContainerWidth$?.(event);
       }, this),
     );
     pipe(
       fromArray([
-        pipe(
-          topLevelContentViewContainerElementReactiveResizeObserver.entries$,
-          filterMap((entries) => {
-            // TODO.
-            for (let i = entries.length - 1; i >= 0; i--) {
-              const entry = entries[i];
-              // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-              if (entry.borderBoxSize && entry.borderBoxSize.length > 0) {
-                return Some(entry.borderBoxSize[0].inlineSize);
-              }
-            }
-            return None;
-          }),
-          memoConsecutive((lastWidth, currentWidth) => lastWidth === currentWidth),
-          debounce(() => timer(400), false, true),
-        ),
+        topLevelContentViewContentWidthResize$,
         pipe(
           fromReactiveValue((callback, disposable) => {
             if (isSafari) {
@@ -9106,7 +9116,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       visibleRight: window.innerWidth,
     };
   }
-  private $p_getContainerWidth(): number {
+  private $p_getContainerScrollWidth(): number {
     // TODO.
     return this.$p_topLevelContentViewContainerElement.scrollWidth;
   }
@@ -9149,11 +9159,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_scrollSelectionIntoView();
     }
     this.$p_scrollSelectionIntoViewWhenFinishedUpdating = false;
+    this.$p_replaceViewSelectionRanges(didApplyMutation);
     if (this.$p_isSearchElementContainerVisible$.currentValue) {
       this.$p_replaceVisibleSearchResults();
     }
     this.$p_replaceVisibleSpellingMistakes();
-    this.$p_replaceViewSelectionRanges(didApplyMutation);
     this.$p_inputControl.sync();
     this.$p_useSearchScrollMargins = false;
   }
@@ -9242,7 +9252,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     let containerWidth_: number | undefined;
     const containerWidth = (): number => {
       if (containerWidth_ === undefined) {
-        containerWidth_ = this.$p_getContainerWidth();
+        containerWidth_ = this.$p_getContainerScrollWidth();
       }
       return containerWidth_;
     };
@@ -9250,6 +9260,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const paragraph = matita.accessBlockAtIndexInContentAtContentReference(this.stateControl.stateView.document, this.topLevelContentReference, i);
       const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
       const paragraphMatches = this.$p_searchControl.getMatchesForParagraphAtBlockReference(paragraphReference);
+      if (paragraphMatches.matches.length === 0) {
+        continue;
+      }
+      const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
       for (let i = 0; i < paragraphMatches.matches.length; i++) {
         const match = paragraphMatches.matches[i];
         const { startOffset, endOffset } = match;
@@ -9284,6 +9298,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           containerWidth(),
           relativeOffsetLeft,
           relativeOffsetTop,
+          paragraphMeasurement,
         );
         matchInfos.push({
           viewRangeInfos,
@@ -9341,7 +9356,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     let containerWidth_: number | undefined;
     const containerWidth = (): number => {
       if (containerWidth_ === undefined) {
-        containerWidth_ = this.$p_getContainerWidth();
+        containerWidth_ = this.$p_getContainerScrollWidth();
       }
       return containerWidth_;
     };
@@ -9353,6 +9368,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (spellingMistakes === null) {
         continue;
       }
+      const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
       for (let j = 0; j < spellingMistakes.length; j++) {
         const spellingMistake = spellingMistakes[j];
         const textDecorationInfos = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
@@ -9362,6 +9378,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           containerWidth(),
           relativeOffsetLeft,
           relativeOffsetTop,
+          paragraphMeasurement,
         );
         spellingMistakeOverlayInfos.push({
           textDecorationInfos,
@@ -9480,9 +9497,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     containerWidth: number,
     relativeOffsetLeft: number,
     relativeOffsetTop: number,
+    paragraphMeasurement: RelativeParagraphMeasureCacheValue,
   ): ViewRangeInfo[] {
     const visibleLineBreakPadding = 9;
-    const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
     const viewRangeInfos: ViewRangeInfo[] = [];
     for (let i = 0; i < paragraphMeasurement.measuredParagraphLineRanges.length; i++) {
       const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[i];
@@ -9568,8 +9585,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     containerWidth: number,
     relativeOffsetLeft: number,
     relativeOffsetTop: number,
+    paragraphMeasurement: RelativeParagraphMeasureCacheValue,
   ): TextDecorationInfo[] {
-    const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
     const textDecorationInfos: TextDecorationInfo[] = [];
     for (let i = 0; i < paragraphMeasurement.measuredParagraphLineRanges.length; i++) {
       const measuredParagraphLineRange = paragraphMeasurement.measuredParagraphLineRanges[i];
@@ -9614,6 +9631,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_getBufferMarginTopBottom(): number {
     return Math.min(isFirefox ? 300 : 600, window.innerHeight);
   }
+  // TODO: Fix this mess.
   // TODO: check works when removing paragraphs?
   // TODO: Batch ranges w/ binary search?
   // TODO: Make general control for underlays/overlays (combine logic for selection, search, spelling, errors, warnings, conflicts, etc.).
@@ -9647,7 +9665,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const marginTopBottom = this.$p_getBufferMarginTopBottom();
     pipe(
       fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
-      throttle(() => ofEvent(End, scheduleMicrotask)),
+      throttle(() => timer(16)),
       subscribe((event) => {
         assert(event.type === PushType);
         viewCursorAndRangeInfosForRange$(Push(calculateViewCursorAndRangeInfosForVisibleParagraphsManually()));
@@ -9683,6 +9701,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         containerWidth,
         relativeOffsetLeft,
         relativeOffsetTop,
+        this.$p_measureParagraphAtParagraphReference(paragraphReference),
       );
     };
     const focusPoint = matita.getFocusPointFromRange(range);
@@ -9737,7 +9756,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       return viewCursorInfo;
     };
     const calculateViewCursorAndRangeInfosForKnownVisibleParagraphs = (visibleStartIndex: number, visibleEndIndex: number): ViewCursorAndRangeInfosForRange => {
-      const containerWidth = this.$p_getContainerWidth();
+      const containerWidth = this.$p_getContainerScrollWidth();
       const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
       const viewParagraphInfos: ViewCursorAndRangeInfosForParagraphInRange[] = [];
       if (direction === matita.RangeDirection.NeutralText) {

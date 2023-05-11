@@ -484,4 +484,4 @@ class SpellCheckControl extends DisposableClass {
     };
   }
 }
-export { LanguageIdentifier, getDefaultLanguageIdentifier, type Dictionaries, loadDictionariesForLanguageIdentifier, SpellCheckControl };
+export { SpellCheckControl };
