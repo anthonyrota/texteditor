@@ -3981,10 +3981,9 @@ function isSelectionRangeCollapsedInText(selectionRange: SelectionRange): boolea
     return false;
   }
   const range = selectionRange.ranges[0];
-  if (!isParagraphPoint(range.startPoint) || !isParagraphPoint(range.endPoint)) {
-    return false;
-  }
-  return range.startPoint.offset === range.endPoint.offset;
+  return (
+    isParagraphPoint(range.startPoint) && isParagraphPoint(range.endPoint) && areParagraphPointsAtSameOffsetInSameParagraph(range.startPoint, range.endPoint)
+  );
 }
 function isSelectionCollapsedInText(selection: Selection): boolean {
   return selection.selectionRanges.length > 0 && selection.selectionRanges.every((selectionRange) => isSelectionRangeCollapsedInText(selectionRange));
