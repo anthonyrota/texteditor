@@ -3977,7 +3977,7 @@ interface StateControl<
   ) => Selection;
 }
 function isSelectionRangeCollapsedInText(selectionRange: SelectionRange): boolean {
-  if (selectionRange.ranges.length !== 1) {
+  if (selectionRange.ranges.length > 1) {
     return false;
   }
   const range = selectionRange.ranges[0];

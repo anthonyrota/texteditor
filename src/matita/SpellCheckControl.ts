@@ -88,6 +88,14 @@ function ensureMounted(hunspellFactory: HunspellFactory, fileIdentifier: string,
   );
   return filePath;
 }
+interface TextUpdateRange {
+  startOffset: number;
+  endOffset: number;
+}
+enum TextEditUpdateType {
+  Composition = 'Composition',
+  InsertOrRemove = 'InsertOrRemove',
+}
 class SpellCheckControl extends DisposableClass {
   private $p_stateControl: matita.StateControl<
     matita.NodeConfig,
@@ -101,7 +109,7 @@ class SpellCheckControl extends DisposableClass {
   private $p_spellChecker!: Hunspell;
   private $p_pendingParagraphIds!: UniqueStringQueue;
   private $p_insertTextParagraphsIds = new Set<string>();
-  private $p_pendingTextEditParagraphCollapsedCursorOffsetsMap = new Map<string, number[]>();
+  private $p_pendingTextEditParagraphTextUpdateRangesMap = new Map<string, TextUpdateRange[]>();
   private $p_spellingMistakesMap = new Map<string, ParagraphSpellingMistake[]>();
   private $p_spellingMistakesParagraphCounts = new CountedIndexableUniqueStringList([]);
   private $p_wordSegmenter: IntlSegmenter;
@@ -159,30 +167,40 @@ class SpellCheckControl extends DisposableClass {
     }
     return paragraphSpellingMistakes;
   }
-  private $p_getIsTextEditUpdateFromUpdateDataStack(updateDataStack: matita.UpdateData[]): boolean {
+  private $p_getTextEditUpdateTypeFromUpdateDataStack(updateDataStack: matita.UpdateData[]): TextEditUpdateType | null {
     const updateDataMaybe = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
     if (isNone(updateDataMaybe)) {
-      return false;
+      return null;
     }
     const updateData = updateDataMaybe.value;
-    return (
-      matita.RedoUndoUpdateKey.InsertText in updateData ||
+    return matita.RedoUndoUpdateKey.InsertText in updateData ||
       matita.RedoUndoUpdateKey.RemoveTextForwards in updateData ||
-      matita.RedoUndoUpdateKey.RemoveTextBackwards in updateData ||
-      matita.RedoUndoUpdateKey.CompositionUpdate in updateData
-    );
+      matita.RedoUndoUpdateKey.RemoveTextBackwards in updateData
+      ? TextEditUpdateType.InsertOrRemove
+      : matita.RedoUndoUpdateKey.CompositionUpdate in updateData
+      ? TextEditUpdateType.Composition
+      : null;
   }
   private $p_trackChanges(): void {
+    let nestedUpdateCount = 0;
+    const updateTypes: (TextEditUpdateType | null)[] = [];
     pipe(
       this.$p_stateControl.beforeRunUpdate$,
       subscribe((event) => {
         if (event.type !== PushType) {
           throwUnreachable();
         }
-        for (const paragraphId of this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.keys()) {
+        const message = event.value;
+        const { updateDataStack } = message;
+        const updateType = this.$p_getTextEditUpdateTypeFromUpdateDataStack(updateDataStack);
+        updateTypes.push(updateType);
+        if (++nestedUpdateCount > 1) {
+          return;
+        }
+        for (const paragraphId of this.$p_pendingTextEditParagraphTextUpdateRangesMap.keys()) {
           this.$p_pendingParagraphIds.queue(paragraphId);
         }
-        this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.clear();
+        this.$p_pendingTextEditParagraphTextUpdateRangesMap.clear();
       }, this),
     );
     pipe(
@@ -191,32 +209,42 @@ class SpellCheckControl extends DisposableClass {
         if (event.type !== PushType) {
           throwUnreachable();
         }
-        const message = event.value;
-        const { updateDataStack } = message;
-        const isTextEditUpdate = this.$p_getIsTextEditUpdateFromUpdateDataStack(updateDataStack);
-        if (!isTextEditUpdate) {
+        if (--nestedUpdateCount > 0) {
+          return;
+        }
+        const textEditUpdateType = updateTypes.find((updateType): updateType is TextEditUpdateType => updateType !== null);
+        updateTypes.length = 0;
+        if (textEditUpdateType === undefined) {
           return;
         }
         for (let i = 0; i < this.$p_stateControl.stateView.selection.selectionRanges.length; i++) {
           const selectionRange = this.$p_stateControl.stateView.selection.selectionRanges[i];
-          if (!matita.isSelectionRangeCollapsedInText(selectionRange)) {
+          if (selectionRange.ranges.length > 1) {
             continue;
           }
-          const collapsedRange = selectionRange.ranges[0];
-          const paragraphPoint = collapsedRange.startPoint;
-          matita.assertIsParagraphPoint(paragraphPoint);
-          const cursorOffset = paragraphPoint.offset;
-          const paragraphId = matita.getParagraphIdFromParagraphPoint(paragraphPoint);
+          const range = selectionRange.ranges[0];
+          if (
+            !matita.isParagraphPoint(range.startPoint) ||
+            !matita.isParagraphPoint(range.endPoint) ||
+            !matita.areParagraphPointsAtSameParagraph(range.startPoint, range.endPoint) ||
+            (textEditUpdateType === TextEditUpdateType.InsertOrRemove && range.startPoint.offset !== range.endPoint.offset)
+          ) {
+            continue;
+          }
+          const paragraphId = matita.getParagraphIdFromParagraphPoint(range.startPoint);
           if (!this.$p_insertTextParagraphsIds.has(paragraphId)) {
             continue;
           }
-          let cursorOffsetsForParagraph = this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.get(paragraphId);
-          if (cursorOffsetsForParagraph === undefined) {
-            cursorOffsetsForParagraph = [cursorOffset];
-            this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.set(paragraphId, cursorOffsetsForParagraph);
+          const textUpdateRange: TextUpdateRange = {
+            startOffset: Math.min(range.startPoint.offset, range.endPoint.offset),
+            endOffset: Math.max(range.startPoint.offset, range.endPoint.offset),
+          };
+          const textUpdateRangesForParagraph = this.$p_pendingTextEditParagraphTextUpdateRangesMap.get(paragraphId);
+          if (textUpdateRangesForParagraph === undefined) {
+            this.$p_pendingTextEditParagraphTextUpdateRangesMap.set(paragraphId, [textUpdateRange]);
             continue;
           }
-          cursorOffsetsForParagraph.push(cursorOffset);
+          textUpdateRangesForParagraph.push(textUpdateRange);
         }
         this.$p_insertTextParagraphsIds.clear();
       }, this),
@@ -229,7 +257,8 @@ class SpellCheckControl extends DisposableClass {
         }
         const message = event.value;
         const { viewDelta, updateDataStack } = message;
-        const isTextEditUpdate = this.$p_getIsTextEditUpdateFromUpdateDataStack(updateDataStack);
+        const updateType = this.$p_getTextEditUpdateTypeFromUpdateDataStack(updateDataStack);
+        const isTextEditUpdate = updateType !== null;
         for (let i = 0; i < viewDelta.changes.length; i++) {
           const change = viewDelta.changes[i];
           this.$p_onViewDeltaChange(change, isTextEditUpdate);
@@ -400,7 +429,7 @@ class SpellCheckControl extends DisposableClass {
     this.$p_queueWorkIfNeeded();
   };
   private $p_checkParagraph(paragraphId: string): void {
-    const pendingTextEditParagraphCollapsedCursorOffsets = this.$p_pendingTextEditParagraphCollapsedCursorOffsetsMap.get(paragraphId);
+    const pendingTextEditParagraphTextUpdateRanges = this.$p_pendingTextEditParagraphTextUpdateRangesMap.get(paragraphId);
     const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
     const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
     matita.assertIsParagraph(paragraph);
@@ -411,7 +440,7 @@ class SpellCheckControl extends DisposableClass {
       const inlineNode = paragraph.children[i];
       if (matita.isVoid(inlineNode)) {
         if (text.length > 0) {
-          paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphCollapsedCursorOffsets));
+          paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphTextUpdateRanges));
         }
         text = '';
         textStartOffset += text.length + 1;
@@ -420,7 +449,7 @@ class SpellCheckControl extends DisposableClass {
       text += inlineNode.text;
     }
     if (text.length > 0) {
-      paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphCollapsedCursorOffsets));
+      paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphTextUpdateRanges));
     }
     if (paragraphSpellingMistakes.length === 0) {
       this.$p_removeCachedSpellingMistakesOfParagraphWithParagraphId(paragraphId);
@@ -446,7 +475,7 @@ class SpellCheckControl extends DisposableClass {
   private *$p_findMistakesInTextAtStartOffset(
     text: string,
     textStartOffset: number,
-    pendingTextEditParagraphCollapsedCursorOffsets: number[] | undefined,
+    pendingTextEditParagraphTextUpdateRanges: TextUpdateRange[] | undefined,
   ): IterableIterator<ParagraphSpellingMistake> {
     const segments = this.$p_wordSegmenter.segment(text);
     wordSegmentLoop: for (const segmentData of segments) {
@@ -455,14 +484,12 @@ class SpellCheckControl extends DisposableClass {
         continue;
       }
       const wordStartParagraphOffset = textStartOffset + index;
-      if (pendingTextEditParagraphCollapsedCursorOffsets !== undefined) {
+      if (pendingTextEditParagraphTextUpdateRanges !== undefined) {
         const wordEndParagraphOffset = wordStartParagraphOffset + segment.length;
-        for (let i = 0; i < pendingTextEditParagraphCollapsedCursorOffsets.length; i++) {
-          const pendingTextEditParagraphCollapsedCursorOffset = pendingTextEditParagraphCollapsedCursorOffsets[i];
-          if (
-            wordStartParagraphOffset <= pendingTextEditParagraphCollapsedCursorOffset &&
-            pendingTextEditParagraphCollapsedCursorOffset <= wordEndParagraphOffset
-          ) {
+        for (let i = 0; i < pendingTextEditParagraphTextUpdateRanges.length; i++) {
+          const pendingTextEditParagraphTextUpdateRange = pendingTextEditParagraphTextUpdateRanges[i];
+          const { startOffset, endOffset } = pendingTextEditParagraphTextUpdateRange;
+          if (wordStartParagraphOffset <= endOffset && wordEndParagraphOffset >= startOffset) {
             continue wordSegmentLoop;
           }
         }
