@@ -92,6 +92,11 @@ enum TextEditUpdateType {
   Composition = 'Composition',
   InsertOrRemove = 'InsertOrRemove',
 }
+interface TextEditUpdateData {
+  updateType: TextEditUpdateType;
+  force: boolean;
+}
+const forceSpellCheckControlTextEditUpdateDataKey = 'forceSpellCheckControlTextEditUpdateKey';
 class SpellCheckControl extends DisposableClass {
   private $p_stateControl: matita.StateControl<
     matita.NodeConfig,
@@ -163,23 +168,35 @@ class SpellCheckControl extends DisposableClass {
     }
     return paragraphSpellingMistakes;
   }
-  private $p_getTextEditUpdateTypeFromUpdateDataStack(updateDataStack: matita.UpdateData[]): TextEditUpdateType | null {
+  private $p_getTextEditUpdateDataFromUpdateDataStack(updateDataStack: matita.UpdateData[]): TextEditUpdateData | null {
+    for (let i = 0; i < updateDataStack.length; i++) {
+      const updateData = updateDataStack[i];
+      if (forceSpellCheckControlTextEditUpdateDataKey in updateData) {
+        const updateType = updateData[forceSpellCheckControlTextEditUpdateDataKey];
+        assert(updateType === TextEditUpdateType.Composition || updateType === TextEditUpdateType.InsertOrRemove);
+        return { updateType: updateType as TextEditUpdateType, force: true };
+      }
+    }
     const updateDataMaybe = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
     if (isNone(updateDataMaybe)) {
       return null;
     }
     const updateData = updateDataMaybe.value;
-    return matita.RedoUndoUpdateKey.InsertText in updateData ||
+    if (
+      matita.RedoUndoUpdateKey.InsertText in updateData ||
       matita.RedoUndoUpdateKey.RemoveTextForwards in updateData ||
       matita.RedoUndoUpdateKey.RemoveTextBackwards in updateData
-      ? TextEditUpdateType.InsertOrRemove
-      : matita.RedoUndoUpdateKey.CompositionUpdate in updateData
-      ? TextEditUpdateType.Composition
-      : null;
+    ) {
+      return { updateType: TextEditUpdateType.InsertOrRemove, force: false };
+    }
+    if (matita.RedoUndoUpdateKey.CompositionUpdate in updateData) {
+      return { updateType: TextEditUpdateType.Composition, force: false };
+    }
+    return null;
   }
   private $p_trackChanges(): void {
     let nestedUpdateCount = 0;
-    const updateTypes: (TextEditUpdateType | null)[] = [];
+    const updateDataList: (TextEditUpdateData | null)[] = [];
     pipe(
       this.$p_stateControl.beforeRunUpdate$,
       subscribe((event) => {
@@ -188,8 +205,8 @@ class SpellCheckControl extends DisposableClass {
         }
         const message = event.value;
         const { updateDataStack } = message;
-        const updateType = this.$p_getTextEditUpdateTypeFromUpdateDataStack(updateDataStack);
-        updateTypes.push(updateType);
+        const updateData = this.$p_getTextEditUpdateDataFromUpdateDataStack(updateDataStack);
+        updateDataList.push(updateData);
         if (++nestedUpdateCount > 1) {
           return;
         }
@@ -208,9 +225,9 @@ class SpellCheckControl extends DisposableClass {
         if (--nestedUpdateCount > 0) {
           return;
         }
-        const textEditUpdateType = updateTypes.find((updateType): updateType is TextEditUpdateType => updateType !== null);
-        updateTypes.length = 0;
-        if (textEditUpdateType === undefined) {
+        const textEditUpdateData = updateDataList.find((updateData): updateData is TextEditUpdateData => updateData !== null);
+        updateDataList.length = 0;
+        if (textEditUpdateData === undefined) {
           return;
         }
         for (let i = 0; i < this.$p_stateControl.stateView.selection.selectionRanges.length; i++) {
@@ -223,12 +240,12 @@ class SpellCheckControl extends DisposableClass {
             !matita.isParagraphPoint(range.startPoint) ||
             !matita.isParagraphPoint(range.endPoint) ||
             !matita.areParagraphPointsAtSameParagraph(range.startPoint, range.endPoint) ||
-            (textEditUpdateType === TextEditUpdateType.InsertOrRemove && range.startPoint.offset !== range.endPoint.offset)
+            (textEditUpdateData.updateType === TextEditUpdateType.InsertOrRemove && range.startPoint.offset !== range.endPoint.offset)
           ) {
             continue;
           }
           const paragraphId = matita.getParagraphIdFromParagraphPoint(range.startPoint);
-          if (!this.$p_insertTextParagraphsIds.has(paragraphId)) {
+          if (!textEditUpdateData.force && !this.$p_insertTextParagraphsIds.has(paragraphId)) {
             continue;
           }
           const textUpdateRange: TextUpdateRange = {
@@ -253,7 +270,7 @@ class SpellCheckControl extends DisposableClass {
         }
         const message = event.value;
         const { viewDelta, updateDataStack } = message;
-        const updateType = this.$p_getTextEditUpdateTypeFromUpdateDataStack(updateDataStack);
+        const updateType = this.$p_getTextEditUpdateDataFromUpdateDataStack(updateDataStack);
         const isTextEditUpdate = updateType !== null;
         for (let i = 0; i < viewDelta.changes.length; i++) {
           const change = viewDelta.changes[i];
@@ -507,4 +524,4 @@ class SpellCheckControl extends DisposableClass {
     };
   }
 }
-export { SpellCheckControl };
+export { SpellCheckControl, forceSpellCheckControlTextEditUpdateDataKey, TextEditUpdateType };

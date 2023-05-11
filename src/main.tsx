@@ -16,7 +16,7 @@ import {
   TrackAllControl,
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
-import { SpellCheckControl } from './matita/SpellCheckControl';
+import { SpellCheckControl, TextEditUpdateType, forceSpellCheckControlTextEditUpdateDataKey } from './matita/SpellCheckControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
 import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
@@ -5681,33 +5681,36 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
         this.$p_isInComposition_syncStartDelayedEndDisposable!,
       );
     }, this.$p_isInComposition_syncStartDelayedEndDisposable);
-    this.$p_stateControl.queueUpdate(() => {
-      this.$p_isInComposition_syncedToQueueUpdate = false;
-      // TODO: Clicking checkbox/Alt drag?ww
-      if (!this.$p_getIsDraggingSelection()) {
-        this.$p_stateControl.delta.setSelection(
-          matita.transformSelectionByTransformingSelectionRanges(
-            this.$p_stateControl.stateView.document,
-            this.$p_stateControl.stateControlConfig,
-            this.$p_stateControl.stateView.selection,
-            (selectionRange) => {
-              if (shouldCollapseSelectionRangeInTextCommand(this.$p_stateControl.stateView.document, selectionRange)) {
-                return collapseSelectionRangeForwards(this.$p_stateControl.stateView.document, selectionRange);
-              }
-              return selectionRange;
-            },
-          ),
+    this.$p_stateControl.queueUpdate(
+      () => {
+        this.$p_isInComposition_syncedToQueueUpdate = false;
+        // TODO: Clicking checkbox/Alt drag?ww
+        if (!this.$p_getIsDraggingSelection()) {
+          this.$p_stateControl.delta.setSelection(
+            matita.transformSelectionByTransformingSelectionRanges(
+              this.$p_stateControl.stateView.document,
+              this.$p_stateControl.stateControlConfig,
+              this.$p_stateControl.stateView.selection,
+              (selectionRange) => {
+                if (shouldCollapseSelectionRangeInTextCommand(this.$p_stateControl.stateView.document, selectionRange)) {
+                  return collapseSelectionRangeForwards(this.$p_stateControl.stateView.document, selectionRange);
+                }
+                return selectionRange;
+              },
+            ),
+          );
+        }
+        if (this.$p_lastCompositionSelectionTextInputUpdateOffsets !== null) {
+          this.$p_lastNativeOffset = this.$p_lastCompositionSelectionTextInputUpdateOffsets.endOffset;
+          // We reset this on compositionend, instead of compositionstart, because safari can run beforeinput before compositionstart.
+          this.$p_lastCompositionSelectionTextInputUpdateOffsets = null;
+        }
+        this.$p_undoControl.forceNextChange(
+          (changeType) => changeType === LocalUndoControlLastChangeType.InsertPlainText || changeType === LocalUndoControlLastChangeType.CompositionUpdate,
         );
-      }
-      if (this.$p_lastCompositionSelectionTextInputUpdateOffsets !== null) {
-        this.$p_lastNativeOffset = this.$p_lastCompositionSelectionTextInputUpdateOffsets.endOffset;
-        // We reset this on compositionend, instead of compositionstart, because safari can run beforeinput before compositionstart.
-        this.$p_lastCompositionSelectionTextInputUpdateOffsets = null;
-      }
-      this.$p_undoControl.forceNextChange(
-        (changeType) => changeType === LocalUndoControlLastChangeType.InsertPlainText || changeType === LocalUndoControlLastChangeType.CompositionUpdate,
-      );
-    });
+      },
+      { [forceSpellCheckControlTextEditUpdateDataKey]: TextEditUpdateType.Composition },
+    );
   }
   private $p_insertTextWithAdjustAmounts(text: string, startOffsetAdjustAmount: number, endOffsetAdjustAmount: number): void {
     const adjustPointIfParagraphPoint = (range: matita.Range, point: matita.Point, adjustAmount: number): matita.PointWithContentReference => {
