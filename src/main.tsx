@@ -438,7 +438,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   textNodeInfos: TextElementInfo[] = [];
   private $p_baseFontSize = 16;
   private $p_fontSize = this.$p_baseFontSize;
-  private $p_lineHeight = 1.5;
+  private $p_lineHeight = 2;
   private $p_scriptFontSizeMultiplier = 0.85;
   private $p_dirtyChildren = true;
   private $p_dirtyContainer = true;
@@ -462,21 +462,6 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   get fontSize(): number {
     return this.$p_fontSize;
   }
-  getFontStyleTextAtParagraphOffset(paragraphOffset: number): string {
-    const documentRenderControl = this.$p_viewControl.accessDocumentRenderControl();
-    const inlineNodeWithStartOffset = matita.getInlineNodeWithStartOffsetAfterParagraphPoint(
-      documentRenderControl.stateControl.stateView.document,
-      matita.makeParagraphPointFromParagraphReferenceAndOffset(this.paragraphReference, paragraphOffset),
-    );
-    assertIsNotNullish(inlineNodeWithStartOffset);
-    matita.assertIsText(inlineNodeWithStartOffset.inline);
-    const textConfig = inlineNodeWithStartOffset.inline.config;
-    return `${textConfig.italic === true ? 'italic ' : ''}${textConfig.bold === true ? 'bold ' : ''}${
-      textConfig.script === TextConfigScript.Super || textConfig.script === TextConfigScript.Sub
-        ? this.$p_fontSize * this.$p_scriptFontSizeMultiplier
-        : this.$p_fontSize
-    }px/${this.$p_lineHeight} ${textConfig.code === true ? 'Fira Code, monospace' : 'IBM Plex Sans, sans-serif'}`;
-  }
   convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
     lineTop: number,
     lineHeight: number,
@@ -497,20 +482,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       )) {
         if (matita.isText(inlineNodeWithStartOffset.inline) && getTextConfigTextRunSizingKey(inlineNodeWithStartOffset.inline.config) === sizingKey) {
           const characterMeasurementIndex = Math.max(inlineNodeWithStartOffset.startOffset - measuredParagraphLineRange.startOffset, 0);
-          let characterRectangle: ViewRectangle;
-          if (isSafari && characterMeasurementIndex === 0 && measuredParagraphLineRangeIndex > 0) {
-            // Safari first wrapped character handling is weird. See measurement code.
-            const previousMeasuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRangeIndex - 1];
-            if (previousMeasuredParagraphLineRange.endsWithLineBreak) {
-              characterRectangle = measuredParagraphLineRange.characterRectangles[0];
-            } else if (inlineNodeWithStartOffset.inline.text.length > 1) {
-              characterRectangle = measuredParagraphLineRange.characterRectangles[1];
-            } else {
-              continue;
-            }
-          } else {
-            characterRectangle = measuredParagraphLineRange.characterRectangles[characterMeasurementIndex];
-          }
+          const characterRectangle = measuredParagraphLineRange.characterRectangles[characterMeasurementIndex];
           assertIsNotNullish(characterRectangle);
           return { height: characterRectangle.height, top: characterRectangle.top };
         }
@@ -8643,7 +8615,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   onConfigChanged(): void {
     throwNotImplemented();
   }
-  private $p_safariWrapMeasureCanvasContext = isSafari ? document.createElement('canvas').getContext('2d') : null;
   private $p_getRelativeParagraphMeasurementAtParagraphReference(paragraphReference: matita.BlockReference): {
     relativeParagraphMeasurement: RelativeParagraphMeasureCacheValue;
     containerHtmlElementBoundingRect?: DOMRect;
@@ -8700,7 +8671,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         measureRange.setEnd(nativeEndNodeAndOffset[0], nativeEndNodeAndOffset[1]);
         // TODO: In Safari, when e.g. emoji is split where one character code is styled differently then the other, hence rendered as an unknown glyph, the
         // measurement for the rest of the characters in that line is bogus. Also for invisible/malformed graphemes, the measured width can be negative (????).
-        const measureRangeBoundingRect = measureRange.getBoundingClientRect();
+        const measureRangeClientRects = measureRange.getClientRects();
+        const measureRangeBoundingRect = measureRangeClientRects[measureRangeClientRects.length - 1];
         const left = measureRangeBoundingRect.left - containerHtmlElementBoundingRect.left;
         const top = measureRangeBoundingRect.top - containerHtmlElementBoundingRect.top;
         const width = measureRangeBoundingRect.width;
@@ -8730,19 +8702,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           characterRectangle.left - previousCharacterRectangle.right <= 2 * paragraphRenderControl.fontSize &&
           (Math.abs(previousCharacterRectangle.top - characterRectangle.bottom) <= 2 * paragraphRenderControl.fontSize ||
             Math.abs(previousCharacterRectangle.bottom - characterRectangle.top) <= 2 * paragraphRenderControl.fontSize);
-        // In Safari, the first wrapped character's bounding box envelops from the previous character (before the wrap) to the current character (after the
-        // wrap), i.e. double height and full line width.
-        const currentMeasuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1];
-        const isSafariFirstWrappedCharacter =
-          isSafari &&
-          !isSameLineDifferentFontSize &&
-          (characterRectangle.width > containerHtmlElementBoundingRect.width / 2 ||
-            (previousCharacterRectangle !== null &&
-              previousCharacterRectangle.width > 1 &&
-              characterRectangle.left - previousCharacterRectangle.right < previousCharacterRectangle.width * 2 &&
-              characterRectangle.height > previousCharacterRectangle.height &&
-              characterRectangle.width > currentMeasuredParagraphLineRange.boundingRect.width - minDifferenceToBeConsideredTheSame));
-        if (!isPreviousLineBreak && !isSafariFirstWrappedCharacter) {
+        if (!isPreviousLineBreak) {
           assertIsNotNullish(previousCharacterRectangle);
           if (isSameLineSameFontSize || isSameLineDifferentFontSize) {
             const currentMeasuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRanges.length - 1];
@@ -8767,23 +8727,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           }
         }
         isPreviousLineBreak = false;
-        let fixedCharacterRectangle: ViewRectangle;
-        if (isSafariFirstWrappedCharacter) {
-          assertIsNotNullish(this.$p_safariWrapMeasureCanvasContext);
-          this.$p_safariWrapMeasureCanvasContext.font = paragraphRenderControl.getFontStyleTextAtParagraphOffset(startIndex);
-          fixedCharacterRectangle = makeViewRectangle(
-            characterRectangle.left,
-            characterRectangle.top + currentMeasuredParagraphLineRange.boundingRect.height,
-            characterRectangle.left + this.$p_safariWrapMeasureCanvasContext.measureText(relevantText.slice(startIndex, j + 1)).width,
-            characterRectangle.height - currentMeasuredParagraphLineRange.boundingRect.height,
-          );
-        } else {
-          fixedCharacterRectangle = characterRectangle;
-        }
-        paragraphCharacterRectangles.push(fixedCharacterRectangle);
+        paragraphCharacterRectangles.push(characterRectangle);
         measuredParagraphLineRanges.push({
-          boundingRect: fixedCharacterRectangle,
-          characterRectangles: [fixedCharacterRectangle],
+          boundingRect: characterRectangle,
+          characterRectangles: [characterRectangle],
           startOffset: textStart + startIndex,
           endOffset: textStart + j + 1,
           endsWithLineBreak: false,

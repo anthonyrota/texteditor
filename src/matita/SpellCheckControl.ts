@@ -145,7 +145,7 @@ class SpellCheckControl extends DisposableClass {
         this.didLoad$(End);
       })
       .catch((error) => {
-        console.error('error loading spellchecker resources', error);
+        console.log('error loading spellchecker resources', error);
         this.dispose();
       });
   }

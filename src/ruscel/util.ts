@@ -13,6 +13,9 @@ function joinErrors(errors: unknown[]): string {
 }
 function asyncReportError(error: unknown): void {
   setTimeout(() => {
+    if (error instanceof Error) {
+      console.log('asynchronously reporting error', error.stack);
+    }
     throw error;
   }, 0);
 }
