@@ -12,14 +12,13 @@ import { End, PushType, ThrowType, subscribe, take } from '../ruscel/source';
 import { pipe, requestIdleCallbackDisposable } from '../ruscel/util';
 import * as matita from '.';
 enum LanguageIdentifier {
-  EnglishGeneral = 'en',
   EnglishAmerica = 'en-US',
   EnglishBritain = 'en-GB',
   EnglishCanada = 'en-CA',
   EnglishAustralia = 'en-AU',
 }
 const acceptedLanguageIdentifiers = [
-  LanguageIdentifier.EnglishGeneral,
+  'en',
   LanguageIdentifier.EnglishAmerica,
   LanguageIdentifier.EnglishBritain,
   LanguageIdentifier.EnglishCanada,
@@ -30,20 +29,17 @@ function getDefaultLanguageIdentifier(): LanguageIdentifier | null {
   if (matchedTag === undefined) {
     return null;
   }
-  if (matchedTag === LanguageIdentifier.EnglishGeneral || matchedTag === LanguageIdentifier.EnglishAmerica) {
+  if (matchedTag === 'en' || matchedTag === LanguageIdentifier.EnglishAmerica) {
     const { timeZone } = Intl.DateTimeFormat().resolvedOptions();
     if (timeZone.includes('Australia')) {
       return LanguageIdentifier.EnglishAustralia;
     }
   }
-  assert((acceptedLanguageIdentifiers as string[]).includes(matchedTag));
-  return matchedTag as LanguageIdentifier;
+  assert(acceptedLanguageIdentifiers.includes(matchedTag));
+  return matchedTag === 'en' ? LanguageIdentifier.EnglishAmerica : (matchedTag as LanguageIdentifier);
 }
 function loadDictionariesForLanguageIdentifier(languageIdentifier: LanguageIdentifier): Promise<Dictionaries> {
   switch (languageIdentifier) {
-    case LanguageIdentifier.EnglishGeneral: {
-      return import('../dictionaries/EnglishGeneral');
-    }
     case LanguageIdentifier.EnglishAmerica: {
       return import('../dictionaries/EnglishAmerica');
     }
