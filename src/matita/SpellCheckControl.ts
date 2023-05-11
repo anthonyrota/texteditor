@@ -491,25 +491,43 @@ class SpellCheckControl extends DisposableClass {
     pendingTextEditParagraphTextUpdateRanges: TextUpdateRange[] | undefined,
   ): IterableIterator<ParagraphSpellingMistake> {
     const segments = this.$p_wordSegmenter.segment(text);
-    wordSegmentLoop: for (const segmentData of segments) {
-      const { segment, index, isWordLike } = segmentData;
-      if (!isWordLike) {
-        continue;
-      }
+    const getSpellingMistakeForWordAtIndex = (word: string, index: number): ParagraphSpellingMistake | null => {
       const wordStartParagraphOffset = textStartOffset + index;
       if (pendingTextEditParagraphTextUpdateRanges !== undefined) {
-        const wordEndParagraphOffset = wordStartParagraphOffset + segment.length;
+        const wordEndParagraphOffset = wordStartParagraphOffset + word.length;
         for (let i = 0; i < pendingTextEditParagraphTextUpdateRanges.length; i++) {
           const pendingTextEditParagraphTextUpdateRange = pendingTextEditParagraphTextUpdateRanges[i];
           const { startOffset, endOffset } = pendingTextEditParagraphTextUpdateRange;
           if (wordStartParagraphOffset <= endOffset && wordEndParagraphOffset >= startOffset) {
-            continue wordSegmentLoop;
+            return null;
           }
         }
       }
-      const paragraphSpellingMistake = this.$p_spellCheckWordAtOffsetInParagraph(segment, wordStartParagraphOffset);
-      if (paragraphSpellingMistake !== null) {
-        yield paragraphSpellingMistake;
+      return this.$p_spellCheckWordAtOffsetInParagraph(word, wordStartParagraphOffset);
+    };
+    for (const segmentData of segments) {
+      const { segment, isWordLike } = segmentData;
+      const originalIndex = segmentData.index;
+      let index = segmentData.index;
+      if (!isWordLike) {
+        continue;
+      }
+      let underscoreIndex = segment.indexOf('_');
+      while (underscoreIndex !== -1) {
+        const paragraphSpellingMistake = getSpellingMistakeForWordAtIndex(text.slice(index, originalIndex + underscoreIndex), index);
+        if (paragraphSpellingMistake !== null) {
+          yield paragraphSpellingMistake;
+        }
+        const indexAfterUnderscore = underscoreIndex + 1;
+        index = originalIndex + indexAfterUnderscore;
+        underscoreIndex = segment.indexOf('_', indexAfterUnderscore);
+      }
+      const wordEndIndex = originalIndex + segment.length;
+      if (index !== wordEndIndex) {
+        const paragraphSpellingMistake = getSpellingMistakeForWordAtIndex(index === originalIndex ? segment : text.slice(index, wordEndIndex), index);
+        if (paragraphSpellingMistake !== null) {
+          yield paragraphSpellingMistake;
+        }
       }
     }
   }
