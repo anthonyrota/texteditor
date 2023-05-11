@@ -1589,6 +1589,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
       [isDragging],
     ),
     Some(true),
+    true,
   );
   return (
     <span
