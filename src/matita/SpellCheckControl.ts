@@ -74,8 +74,8 @@ function ensureMounted(hunspellFactory: HunspellFactory, fileIdentifier: string,
   mountedFileInfoMap.set(fileIdentifier, mountedFileInfo);
   disposable.add(
     Disposable(() => {
-      if (mountedFileInfo.refCount > 1) {
-        mountedFileInfo.refCount--;
+      mountedFileInfo.refCount--;
+      if (mountedFileInfo.refCount > 0) {
         return;
       }
       mountedFileInfoMap.delete(fileIdentifier);
