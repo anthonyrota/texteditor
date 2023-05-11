@@ -8674,6 +8674,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         measureRange.setEnd(nativeEndNodeAndOffset[0], nativeEndNodeAndOffset[1]);
         // TODO: In Safari, when e.g. emoji is split where one character code is styled differently then the other, hence rendered as an unknown glyph, the
         // measurement for the rest of the characters in that line is bogus. Also for invisible/malformed graphemes, the measured width can be negative (????).
+        // We use getClientRects because in Safari, it returns 2 rectangles for the first character after a line wrapping point (I think one previous line and
+        // one current line), whereas getBoundingClientRects returns a rectangle that envelops both, which breaks the measurement code.
         const measureRangeClientRects = measureRange.getClientRects();
         const measureRangeBoundingRect = measureRangeClientRects[measureRangeClientRects.length - 1];
         const left = measureRangeBoundingRect.left - containerHtmlElementBoundingRect.left;
@@ -8684,7 +8686,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         if (measuredParagraphLineRanges.length === 0) {
           paragraphCharacterRectangles.push(characterRectangle);
           measuredParagraphLineRanges.push({
-            boundingRect: characterRectangle,
+            boundingRect: { ...characterRectangle },
             characterRectangles: [characterRectangle],
             startOffset: textStart + startIndex,
             endOffset: textStart + j + 1,
@@ -8732,7 +8734,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         isPreviousLineBreak = false;
         paragraphCharacterRectangles.push(characterRectangle);
         measuredParagraphLineRanges.push({
-          boundingRect: characterRectangle,
+          boundingRect: { ...characterRectangle },
           characterRectangles: [characterRectangle],
           startOffset: textStart + startIndex,
           endOffset: textStart + j + 1,
