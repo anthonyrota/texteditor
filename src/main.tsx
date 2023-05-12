@@ -5539,6 +5539,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     this.inputElement.style.whiteSpace = 'nowrap';
     this.inputElement.style.opacity = '0';
     this.inputElement.style.textAlign = 'right';
+    this.inputElement.style.lineHeight = '1';
     const inputElementReactiveMutationObserver = new ReactiveMutationObserver();
     pipe(
       inputElementReactiveMutationObserver.records$,
@@ -5568,7 +5569,8 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     addWindowEventListener('compositionend', this.$p_onCompositionEnd.bind(this), this);
     addEventListener(this.inputElement, 'beforeinput', this.$p_onBeforeInput.bind(this), this);
   }
-  setPosition(left: number, top: number) {
+  setPositionAndHeight(left: number, top: number, height: number) {
+    this.inputElement.style.fontSize = `${height}px`;
     this.inputElement.style.right = `calc(100% - ${left}px)`;
     this.inputElement.style.top = `${top}px`;
   }
@@ -9707,7 +9709,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       };
       // TODO: Refactor so this function is pure?
       if (isFocusSelectionRange) {
-        this.$p_inputControl.setPosition(Math.min(cursorLeft, containerWidth - 32), cursorTop);
+        this.$p_inputControl.setPositionAndHeight(Math.min(cursorLeft, containerWidth - 32), cursorTop, cursorHeight);
       }
       return viewCursorInfo;
     };
