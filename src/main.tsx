@@ -438,7 +438,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   textNodeInfos: TextElementInfo[] = [];
   private $p_baseFontSize = 16;
   private $p_fontSize = this.$p_baseFontSize;
-  private $p_lineHeight = 2;
+  private $p_lineHeight = 1.5;
   private $p_scriptFontSizeMultiplier = 0.85;
   private $p_dirtyChildren = true;
   private $p_dirtyContainer = true;
@@ -5886,11 +5886,14 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
       }
       if (startOffset !== endOffset) {
         assert(endOffset > startOffset);
-        this.$p_stateControl.queueUpdate(() => {
-          const startOffsetAdjustAmount = Math.min(startOffset - this.$p_lastNativeOffset, 0);
-          const endOffsetAdjustAmount = Math.min(endOffset - this.$p_lastNativeOffset, 0);
-          this.$p_insertTextWithAdjustAmounts(text, startOffsetAdjustAmount, endOffsetAdjustAmount);
-        });
+        this.$p_stateControl.queueUpdate(
+          () => {
+            const startOffsetAdjustAmount = Math.min(startOffset - this.$p_lastNativeOffset, 0);
+            const endOffsetAdjustAmount = Math.min(endOffset - this.$p_lastNativeOffset, 0);
+            this.$p_insertTextWithAdjustAmounts(text, startOffsetAdjustAmount, endOffsetAdjustAmount);
+          },
+          { [forceSpellCheckControlTextEditUpdateDataKey]: TextEditUpdateType.InsertOrRemove },
+        );
         event.preventDefault();
         return;
       }
