@@ -532,6 +532,9 @@ class SpellCheckControl extends DisposableClass {
     }
   }
   private $p_spellCheckWordAtOffsetInParagraph(word: string, offsetInParagraph: number): ParagraphSpellingMistake | null {
+    if (!/^[\p{Script=Latin}\p{N}]+$/u.test(word.normalize().replace(/[^\p{L}\p{N}]/gu, ''))) {
+      return null;
+    }
     const isCorrect = this.$p_spellChecker.spell(word);
     if (isCorrect) {
       return null;

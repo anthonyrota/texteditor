@@ -65,6 +65,7 @@ function makeTextPart(text: string, startOffset: number, endOffset: number): Tex
     endOffset,
   };
 }
+// TODO: Filter for similar looking characters.
 function normalizePunctuation(char: string): string {
   return char.replace(/[^\p{L}\p{N}]/gu, '');
 }
@@ -91,11 +92,11 @@ function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextS
     const segmentOffset = segment.index;
     const char = segment.segment;
     let normalizedChar = char;
-    if (ignoreCase) {
-      normalizedChar = normalizeCase(normalizedChar);
-    }
     if (ignoreDiacritics) {
       normalizedChar = normalizeExtraDiacritics(normalizedChar);
+    }
+    if (ignoreCase) {
+      normalizedChar = normalizeCase(normalizedChar);
     }
     if (stripNonLettersAndNumbers) {
       normalizedChar = normalizePunctuation(normalizedChar);

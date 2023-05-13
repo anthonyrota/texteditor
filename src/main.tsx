@@ -10000,4 +10000,3 @@ makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
   viewControl.bindStateControl(stateControl);
   viewControl.insertIntoRootHtmlElement(rootHtmlElement as HTMLElement);
 });
-2;
