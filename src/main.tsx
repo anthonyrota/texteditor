@@ -7349,13 +7349,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_searchElementContainerElement = document.createElement('div');
     this.$p_containerHtmlElement.style.position = 'relative';
     this.$p_containerHtmlElement.append(
+      this.$p_inputControl.inputElement,
       this.$p_searchOverlayContainerElement,
       this.$p_selectionRectsViewContainerElement,
       this.$p_spellingMistakesOverlayContainerElement,
       this.$p_topLevelContentViewContainerElement,
       this.$p_selectionCursorsViewContainerElement,
       this.$p_searchElementContainerElement,
-      this.$p_inputControl.inputElement,
     );
     let searchContainerWidth$: CurrentValueDistributor<number> | undefined;
     const getContainerWidth = (): number => {
