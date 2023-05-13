@@ -9856,4 +9856,6 @@ export {
   type BlockIndices,
   indexBlockAtBlockReference,
   compareBlockIndicesForUniqueParagraphsAtBlockReferences,
+  type UpdateSelectionRangeDataFn,
+  type GetSelectionChangeDataFn,
 };
