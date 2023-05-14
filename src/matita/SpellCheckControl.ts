@@ -10,6 +10,7 @@ import { Distributor } from '../ruscel/distributor';
 import { isNone } from '../ruscel/maybe';
 import { End, PushType, ThrowType, subscribe, take } from '../ruscel/source';
 import { pipe, requestIdleCallbackDisposable } from '../ruscel/util';
+import { nonLatinLettersRegexp } from './nonLatinLettersRegexp';
 import * as matita from '.';
 enum LanguageIdentifier {
   EnglishAmerica = 'en-US',
@@ -514,13 +515,15 @@ class SpellCheckControl extends DisposableClass {
       }
       let underscoreIndex = segment.indexOf('_');
       while (underscoreIndex !== -1) {
-        const paragraphSpellingMistake = getSpellingMistakeForWordAtIndex(text.slice(index, originalIndex + underscoreIndex), index);
-        if (paragraphSpellingMistake !== null) {
-          yield paragraphSpellingMistake;
+        const indexBeforeUnderscore = originalIndex + underscoreIndex;
+        if (indexBeforeUnderscore > index) {
+          const paragraphSpellingMistake = getSpellingMistakeForWordAtIndex(text.slice(index, indexBeforeUnderscore), index);
+          if (paragraphSpellingMistake !== null) {
+            yield paragraphSpellingMistake;
+          }
         }
-        const indexAfterUnderscore = underscoreIndex + 1;
-        index = originalIndex + indexAfterUnderscore;
-        underscoreIndex = segment.indexOf('_', indexAfterUnderscore);
+        index = indexBeforeUnderscore + 1;
+        underscoreIndex = segment.indexOf('_', underscoreIndex + 1);
       }
       const wordEndIndex = originalIndex + segment.length;
       if (index !== wordEndIndex) {
@@ -532,11 +535,7 @@ class SpellCheckControl extends DisposableClass {
     }
   }
   private $p_spellCheckWordAtOffsetInParagraph(word: string, offsetInParagraph: number): ParagraphSpellingMistake | null {
-    if (!/^[\p{Script=Latin}\p{N}]+$/u.test(word.normalize().replace(/[^\p{L}\p{N}]/gu, ''))) {
-      return null;
-    }
-    const isCorrect = this.$p_spellChecker.spell(word);
-    if (isCorrect) {
+    if (nonLatinLettersRegexp.test(word.normalize()) || this.$p_spellChecker.spell(word)) {
       return null;
     }
     return {
