@@ -98,6 +98,7 @@ interface TextEditUpdateData {
   force: boolean;
 }
 const forceSpellCheckControlTextEditUpdateDataKey = 'forceSpellCheckControlTextEditUpdateKey';
+// TODO: Special code spell checking.
 class SpellCheckControl extends DisposableClass {
   private $p_stateControl: matita.StateControl<
     matita.NodeConfig,

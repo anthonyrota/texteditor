@@ -7,7 +7,7 @@ import { IndexableUniqueStringList } from './common/IndexableUniqueStringList';
 import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
 import { LruCache } from './common/LruCache';
 import { UniqueStringQueue } from './common/UniqueStringQueue';
-import { assert, assertIsNotNullish, assertUnreachable, omit, throwNotImplemented, throwUnreachable } from './common/util';
+import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
 import {
   SingleParagraphPlainTextSearchControl,
@@ -5755,7 +5755,6 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
           requestAnimationFrameDisposable(() => {
             requestAnimationFrameDisposable(() => {
               this.$p_isInComposition_syncStartDelayedEnd = false;
-
               // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             }, this.$p_isInComposition_syncStartDelayedEndDisposable!);
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -6555,6 +6554,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     pipe(this.stateControl.beforeUpdateBatch$, subscribe(this.$p_onBeforeUpdateBatch.bind(this), this));
     pipe(this.stateControl.afterUpdateBatch$, subscribe(this.$p_onAfterUpdateBatch.bind(this), this));
     pipe(this.stateControl.selectionChange$, subscribe(this.$p_onSelectionChange.bind(this), this));
+    pipe(this.stateControl.customCollapsedSelectionTextConfigChange$, subscribe(this.$p_onCustomCollapsedSelectionTextConfigChange.bind(this), this));
     pipe(this.stateControl.afterMutationPart$, subscribe(this.$p_onAfterMutationPart.bind(this), this));
     const topLevelContentRenderControl = new VirtualizedContentRenderControl(this.topLevelContentReference, this.viewControl);
     this.viewControl.renderControlRegister.registerContentRenderControl(topLevelContentRenderControl);
@@ -8408,6 +8408,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$p_activeSelectionSecondaryDataExpirationIds.delete(activeExpirationId);
       }
     }
+    this.$p_resetSynchronizedCursorVisibility();
+  }
+  private $p_onCustomCollapsedSelectionTextConfigChange(): void {
+    this.$p_resetSynchronizedCursorVisibility();
+  }
+  private $p_resetSynchronizedCursorVisibility(): void {
     if (!this.$p_didResetCursorVisibility) {
       this.$p_resetSynchronizedCursorVisibility$(Push(undefined));
       this.$p_didResetCursorVisibility = true;
