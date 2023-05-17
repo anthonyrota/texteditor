@@ -61,7 +61,7 @@ button {
   max-width: var(--search-box_max-width);
   background-color: #000;
   contain: content;
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: Roboto, sans-serif;
   font-size: 16px;
   line-height: 1.5;
 }
@@ -193,6 +193,30 @@ button {
 .search-box__checkbox-label {
   user-select: none;
   color: #fff;
+}
+.spelling-box {
+  position: absolute;
+  overflow-wrap: anywhere;
+  overflow: scroll;
+  background-color: #fff;
+  font-family: Roboto, sans-serif;
+  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  line-height: 1.8;
+}
+.spelling-box__info {
+  padding: 0 0.3em;
+  font-style: italic;
+  border-bottom: 1px solid #ddd;
+}
+.spelling-box__suggestion {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0 0.3em;
+  font-weight: bold;
+}
+.spelling-box__suggestion:hover {
+  background-color: #eee;
 }
 .list-item--checklist__checkbox {
   display: flex;

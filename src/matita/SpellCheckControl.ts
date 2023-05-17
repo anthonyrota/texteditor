@@ -544,5 +544,8 @@ class SpellCheckControl extends DisposableClass {
       endOffset: offsetInParagraph + word.length,
     };
   }
+  suggestMisspelledWord(misspelledWord: string): string[] {
+    return this.$p_spellChecker.suggest(misspelledWord);
+  }
 }
-export { SpellCheckControl, forceSpellCheckControlTextEditUpdateDataKey, TextEditUpdateType };
+export { SpellCheckControl, forceSpellCheckControlTextEditUpdateDataKey, TextEditUpdateType, type ParagraphSpellingMistake };

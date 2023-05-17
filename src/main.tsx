@@ -1,4 +1,4 @@
-import { createRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RefObject, createRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync, createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { v4 } from 'uuid';
@@ -16,9 +16,9 @@ import {
   TrackAllControl,
   WrapCurrentOrSearchFurtherMatchStrategy,
 } from './matita/SingleParagraphPlainTextSearchControl';
-import { SpellCheckControl, TextEditUpdateType, forceSpellCheckControlTextEditUpdateDataKey } from './matita/SpellCheckControl';
+import { ParagraphSpellingMistake, SpellCheckControl, TextEditUpdateType, forceSpellCheckControlTextEditUpdateDataKey } from './matita/SpellCheckControl';
 import { Disposable, DisposableClass, disposed } from './ruscel/disposable';
-import { CurrentValueDistributor, CurrentValueSource, Distributor } from './ruscel/distributor';
+import { CurrentValueDistributor, CurrentValueSource, Distributor, LastValueDistributor } from './ruscel/distributor';
 import { isNone, isSome, Maybe, None, Some } from './ruscel/maybe';
 import { ScheduleInterval, scheduleMicrotask } from './ruscel/schedule';
 import {
@@ -56,6 +56,7 @@ import {
   ThrowType,
   timer,
   windowScheduledBySource,
+  spyBefore,
 } from './ruscel/source';
 import {
   pipe,
@@ -438,7 +439,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   textNodeInfos: TextElementInfo[] = [];
   private $p_baseFontSize = 16;
   private $p_fontSize = this.$p_baseFontSize;
-  private $p_lineHeight = 1.5;
+  private $p_lineHeight = 2;
   private $p_scriptFontSizeMultiplier = 0.85;
   private $p_dirtyChildren = true;
   private $p_dirtyContainer = true;
@@ -453,7 +454,8 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     const containerHtmlElement = document.createElement('div');
     containerHtmlElement.style.whiteSpace = 'break-spaces';
     containerHtmlElement.style.overflowWrap = 'anywhere';
-    containerHtmlElement.style.fontFamily = 'IBM Plex Sans, sans-serif';
+    containerHtmlElement.style.fontFamily = 'Roboto, sans-serif';
+    containerHtmlElement.style.letterSpacing = '0.2px';
     containerHtmlElement.style.fontSize = `${this.$p_fontSize}px`;
     containerHtmlElement.style.lineHeight = `${this.$p_lineHeight}`;
     containerHtmlElement.style.position = 'relative';
@@ -536,7 +538,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
       }
     }
     if (textConfig.code === true) {
-      textElement.style.fontFamily = 'Fira Code, monospace';
+      textElement.style.fontFamily = 'Roboto Mono, monospace';
       textElement.style.backgroundColor = '#afb8c133';
       const previousInline = paragraph.children[inlineIndex - 1];
       if (isFirstInTextNode && (inlineIndex === 0 || matita.isVoid(previousInline) || !previousInline.config.code)) {
@@ -1606,6 +1608,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
 }
 interface TextDecorationInfo {
   charactersBoundingRectangle: ViewRectangle;
+  charactersLineBoundingRectangle: ViewRectangle;
   paragraphReference: matita.BlockReference;
 }
 interface SpellingMistakeOverlayInfo {
@@ -2093,6 +2096,82 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
       }
     >
       {searchBoxChildren}
+    </div>
+  );
+}
+interface SpellingBoxRenderMessage {
+  misspelledWord: string;
+  suggestions: string[];
+  visibleBoundingRect: ViewRectangle;
+  wordBoundingRect: ViewRectangle;
+  replaceWith: (suggestion: string) => void;
+}
+interface SpellingBoxProps {
+  renderMessage$: Source<SpellingBoxRenderMessage | null>;
+  spellingBoxRef: RefObject<HTMLDivElement>;
+}
+function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
+  const { renderMessage$, spellingBoxRef } = props;
+  const renderMessageMaybe = use$(renderMessage$, undefined, true);
+  const spellingBoxBoundingRectRef = useRef<DOMRect | null>(null);
+  const [_, setDummyState] = useState({});
+  useLayoutEffect(() => {
+    if (spellingBoxBoundingRectRef.current !== null || isNone(renderMessageMaybe) || renderMessageMaybe.value === null || spellingBoxRef.current === null) {
+      spellingBoxBoundingRectRef.current = null;
+      return;
+    }
+    spellingBoxBoundingRectRef.current = spellingBoxRef.current.getBoundingClientRect();
+    setDummyState({});
+  });
+  if (isNone(renderMessageMaybe)) {
+    return null;
+  }
+  const renderMessage = renderMessageMaybe.value;
+  if (renderMessage === null) {
+    return null;
+  }
+  const { suggestions, visibleBoundingRect, wordBoundingRect, replaceWith } = renderMessage;
+  const spellingBoxBoundingRect = spellingBoxBoundingRectRef.current;
+  let positionLeft: number;
+  let positionTop: number;
+  if (spellingBoxBoundingRect === null) {
+    positionLeft = 0;
+    positionTop = 0;
+  } else {
+    if (wordBoundingRect.left + spellingBoxBoundingRect.width <= visibleBoundingRect.right) {
+      positionLeft = wordBoundingRect.left;
+    } else {
+      positionLeft = Math.max(visibleBoundingRect.right - spellingBoxBoundingRect.width, visibleBoundingRect.left);
+    }
+    if (wordBoundingRect.top - spellingBoxBoundingRect.height >= visibleBoundingRect.top) {
+      positionTop = wordBoundingRect.top - spellingBoxBoundingRect.height;
+    } else {
+      positionTop = wordBoundingRect.bottom;
+    }
+  }
+  return (
+    <div
+      ref={spellingBoxRef}
+      className="spelling-box"
+      style={{
+        left: positionLeft,
+        top: positionTop,
+        maxWidth: visibleBoundingRect.right - positionLeft,
+        maxHeight: visibleBoundingRect.bottom - positionTop,
+      }}
+    >
+      <div className="spelling-box__info">{suggestions.length === 0 ? 'Unrecognized word' : 'Did you mean:'}</div>
+      {suggestions.map((suggestion) => (
+        <button
+          className="spelling-box__suggestion"
+          key={suggestion}
+          onClick={() => {
+            replaceWith(suggestion);
+          }}
+        >
+          {suggestion}
+        </button>
+      ))}
     </div>
   );
 }
@@ -6437,6 +6516,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_searchOverlayContainerElement!: HTMLElement;
   private $p_searchElementContainerElement!: HTMLElement;
   private $p_spellingMistakesOverlayContainerElement!: HTMLElement;
+  private $p_spellingBoxElement!: HTMLElement;
   private $p_searchInputRef = createRef<HTMLInputElement>();
   private $p_selectionView$: CurrentValueDistributor<SelectionViewMessage>;
   private $p_searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
@@ -6546,6 +6626,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_spellingMistakesOverlayContainerElement = document.createElement('div');
     this.$p_selectionCursorsViewContainerElement = document.createElement('div');
     this.$p_searchOverlayContainerElement = document.createElement('div');
+    this.$p_spellingBoxElement = document.createElement('div');
     pipe(
       this.stateControl.afterMutationPart$,
       map((message) => message.viewDelta),
@@ -6576,10 +6657,31 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addEventListener(this.$p_inputControl.inputElement, 'compositionend', this.$p_clearKeys.bind(this), this);
     addWindowEventListener('focus', () => this.$p_onWindowFocus.bind(this), this);
     addWindowEventListener('blur', this.$p_onWindowBlur.bind(this), this);
+    const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
+    this.add(topLevelContentViewContainerElementReactiveResizeObserver);
+    const topLevelContentViewContentWidthResize$ = pipe(
+      topLevelContentViewContainerElementReactiveResizeObserver.entries$,
+      filterMap((entries) => {
+        // TODO.
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const entry = entries[i];
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if (entry.borderBoxSize && entry.borderBoxSize.length > 0) {
+            return Some(entry.borderBoxSize[0].inlineSize);
+          }
+        }
+        return None;
+      }),
+      memoConsecutive((lastWidth, currentWidth) => lastWidth === currentWidth),
+      debounce(() => timer(400), true),
+    );
+    topLevelContentViewContainerElementReactiveResizeObserver.observe(this.$p_topLevelContentViewContainerElement, {
+      box: 'border-box',
+    });
     const pointerDownLeft$ = Distributor<PointerEvent>();
     const pointerUpLeft$ = Distributor<PointerEvent>();
     const filterLeft = filter<PointerEvent>((event) => event.pointerType === 'mouse' && event.button === 0);
-    const dragElements = [
+    const mouseElements = [
       this.$p_topLevelContentViewContainerElement,
       this.$p_spellingMistakesOverlayContainerElement,
       this.$p_selectionRectsViewContainerElement,
@@ -6587,7 +6689,290 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_searchOverlayContainerElement,
       this.$p_inputControl.inputElement,
     ];
-    dragElements.forEach((element) => {
+    const mouseMove$ = Distributor<MouseEvent>();
+    mouseElements.forEach((element) => {
+      pipe(
+        fromReactiveValue<[MouseEvent]>((callback, disposable) => addEventListener(element, 'mousemove', callback, disposable, { passive: true })),
+        map((args) => args[0]),
+        subscribe(mouseMove$),
+      );
+    });
+    const mouseLeave$ = pipe(
+      fromReactiveValue<[MouseEvent]>((callback, disposable) =>
+        addEventListener(this.$p_containerHtmlElement, 'mouseleave', callback, disposable, { passive: true }),
+      ),
+      map((args) => args[0]),
+    );
+    const spellingBoxRenderMessage$ = LastValueDistributor<SpellingBoxRenderMessage | null>();
+    let didCancelMouseMove = false;
+    let textDecorationInfos: TextDecorationInfo[] | null = null;
+    const cancelMouseMove = (): void => {
+      didCancelMouseMove = true;
+      requestAnimationFrameDisposable(() => {
+        didCancelMouseMove = false;
+      }, this);
+      if (isSome(spellingBoxRenderMessage$.lastValue) && spellingBoxRenderMessage$.lastValue.value !== null) {
+        spellingBoxRenderMessage$(Push(null));
+        textDecorationInfos = null;
+        return;
+      }
+    };
+    const scroll$ = pipe(
+      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+      share(),
+    );
+    const cancelMouseMove$ = pipe(
+      fromArray<Source<unknown>>([
+        mouseLeave$,
+        scroll$,
+        this.stateControl.afterMutationPart$,
+        this.stateControl.selectionChange$,
+        this.stateControl.customCollapsedSelectionTextConfigChange$,
+        topLevelContentViewContentWidthResize$,
+      ]),
+      flat(),
+      share(),
+    );
+    pipe(
+      cancelMouseMove$,
+      subscribe((event) => {
+        assert(event.type === PushType);
+        cancelMouseMove();
+      }, this),
+    );
+    const spellingBoxRef = createRef<HTMLDivElement>();
+    pipe(
+      mouseMove$,
+      subscribe<MouseEvent>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        if (
+          didCancelMouseMove ||
+          isNone(spellingBoxRenderMessage$.lastValue) ||
+          spellingBoxRenderMessage$.lastValue.value === null ||
+          spellingBoxRef.current === null
+        ) {
+          return;
+        }
+        assertIsNotNullish(textDecorationInfos);
+        const mouseMoveEvent = event.value;
+        const viewPosition: ViewPosition = {
+          left: mouseMoveEvent.x,
+          top: mouseMoveEvent.y,
+        };
+        const spellingBoxElement = spellingBoxRef.current;
+        const spellingBoxBoundingRect = spellingBoxElement.getBoundingClientRect();
+        if (
+          spellingBoxBoundingRect.left <= viewPosition.left &&
+          viewPosition.left <= spellingBoxBoundingRect.right &&
+          spellingBoxBoundingRect.top <= viewPosition.top &&
+          viewPosition.top <= spellingBoxBoundingRect.bottom
+        ) {
+          return;
+        }
+        const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
+        const relativeViewPosition: ViewPosition = {
+          left: viewPosition.left + relativeOffsetLeft,
+          top: viewPosition.top + relativeOffsetTop,
+        };
+        for (let i = 0; i < textDecorationInfos.length; i++) {
+          const textDecorationInfo = textDecorationInfos[i];
+          const { charactersLineBoundingRectangle } = textDecorationInfo;
+          if (
+            charactersLineBoundingRectangle.left <= relativeViewPosition.left &&
+            relativeViewPosition.left <= charactersLineBoundingRectangle.right &&
+            charactersLineBoundingRectangle.top <= relativeViewPosition.top &&
+            relativeViewPosition.top <= charactersLineBoundingRectangle.bottom
+          ) {
+            return;
+          }
+        }
+        spellingBoxRenderMessage$(Push(null));
+        textDecorationInfos = null;
+      }, this),
+    );
+    pipe(
+      mouseMove$,
+      debounce(() => pipe(timer(250), takeUntil(cancelMouseMove$))),
+      subscribe<MouseEvent>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        if (
+          didCancelMouseMove ||
+          this.$p_spellCheckControl === null ||
+          !this.$p_spellCheckControl.getIsLoaded() ||
+          (isSome(spellingBoxRenderMessage$.lastValue) && spellingBoxRenderMessage$.lastValue.value !== null)
+        ) {
+          return;
+        }
+        const mouseMoveEvent = event.value;
+        const viewPosition: ViewPosition = {
+          left: mouseMoveEvent.x,
+          top: mouseMoveEvent.y,
+        };
+        if (mouseMoveEvent.buttons !== 0) {
+          return;
+        }
+        const position = this.$p_calculatePositionFromViewPosition(viewPosition, false, false, true);
+        if (position === null) {
+          return;
+        }
+        if (position.type !== HitPositionType.ParagraphText) {
+          throwUnreachable();
+        }
+        const {
+          isPastPreviousCharacterHalfPoint,
+          pointWithContentReference: { point },
+        } = position;
+        if (!matita.isParagraphPoint(point)) {
+          return;
+        }
+        const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
+        const { offset } = point;
+        const spellingMistakes = this.$p_spellCheckControl.getSpellingMistakesInParagraphAtParagraphReference(paragraphReference);
+        if (spellingMistakes === null) {
+          return;
+        }
+        let hoveredSpellingMistake: ParagraphSpellingMistake | undefined;
+        for (let i = 0; i < spellingMistakes.length; i++) {
+          const spellingMistake = spellingMistakes[i];
+          const { startOffset, endOffset } = spellingMistake;
+          if ((startOffset < offset && offset < endOffset) || (isPastPreviousCharacterHalfPoint ? offset === endOffset : offset === startOffset)) {
+            hoveredSpellingMistake = spellingMistake;
+            break;
+          }
+        }
+        if (hoveredSpellingMistake === undefined) {
+          return;
+        }
+        const hoveredSpellingMistakeStartOffset = hoveredSpellingMistake.startOffset;
+        const hoveredSpellingMistakeEndOffset = hoveredSpellingMistake.endOffset;
+        const misspelledWord = matita
+          .sliceParagraphChildren(
+            matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point),
+            hoveredSpellingMistakeStartOffset,
+            hoveredSpellingMistakeEndOffset,
+          )
+          .map((textNode) => {
+            matita.assertIsText(textNode);
+            return textNode.text;
+          })
+          .join('');
+        const suggestions = this.$p_spellCheckControl.suggestMisspelledWord(misspelledWord);
+        const { visibleLeft, visibleRight } = this.$p_getVisibleLeftAndRight();
+        const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
+        const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
+        const visibleBoundingRect = makeViewRectangle(relativeOffsetLeft, relativeOffsetTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+        const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
+        textDecorationInfos = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
+          paragraphReference,
+          hoveredSpellingMistakeStartOffset,
+          hoveredSpellingMistakeEndOffset,
+          this.$p_getContainerScrollWidth(),
+          relativeOffsetLeft,
+          relativeOffsetTop,
+          paragraphMeasurement,
+        );
+        const firstTextDecorationInfo = textDecorationInfos[0];
+        let wordBoundingRectLeft = firstTextDecorationInfo.charactersBoundingRectangle.left;
+        let wordBoundingRectTop = firstTextDecorationInfo.charactersBoundingRectangle.top;
+        let wordBoundingRectBottom = firstTextDecorationInfo.charactersBoundingRectangle.bottom;
+        let wordBoundingRectRight = firstTextDecorationInfo.charactersBoundingRectangle.right;
+        for (let i = 0; i < textDecorationInfos.length; i++) {
+          const textDecorationInfo = textDecorationInfos[i];
+          const { charactersBoundingRectangle } = textDecorationInfo;
+          if (charactersBoundingRectangle.left < wordBoundingRectLeft) {
+            wordBoundingRectLeft = charactersBoundingRectangle.left;
+          }
+          if (charactersBoundingRectangle.top < wordBoundingRectTop) {
+            wordBoundingRectTop = charactersBoundingRectangle.top;
+          }
+          if (charactersBoundingRectangle.right > wordBoundingRectRight) {
+            wordBoundingRectRight = charactersBoundingRectangle.right;
+          }
+          if (charactersBoundingRectangle.bottom > wordBoundingRectBottom) {
+            wordBoundingRectBottom = charactersBoundingRectangle.bottom;
+          }
+        }
+        const wordBoundingRect = makeViewRectangle(
+          wordBoundingRectLeft,
+          wordBoundingRectTop,
+          wordBoundingRectRight - wordBoundingRectLeft,
+          wordBoundingRectBottom - wordBoundingRectTop,
+        );
+        const paragraphLength = matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point));
+        spellingBoxRenderMessage$(
+          Push({
+            misspelledWord,
+            suggestions,
+            visibleBoundingRect,
+            wordBoundingRect,
+            replaceWith: (suggestion) => {
+              this.stateControl.queueUpdate(
+                () => {
+                  this.$p_inputControl.focusButDoNotScrollTo();
+                  let paragraph: matita.Paragraph<ParagraphConfig, TextConfig, VoidConfig>;
+                  try {
+                    paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point);
+                  } catch (error) {
+                    return;
+                  }
+                  const paragraphLengthNow = matita.getParagraphLength(paragraph);
+                  if (paragraphLength !== paragraphLengthNow) {
+                    return;
+                  }
+                  const inlineNodesWhereWordShouldBe = matita.sliceParagraphChildren(
+                    paragraph,
+                    hoveredSpellingMistakeStartOffset,
+                    hoveredSpellingMistakeEndOffset,
+                  );
+                  if (
+                    !inlineNodesWhereWordShouldBe.every(matita.isText) ||
+                    inlineNodesWhereWordShouldBe.map((textNode) => textNode.text).join('') !== misspelledWord
+                  ) {
+                    return;
+                  }
+                  const spellingMistakeStartPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
+                    paragraphReference,
+                    hoveredSpellingMistakeStartOffset,
+                  );
+                  const spellingMistakeEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, hoveredSpellingMistakeEndOffset);
+                  const replaceRange = matita.makeRange(
+                    matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
+                    spellingMistakeStartPoint,
+                    spellingMistakeEndPoint,
+                    matita.generateId(),
+                  );
+                  this.stateControl.delta.applyMutation(
+                    matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
+                      matita.makeText(
+                        getInsertTextConfigAtSelectionRange(
+                          this.stateControl.stateView.document,
+                          this.stateControl.stateView.customCollapsedSelectionTextConfig,
+                          matita.makeSelectionRange(
+                            [replaceRange],
+                            replaceRange.id,
+                            replaceRange.id,
+                            matita.SelectionRangeIntention.Text,
+                            {},
+                            matita.generateId(),
+                          ),
+                        ),
+                        suggestion,
+                      ),
+                    ]),
+                  );
+                },
+                { [doNotScrollToSelectionAfterChangeDataKey]: true },
+              );
+            },
+          }),
+        );
+      }, this),
+    );
+    mouseElements.forEach((element) => {
       element.classList.add('hidden-selection');
       element.style.userSelect = 'none';
       element.style.cursor = 'text';
@@ -6823,7 +7208,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             }
             const pointerMove$ = pipe(
               fromArray(
-                dragElements.map((element) => {
+                mouseElements.map((element) => {
                   return pipe(
                     fromReactiveValue<[PointerEvent]>((callback, disposable) => addEventListener(element, 'pointermove', callback, disposable)),
                     map((args) => args[0]),
@@ -7315,10 +7700,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     );
     this.$p_commitDirtyChanges();
     this.$p_topLevelContentViewContainerElement.appendChild(topLevelContentRenderControl.containerHtmlElement);
-    const renderReactNodeIntoHtmlContainerElement = (element: React.ReactNode, containerElement: HTMLElement, identifierPrefix: string): void => {
-      const root = createRoot(containerElement, {
-        identifierPrefix,
-      });
+    const renderReactNodeIntoHtmlContainerElement = (element: React.ReactNode, containerElement: HTMLElement): void => {
+      const root = createRoot(containerElement);
       root.render(element);
       this.add(
         Disposable(() => {
@@ -7334,17 +7717,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         cursorElement={this.$p_selectionCursorsViewContainerElement}
       />,
       this.$p_selectionRectsViewContainerElement,
-      'selection-view-',
     );
     renderReactNodeIntoHtmlContainerElement(
       <SpellingMistakesOverlay spellingMistakeOverlay$={this.$p_spellingMistakesOverlay$} />,
       this.$p_spellingMistakesOverlayContainerElement,
-      'spelling-mistakes-overlay-',
     );
+    renderReactNodeIntoHtmlContainerElement(<SearchOverlay searchOverlay$={this.$p_searchOverlay$} />, this.$p_searchOverlayContainerElement);
     renderReactNodeIntoHtmlContainerElement(
-      <SearchOverlay searchOverlay$={this.$p_searchOverlay$} />,
-      this.$p_searchOverlayContainerElement,
-      'search-overlay-',
+      <SpellingBox renderMessage$={spellingBoxRenderMessage$} spellingBoxRef={spellingBoxRef} />,
+      this.$p_spellingBoxElement,
     );
     this.$p_searchElementContainerElement = document.createElement('div');
     this.$p_containerHtmlElement.style.position = 'relative';
@@ -7356,6 +7737,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_topLevelContentViewContainerElement,
       this.$p_selectionCursorsViewContainerElement,
       this.$p_searchElementContainerElement,
+      this.$p_spellingBoxElement,
     );
     let searchContainerWidth$: CurrentValueDistributor<number> | undefined;
     const getContainerWidth = (): number => {
@@ -7600,33 +7982,14 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           inputRef={this.$p_searchInputRef}
         />,
         this.$p_searchElementContainerElement,
-        'search-box-',
       );
     }, this);
     this.rootHtmlElement.append(this.$p_containerHtmlElement);
-    const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
-    this.add(topLevelContentViewContainerElementReactiveResizeObserver);
-    const topLevelContentViewContentWidthResize$ = pipe(
-      topLevelContentViewContainerElementReactiveResizeObserver.entries$,
-      filterMap((entries) => {
-        // TODO.
-        for (let i = entries.length - 1; i >= 0; i--) {
-          const entry = entries[i];
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          if (entry.borderBoxSize && entry.borderBoxSize.length > 0) {
-            return Some(entry.borderBoxSize[0].inlineSize);
-          }
-        }
-        return None;
-      }),
-      memoConsecutive((lastWidth, currentWidth) => lastWidth === currentWidth),
-      debounce(() => timer(400), true),
-    );
-    const scroll$ = pipe(
-      fromReactiveValue<[globalThis.Event]>((callback, disposable) => addWindowEventListener('scroll', callback, disposable, { passive: true })),
+    const scrollThrottled$ = pipe(
+      scroll$,
       throttle(() => timer(16)),
     );
-    const scrollAndResize$ = pipe(fromArray([topLevelContentViewContentWidthResize$, scroll$]), flat()<unknown>);
+    const scrollAndResize$ = pipe(fromArray([topLevelContentViewContentWidthResize$, scrollThrottled$]), flat()<unknown>);
     pipe(
       fromArray([
         this.$p_isSearchElementContainerVisible$,
@@ -7694,9 +8057,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$p_replaceViewSelectionRanges(true);
       }, this),
     );
-    topLevelContentViewContainerElementReactiveResizeObserver.observe(this.$p_topLevelContentViewContainerElement, {
-      box: 'border-box',
-    });
     pipe(
       fromArray([
         pipe(
@@ -8233,6 +8593,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           horizontalOffset,
           null,
         );
+        assertIsNotNullish(position);
         return {
           pointWithContentReference: position.pointWithContentReference,
           isWrappedLineStart: position.isWrappedLineStart,
@@ -8246,6 +8607,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         horizontalOffset,
         null,
       );
+      assertIsNotNullish(position);
       return {
         pointWithContentReference: position.pointWithContentReference,
         isWrappedLineStart: position.isWrappedLineStart,
@@ -8286,6 +8648,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         horizontalOffset,
         null,
       );
+      assertIsNotNullish(position);
       return {
         pointWithContentReference: position.pointWithContentReference,
         isWrappedLineStart: position.isWrappedLineStart,
@@ -8299,6 +8662,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       horizontalOffset,
       null,
     );
+    assertIsNotNullish(position);
     return {
       pointWithContentReference: position.pointWithContentReference,
       isWrappedLineStart: position.isWrappedLineStart,
@@ -9007,7 +9371,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     isFirstInParagraphOrIsPreviousLineEndingWithLineBreak: boolean,
     isLastInParagraph: boolean,
     checkboxMarkerParagraphReference: matita.BlockReference | null,
-  ): ParagraphTextHitPosition {
+    isExact = false,
+  ): ParagraphTextHitPosition | null {
     if (measuredParagraphLineRange.characterRectangles.length === 0) {
       return {
         type: HitPositionType.ParagraphText,
@@ -9027,8 +9392,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const characterRectangle = measuredParagraphLineRange.characterRectangles[j];
       const previousCharacterRightWithoutInfinity =
         j === 0 ? characterRectangle.left : Math.min(measuredParagraphLineRange.characterRectangles[j - 1].right, characterRectangle.left);
-      const previousCharacterRight = j === 0 ? -Infinity : Math.min(measuredParagraphLineRange.characterRectangles[j - 1].right, characterRectangle.left);
-      const characterRight = j === measuredParagraphLineRange.characterRectangles.length - 1 ? Infinity : characterRectangle.right;
+      const previousCharacterRight =
+        j === 0
+          ? isExact
+            ? characterRectangle.left
+            : -Infinity
+          : Math.min(measuredParagraphLineRange.characterRectangles[j - 1].right, characterRectangle.left);
+      const characterRight = j === measuredParagraphLineRange.characterRectangles.length - 1 && !isExact ? Infinity : characterRectangle.right;
       if (
         !(
           previousCharacterRight - this.$p_positionCalculationEpsilon <= horizontalOffset &&
@@ -9061,7 +9431,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         isWrappedLinePreviousEnd: !isLastInParagraph && !measuredParagraphLineRange.endsWithLineBreak && pointOffset === measuredParagraphLineRange.endOffset,
       };
     }
-    throwUnreachable();
+    if (!isExact) {
+      throwUnreachable();
+    }
+    return null;
   }
   private $p_calculatePositionInRelativeParagraphMeasurementInParagraphReferenceAtMeasuredParagraphLineRangeIndexAtHorizontalOffset(
     relativeParagraphMeasurement: RelativeParagraphMeasureCacheValue,
@@ -9069,7 +9442,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     measuredParagraphLineRangeIndex: number,
     horizontalOffset: number,
     checkboxMarkerParagraphReference: matita.BlockReference | null,
-  ): ParagraphTextHitPosition {
+  ): ParagraphTextHitPosition | null {
     const measuredParagraphLineRange = relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex];
     const isFirstInParagraphOrIsPreviousLineEndingWithLineBreak =
       measuredParagraphLineRangeIndex === 0 || relativeParagraphMeasurement.measuredParagraphLineRanges[measuredParagraphLineRangeIndex - 1].endsWithLineBreak;
@@ -9087,7 +9460,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     viewPosition: ViewPosition,
     isSnapIfPastBoundary: boolean,
     isReturnCheckboxMarkerHitIfHitCheckboxMarker: boolean,
+    isExact = false,
   ): HitPosition | null {
+    assert(!(isExact && (isSnapIfPastBoundary || isReturnCheckboxMarkerHitIfHitCheckboxMarker)));
     const hitElements = document.elementsFromPoint(viewPosition.left, viewPosition.top);
     const firstContentHitElement = hitElements.find(
       (hitElement) => hitElement === this.$p_topLevelContentViewContainerElement || this.$p_topLevelContentViewContainerElement.contains(hitElement),
@@ -9154,9 +9529,13 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       const possibleLine = possibleLines[i];
       const { paragraphReference, measuredParagraphLineRange, isFirstInParagraph, isLastInParagraph } = possibleLine;
       const { boundingRect } = measuredParagraphLineRange;
-      const lineTop = i === 0 ? -Infinity : boundingRect.top;
+      const lineTop = i === 0 && !isExact ? -Infinity : boundingRect.top;
       const lineBottom =
-        i === possibleLines.length - 1 ? Infinity : Math.max(possibleLines[i + 1].measuredParagraphLineRange.boundingRect.top, boundingRect.bottom);
+        i === possibleLines.length - 1
+          ? isExact
+            ? boundingRect.bottom
+            : Infinity
+          : Math.max(possibleLines[i + 1].measuredParagraphLineRange.boundingRect.top, boundingRect.bottom);
       if (!(lineTop - this.$p_positionCalculationEpsilon <= viewPosition.top && viewPosition.top <= lineBottom + this.$p_positionCalculationEpsilon)) {
         continue;
       }
@@ -9213,6 +9592,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         isFirstInParagraph || possibleLines[i - 1].measuredParagraphLineRange.endsWithLineBreak,
         isLastInParagraph,
         checkboxMarkerParagraphReference,
+        isExact,
       );
     }
     return null;
@@ -9617,7 +9997,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     containerWidth: number,
     relativeOffsetLeft: number,
     relativeOffsetTop: number,
-    paragraphMeasurement: RelativeParagraphMeasureCacheValue,
+    paragraphMeasurement: AbsoluteParagraphMeasurement,
   ): ViewRangeInfo[] {
     const visibleLineBreakPadding = 9;
     const viewRangeInfos: ViewRangeInfo[] = [];
@@ -9705,7 +10085,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     containerWidth: number,
     relativeOffsetLeft: number,
     relativeOffsetTop: number,
-    paragraphMeasurement: RelativeParagraphMeasureCacheValue,
+    paragraphMeasurement: AbsoluteParagraphMeasurement,
   ): TextDecorationInfo[] {
     const textDecorationInfos: TextDecorationInfo[] = [];
     for (let i = 0; i < paragraphMeasurement.measuredParagraphLineRanges.length; i++) {
@@ -9739,9 +10119,16 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         measuredParagraphLineRange.characterRectangles[includedLineEndOffset - measuredParagraphLineRange.startOffset - 1].right +
         relativeOffsetLeft -
         lineRectLeft;
+      const restrictedWidth = Math.min(containerWidth - lineRectLeft, lineRectWidth);
       if (lineRectLeft < containerWidth) {
         textDecorationInfos.push({
-          charactersBoundingRectangle: makeViewRectangle(lineRectLeft, lineRectTop, Math.min(containerWidth - lineRectLeft, lineRectWidth), lineRectHeight),
+          charactersBoundingRectangle: makeViewRectangle(lineRectLeft, lineRectTop, restrictedWidth, lineRectHeight),
+          charactersLineBoundingRectangle: makeViewRectangle(
+            lineRectLeft,
+            measuredParagraphLineRange.boundingRect.top + relativeOffsetTop,
+            restrictedWidth,
+            measuredParagraphLineRange.boundingRect.height,
+          ),
           paragraphReference,
         });
       }
