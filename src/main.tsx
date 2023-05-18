@@ -2156,6 +2156,7 @@ function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
       style={{
         left: positionLeft,
         top: positionTop,
+        // TODO.
         maxWidth: visibleBoundingRect.right - positionLeft,
         maxHeight: visibleBoundingRect.bottom - positionTop,
       }}
@@ -6501,6 +6502,8 @@ class ListStyleInjectionControl extends DisposableClass {
     );
   }
 }
+// prettier-ignore
+const commonTwoLetterWords = new Set(['am', 'an', 'as', 'at', 'be', 'bi', 'by', 'do', 'ex', 'go', 'he', 'hi', 'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'ok', 'on', 'or', 'so', 'to', 'un', 'up', 'us', 'we']);
 class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
   rootHtmlElement: HTMLElement;
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -6903,10 +6906,16 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           wordBoundingRectBottom - wordBoundingRectTop,
         );
         const paragraphLength = matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point));
+        const fixedSuggestions = suggestions.filter((suggestion) => {
+          const words = suggestion.normalize().toLowerCase().split(/[ -]/g);
+          return words.every(
+            (word, i) => word.length > 2 || (i === 0 && (word === 'a' || word === 'i')) || (word.length === 2 && commonTwoLetterWords.has(word)),
+          );
+        });
         spellingBoxRenderMessage$(
           Push({
             misspelledWord,
-            suggestions,
+            suggestions: fixedSuggestions,
             visibleBoundingRect,
             wordBoundingRect,
             replaceWith: (suggestion) => {
@@ -6945,24 +6954,69 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                     spellingMistakeEndPoint,
                     matita.generateId(),
                   );
-                  this.stateControl.delta.applyMutation(
-                    matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
-                      matita.makeText(
-                        getInsertTextConfigAtSelectionRange(
-                          this.stateControl.stateView.document,
-                          this.stateControl.stateView.customCollapsedSelectionTextConfig,
-                          matita.makeSelectionRange(
-                            [replaceRange],
-                            replaceRange.id,
-                            replaceRange.id,
-                            matita.SelectionRangeIntention.Text,
-                            {},
-                            matita.generateId(),
-                          ),
-                        ),
-                        suggestion,
+                  const selectionBeforeRange = matita.makeRange(
+                    matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
+                    spellingMistakeEndPoint,
+                    spellingMistakeEndPoint,
+                    matita.generateId(),
+                  );
+                  const selectionBefore: { value: matita.Selection } = {
+                    value: matita.makeSelection([
+                      matita.makeSelectionRange(
+                        [selectionBeforeRange],
+                        selectionBeforeRange.id,
+                        selectionBeforeRange.id,
+                        matita.SelectionRangeIntention.Text,
+                        {},
+                        matita.generateId(),
                       ),
                     ]),
+                  };
+                  const spellingMistakeReplacedEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
+                    paragraphReference,
+                    hoveredSpellingMistakeStartOffset + suggestion.length,
+                  );
+                  const selectionAfterRange = matita.makeRange(
+                    matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
+                    spellingMistakeReplacedEndPoint,
+                    spellingMistakeReplacedEndPoint,
+                    matita.generateId(),
+                  );
+                  const selectionAfter: { value: matita.Selection } = {
+                    value: matita.makeSelection([
+                      matita.makeSelectionRange(
+                        [selectionAfterRange],
+                        selectionAfterRange.id,
+                        selectionAfterRange.id,
+                        matita.SelectionRangeIntention.Text,
+                        {},
+                        matita.generateId(),
+                      ),
+                    ]),
+                  };
+                  this.stateControl.delta.applyUpdate(
+                    () => {
+                      this.stateControl.delta.applyMutation(
+                        matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
+                          matita.makeText(
+                            getInsertTextConfigAtSelectionRange(
+                              this.stateControl.stateView.document,
+                              this.stateControl.stateView.customCollapsedSelectionTextConfig,
+                              matita.makeSelectionRange(
+                                [replaceRange],
+                                replaceRange.id,
+                                replaceRange.id,
+                                matita.SelectionRangeIntention.Text,
+                                {},
+                                matita.generateId(),
+                              ),
+                            ),
+                            suggestion,
+                          ),
+                        ]),
+                      );
+                    },
+                    { [matita.RedoUndoUpdateKey.SelectionBefore]: selectionBefore, [matita.RedoUndoUpdateKey.SelectionAfter]: selectionAfter },
                   );
                 },
                 { [doNotScrollToSelectionAfterChangeDataKey]: true },

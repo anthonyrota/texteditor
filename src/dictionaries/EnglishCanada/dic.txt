@@ -49587,3 +49587,12 @@ cosecant/MS
 peddler/MS
 psalmody/M
 vasculature/M
+macbook/MS
+MacBook/MS
+gaslighting
+gaslighted
+scot
+Pho/M
+ramen/M
+pincher/MS
+UAV/MS

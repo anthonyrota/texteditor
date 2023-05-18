@@ -6747,10 +6747,10 @@ function applyMutation<
               if (point.offset <= paragraphPoint.offset) {
                 return point;
               }
-              return changeParagraphPointOffset(
-                point,
-                paragraphPoint.offset + Math.max(point.offset - paragraphPoint.offset - removeCount, 0) + insertChildrenLength,
-              );
+              if (point.offset <= paragraphPoint.offset + removeCount) {
+                return paragraphPoint;
+              }
+              return changeParagraphPointOffset(point, point.offset - removeCount + insertChildrenLength);
             };
             return makeRange(
               contentReference,
