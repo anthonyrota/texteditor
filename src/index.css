@@ -215,8 +215,11 @@ button {
   padding: 0 0.3em;
   font-weight: bold;
 }
-.spelling-box__suggestion:hover {
-  background-color: #eee;
+.spelling-box__suggestion--focused {
+  background-color: #eaeaea;
+}
+.spelling-box__suggestion--can-hover:hover {
+  background-color: #eaeaea;
 }
 .list-item--checklist__checkbox {
   display: flex;

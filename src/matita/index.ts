@@ -2435,7 +2435,7 @@ function areSelectionRangesEqual(selectionRange1: SelectionRange, selectionRange
     selectionRange1.ranges.every((range, i) => areRangesEqual(range, selectionRange2.ranges[i])) &&
     selectionRange1.anchorRangeId === selectionRange2.anchorRangeId &&
     selectionRange1.focusRangeId === selectionRange2.focusRangeId &&
-    Object.keys(selectionRange1.data).length === Object.keys(selectionRange2).length &&
+    Object.keys(selectionRange1.data).length === Object.keys(selectionRange2.data).length &&
     Object.keys(selectionRange1.data).every((key) => selectionRange1.data[key] === selectionRange2.data[key]) &&
     selectionRange1.id === selectionRange2.id
   );
@@ -4432,9 +4432,6 @@ function makeStateControl<
       setSelection: (selection, keepCollapsedSelectionTextConfigWhenSelectionChanges = false, data?: SelectionChangeData) => {
         assertIsNotNullish(delta);
         assertIsNotNullish(updateDataStack);
-        if (areSelectionsEqual(state.selection, selection)) {
-          return;
-        }
         const currentSelection = sortAndMergeAndFixSelectionRanges(state.document, stateControlConfig, selection.selectionRanges);
         const previousSelection = state.selection;
         state.selection = currentSelection;
@@ -4452,13 +4449,6 @@ function makeStateControl<
       setCustomCollapsedSelectionTextConfig: (newTextConfig) => {
         assertIsNotNullish(delta);
         assertIsNotNullish(updateDataStack);
-        if (
-          state.customCollapsedSelectionTextConfig === null
-            ? newTextConfig === null
-            : newTextConfig !== null && areNodeConfigsEqual(state.customCollapsedSelectionTextConfig, newTextConfig)
-        ) {
-          return;
-        }
         const previousCustomCollapsedSelectionTextConfig = state.customCollapsedSelectionTextConfig;
         state.customCollapsedSelectionTextConfig = newTextConfig;
         customCollapsedSelectionTextConfigChange$(

@@ -10,6 +10,7 @@ const sourceFolderPaths = [
 ];
 const additionalWords = readFileSync(join(__dirname, 'additionalEnglishWords.txt'), 'utf8');
 sourceFolderPaths.forEach((sourceFolderPath) => {
-  const originalDictionaryTxt = readFileSync(join(sourceFolderPath, 'dic.original.txt'));
-  writeFileSync(join(sourceFolderPath, 'dic.txt'), originalDictionaryTxt + additionalWords);
+  const originalDictionaryTxt = readFileSync(join(sourceFolderPath, 'dic.original.txt'), 'utf8');
+  const originalDictionaryTxtWithoutNoSuggest = originalDictionaryTxt.replace(/\/!$/gm, '').replace(/!/g, '');
+  writeFileSync(join(sourceFolderPath, 'dic.txt'), originalDictionaryTxtWithoutNoSuggest + additionalWords);
 });

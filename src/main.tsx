@@ -1790,7 +1790,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     width: number;
     dropDownPercent: number;
   };
-  const calculateWisthFromContainerWidth = (containerWidth: number): number => {
+  const calculateWidthFromContainerWidth = (containerWidth: number): number => {
     return containerWidth - searchBoxMargin * 2;
   };
   const selectAllTextCounter = use$(
@@ -1812,7 +1812,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   }, [selectAllTextCounter]);
   const { value: position } = use$<Position>(
     useCallback((sink: Sink<Position>) => {
-      const width$ = pipe(containerWidth$, map(calculateWisthFromContainerWidth));
+      const width$ = pipe(containerWidth$, map(calculateWidthFromContainerWidth));
       const dropDownPercent$ = CurrentValueDistributor<number>(isVisible$.currentValue ? 1 : 0);
       pipe(
         isVisible$,
@@ -1853,7 +1853,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     useMemo(
       () =>
         Some<Position>({
-          width: calculateWisthFromContainerWidth(containerWidth$.currentValue),
+          width: calculateWidthFromContainerWidth(containerWidth$.currentValue),
           dropDownPercent: isVisible$.currentValue ? 1 : 0,
         }),
       [],
@@ -2105,6 +2105,7 @@ interface SpellingBoxRenderMessage {
   visibleBoundingRect: ViewRectangle;
   wordBoundingRect: ViewRectangle;
   replaceWith: (suggestion: string) => void;
+  focusedSuggestionIndex: number | null;
 }
 interface SpellingBoxProps {
   renderMessage$: Source<SpellingBoxRenderMessage | null>;
@@ -2130,7 +2131,7 @@ function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
   if (renderMessage === null) {
     return null;
   }
-  const { suggestions, visibleBoundingRect, wordBoundingRect, replaceWith } = renderMessage;
+  const { suggestions, visibleBoundingRect, wordBoundingRect, replaceWith, focusedSuggestionIndex } = renderMessage;
   const spellingBoxBoundingRect = spellingBoxBoundingRectRef.current;
   let positionLeft: number;
   let positionTop: number;
@@ -2162,9 +2163,16 @@ function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
       }}
     >
       <div className="spelling-box__info">{suggestions.length === 0 ? 'Unrecognized word' : 'Did you mean:'}</div>
-      {suggestions.map((suggestion) => (
+      {suggestions.map((suggestion, i) => (
         <button
-          className="spelling-box__suggestion"
+          className={
+            'spelling-box__suggestion' +
+            (i === focusedSuggestionIndex
+              ? ' spelling-box__suggestion--focused'
+              : focusedSuggestionIndex === null
+              ? ' spelling-box__suggestion--can-hover'
+              : '')
+          }
           key={suggestion}
           onClick={() => {
             replaceWith(suggestion);
@@ -2304,6 +2312,7 @@ enum StandardCommand {
   ApplyUnorderedList = 'standard.applyUnorderedList',
   ApplyChecklist = 'standard.applyChecklist',
   ResetParagraphStyle = 'standard.resetParagraphStyle',
+  OpenQuickFixAtSelection = 'standard.openQuickFixAtSelection',
 }
 enum Platform {
   Apple = 'Apple',
@@ -2447,6 +2456,7 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+Enter', command: StandardCommand.ToggleChecklistChecked, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+Alt+Enter', command: StandardCommand.ToggleChecklistCheckedIndividually, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Period', command: StandardCommand.OpenQuickFixAtSelection, platform: Platform.Apple, context: Context.Editing },
 ];
 function getPlatform(): Platform | null {
   const userAgent = window.navigator.userAgent;
@@ -2934,7 +2944,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   [StandardCommand.CollapseMultipleSelectionRangesToAnchorRange]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
-        if (stateControl.stateView.selection.selectionRanges.length <= 1) {
+        if (stateControl.stateView.selection.selectionRanges.length === 0) {
           return;
         }
         const anchorSelectionRange = matita.getAnchorSelectionRangeFromSelection(stateControl.stateView.selection);
@@ -2946,7 +2956,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   [StandardCommand.CollapseMultipleSelectionRangesToFocusRange]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
-        if (stateControl.stateView.selection.selectionRanges.length <= 1) {
+        if (stateControl.stateView.selection.selectionRanges.length === 0) {
           return;
         }
         const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(stateControl.stateView.selection);
@@ -4878,6 +4888,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       });
     },
   },
+  [StandardCommand.OpenQuickFixAtSelection]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(documentRenderControl.openQuickFixAtSelection());
+    },
+  },
 };
 const virtualizedCommandRegister: VirtualizedCommandRegister = new Map(Object.entries(virtualizedCommandRegisterObject));
 function combineCommandRegistersOverride<
@@ -6503,7 +6519,7 @@ class ListStyleInjectionControl extends DisposableClass {
   }
 }
 // prettier-ignore
-const commonTwoLetterWords = new Set(['am', 'an', 'as', 'at', 'be', 'bi', 'by', 'do', 'ex', 'go', 'he', 'hi', 'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'ok', 'on', 'or', 'so', 'to', 'un', 'up', 'us', 'we']);
+const commonTwoLetterWords = new Set(['am', 'an', 'as', 'at', 'be', 'bi', 'by', 'do', 'ex', 'go', 'he', 'hi', 'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'ok', 'on', 'or', 're', 'so', 'to', 'un', 'up', 'us', 'we']);
 class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
   rootHtmlElement: HTMLElement;
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -6602,6 +6618,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_resetSynchronizedCursorVisibility$ = CurrentValueDistributor<undefined>(undefined);
   private $p_inputControl!: FloatingVirtualizedTextInputControl;
   private $p_spellCheckControl: SpellCheckControl | null = null;
+  private $p_spellingBoxQuickFixParagraphPoint$ = Distributor<matita.ParagraphPoint>();
+  private $p_isSpellingBoxOpen = false;
+  private $p_spellingBoxFocusedSuggestionIndex: number | null = null;
+  private $p_moveSpellingBoxFocusedSuggestionIndexUpDown$ = Distributor<-1 | 1>();
+  private $p_spellingBoxFixSpellingWithCurrentlyFocusedSuggestion$ = Distributor<undefined>();
+  private $p_spellingBoxCancelCurrent$ = Distributor<undefined>();
   init(): void {
     this.$p_spellCheckControl = new SpellCheckControl(this.stateControl, this.topLevelContentReference);
     this.add(this.$p_spellCheckControl);
@@ -6693,7 +6715,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_inputControl.inputElement,
     ];
     const mouseMove$ = Distributor<MouseEvent>();
-    mouseElements.forEach((element) => {
+    const mouseMoveElements = [...mouseElements, this.$p_spellingBoxElement];
+    mouseMoveElements.forEach((element) => {
       pipe(
         fromReactiveValue<[MouseEvent]>((callback, disposable) => addEventListener(element, 'mousemove', callback, disposable, { passive: true })),
         map((args) => args[0]),
@@ -6709,7 +6732,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const spellingBoxRenderMessage$ = LastValueDistributor<SpellingBoxRenderMessage | null>();
     let didCancelMouseMove = false;
     let textDecorationInfos: TextDecorationInfo[] | null = null;
-    const cancelMouseMove = (): void => {
+    const cancelSpellingBoxHandling = (): void => {
       didCancelMouseMove = true;
       requestAnimationFrameDisposable(() => {
         didCancelMouseMove = false;
@@ -6717,6 +6740,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (isSome(spellingBoxRenderMessage$.lastValue) && spellingBoxRenderMessage$.lastValue.value !== null) {
         spellingBoxRenderMessage$(Push(null));
         textDecorationInfos = null;
+        this.$p_isSpellingBoxOpen = false;
+        this.$p_spellingBoxFocusedSuggestionIndex = null;
         return;
       }
     };
@@ -6740,7 +6765,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       cancelMouseMove$,
       subscribe((event) => {
         assert(event.type === PushType);
-        cancelMouseMove();
+        cancelSpellingBoxHandling();
       }, this),
     );
     const spellingBoxRef = createRef<HTMLDivElement>();
@@ -6772,6 +6797,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           spellingBoxBoundingRect.top <= viewPosition.top &&
           viewPosition.top <= spellingBoxBoundingRect.bottom
         ) {
+          if (this.$p_spellingBoxFocusedSuggestionIndex === null) {
+            return;
+          }
+          this.$p_spellingBoxFocusedSuggestionIndex = null;
+          spellingBoxRenderMessage$(
+            Push({
+              ...spellingBoxRenderMessage$.lastValue.value,
+              focusedSuggestionIndex: null,
+            }),
+          );
+          return;
+        }
+        if (this.$p_spellingBoxFocusedSuggestionIndex !== null) {
           return;
         }
         const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
@@ -6791,10 +6829,295 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             return;
           }
         }
-        spellingBoxRenderMessage$(Push(null));
-        textDecorationInfos = null;
+        cancelSpellingBoxHandling();
       }, this),
     );
+    pipe(
+      this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$,
+      subscribe<-1 | 1>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const moveDirection = event.value;
+        if (
+          this.$p_spellingBoxFocusedSuggestionIndex === null ||
+          this.$p_spellingBoxFocusedSuggestionIndex === -1 ||
+          isNone(spellingBoxRenderMessage$.lastValue) ||
+          spellingBoxRenderMessage$.lastValue.value === null
+        ) {
+          throwUnreachable();
+        }
+        const suggestionsCount = spellingBoxRenderMessage$.lastValue.value.suggestions.length;
+        assert(suggestionsCount > 0);
+        this.$p_spellingBoxFocusedSuggestionIndex =
+          (this.$p_spellingBoxFocusedSuggestionIndex + moveDirection + suggestionsCount) % spellingBoxRenderMessage$.lastValue.value.suggestions.length;
+        spellingBoxRenderMessage$(
+          Push({
+            ...spellingBoxRenderMessage$.lastValue.value,
+            focusedSuggestionIndex: this.$p_spellingBoxFocusedSuggestionIndex,
+          }),
+        );
+      }, this),
+    );
+    pipe(
+      this.$p_spellingBoxFixSpellingWithCurrentlyFocusedSuggestion$,
+      subscribe((event) => {
+        assert(event.type === PushType);
+        if (
+          this.$p_spellingBoxFocusedSuggestionIndex === null ||
+          this.$p_spellingBoxFocusedSuggestionIndex === -1 ||
+          isNone(spellingBoxRenderMessage$.lastValue) ||
+          spellingBoxRenderMessage$.lastValue.value === null ||
+          spellingBoxRenderMessage$.lastValue.value.suggestions.length === 0
+        ) {
+          throwUnreachable();
+        }
+        const replacementSuggestion = spellingBoxRenderMessage$.lastValue.value.suggestions[this.$p_spellingBoxFocusedSuggestionIndex];
+        assertIsNotNullish(replacementSuggestion);
+        spellingBoxRenderMessage$.lastValue.value.replaceWith(replacementSuggestion);
+      }, this),
+    );
+    pipe(
+      this.$p_spellingBoxCancelCurrent$,
+      subscribe((event) => {
+        assert(event.type === PushType);
+        cancelSpellingBoxHandling();
+      }, this),
+    );
+    const handleSpellingBoxParagraphPointWithIsPastPreviousCharacterHalfPoint = (
+      paragraphPoint: matita.ParagraphPoint,
+      isPastPreviousCharacterHalfPoint: boolean | null,
+    ): void => {
+      assertIsNotNullish(this.$p_spellCheckControl);
+      const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(paragraphPoint);
+      const { offset } = paragraphPoint;
+      const spellingMistakes = this.$p_spellCheckControl.getSpellingMistakesInParagraphAtParagraphReference(paragraphReference);
+      if (spellingMistakes === null) {
+        return;
+      }
+      let hoveredSpellingMistake: ParagraphSpellingMistake | undefined;
+      for (let i = 0; i < spellingMistakes.length; i++) {
+        const spellingMistake = spellingMistakes[i];
+        const { startOffset, endOffset } = spellingMistake;
+        if (
+          isPastPreviousCharacterHalfPoint === null
+            ? startOffset <= offset && offset <= endOffset
+            : (startOffset < offset && offset < endOffset) || (isPastPreviousCharacterHalfPoint ? offset === endOffset : offset === startOffset)
+        ) {
+          hoveredSpellingMistake = spellingMistake;
+          break;
+        }
+      }
+      if (hoveredSpellingMistake === undefined) {
+        return;
+      }
+      const hoveredSpellingMistakeStartOffset = hoveredSpellingMistake.startOffset;
+      const hoveredSpellingMistakeEndOffset = hoveredSpellingMistake.endOffset;
+      const misspelledWord = matita
+        .sliceParagraphChildren(
+          matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, paragraphPoint),
+          hoveredSpellingMistakeStartOffset,
+          hoveredSpellingMistakeEndOffset,
+        )
+        .map((textNode) => {
+          matita.assertIsText(textNode);
+          return textNode.text;
+        })
+        .join('');
+      const suggestions = this.$p_spellCheckControl.suggestMisspelledWord(misspelledWord);
+      const { visibleLeft, visibleRight } = this.$p_getVisibleLeftAndRight();
+      const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
+      const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
+      const visibleBoundingRect = makeViewRectangle(relativeOffsetLeft, relativeOffsetTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+      const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
+      textDecorationInfos = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
+        paragraphReference,
+        hoveredSpellingMistakeStartOffset,
+        hoveredSpellingMistakeEndOffset,
+        this.$p_getContainerScrollWidth(),
+        relativeOffsetLeft,
+        relativeOffsetTop,
+        paragraphMeasurement,
+      );
+      const firstTextDecorationInfo = textDecorationInfos[0];
+      let wordBoundingRectLeft = firstTextDecorationInfo.charactersBoundingRectangle.left;
+      let wordBoundingRectTop = firstTextDecorationInfo.charactersBoundingRectangle.top;
+      let wordBoundingRectBottom = firstTextDecorationInfo.charactersBoundingRectangle.bottom;
+      let wordBoundingRectRight = firstTextDecorationInfo.charactersBoundingRectangle.right;
+      for (let i = 0; i < textDecorationInfos.length; i++) {
+        const textDecorationInfo = textDecorationInfos[i];
+        const { charactersBoundingRectangle } = textDecorationInfo;
+        if (charactersBoundingRectangle.left < wordBoundingRectLeft) {
+          wordBoundingRectLeft = charactersBoundingRectangle.left;
+        }
+        if (charactersBoundingRectangle.top < wordBoundingRectTop) {
+          wordBoundingRectTop = charactersBoundingRectangle.top;
+        }
+        if (charactersBoundingRectangle.right > wordBoundingRectRight) {
+          wordBoundingRectRight = charactersBoundingRectangle.right;
+        }
+        if (charactersBoundingRectangle.bottom > wordBoundingRectBottom) {
+          wordBoundingRectBottom = charactersBoundingRectangle.bottom;
+        }
+      }
+      const wordBoundingRect = makeViewRectangle(
+        wordBoundingRectLeft,
+        wordBoundingRectTop,
+        wordBoundingRectRight - wordBoundingRectLeft,
+        wordBoundingRectBottom - wordBoundingRectTop,
+      );
+      const paragraphLength = matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, paragraphPoint));
+      const fixedSuggestions = suggestions.filter((suggestion) => {
+        const words = suggestion.normalize().toLowerCase().split(/[ -]/g);
+        return words.every(
+          (word, i) => word.length > 2 || (i === 0 && (word === 'a' || word === 'i')) || (word.length === 2 && commonTwoLetterWords.has(word)),
+        );
+      });
+      this.$p_isSpellingBoxOpen = true;
+      this.$p_spellingBoxFocusedSuggestionIndex = isPastPreviousCharacterHalfPoint === null ? (suggestions.length === 0 ? -1 : 0) : null;
+      this.$p_undoControl.forceNextChange(() => true);
+      spellingBoxRenderMessage$(
+        Push({
+          misspelledWord,
+          suggestions: fixedSuggestions,
+          visibleBoundingRect,
+          wordBoundingRect,
+          replaceWith: (suggestion) => {
+            this.stateControl.queueUpdate(
+              () => {
+                this.$p_inputControl.focusButDoNotScrollTo();
+                let paragraph: matita.Paragraph<ParagraphConfig, TextConfig, VoidConfig>;
+                try {
+                  paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, paragraphPoint);
+                } catch (error) {
+                  return;
+                }
+                const paragraphLengthNow = matita.getParagraphLength(paragraph);
+                if (paragraphLength !== paragraphLengthNow) {
+                  return;
+                }
+                const inlineNodesWhereWordShouldBe = matita.sliceParagraphChildren(
+                  paragraph,
+                  hoveredSpellingMistakeStartOffset,
+                  hoveredSpellingMistakeEndOffset,
+                );
+                if (
+                  !inlineNodesWhereWordShouldBe.every(matita.isText) ||
+                  inlineNodesWhereWordShouldBe.map((textNode) => textNode.text).join('') !== misspelledWord
+                ) {
+                  return;
+                }
+                const spellingMistakeStartPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
+                  paragraphReference,
+                  hoveredSpellingMistakeStartOffset,
+                );
+                const spellingMistakeEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, hoveredSpellingMistakeEndOffset);
+                const replaceRange = matita.makeRange(
+                  matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
+                  spellingMistakeStartPoint,
+                  spellingMistakeEndPoint,
+                  matita.generateId(),
+                );
+                const selectionBeforeRange = matita.makeRange(
+                  matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
+                  spellingMistakeEndPoint,
+                  spellingMistakeEndPoint,
+                  matita.generateId(),
+                );
+                const selectionBefore: { value: matita.Selection } = {
+                  value: matita.makeSelection([
+                    matita.makeSelectionRange(
+                      [selectionBeforeRange],
+                      selectionBeforeRange.id,
+                      selectionBeforeRange.id,
+                      matita.SelectionRangeIntention.Text,
+                      {},
+                      matita.generateId(),
+                    ),
+                  ]),
+                };
+                const spellingMistakeReplacedEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
+                  paragraphReference,
+                  hoveredSpellingMistakeStartOffset + suggestion.length,
+                );
+                const selectionAfterRange = matita.makeRange(
+                  matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
+                  spellingMistakeReplacedEndPoint,
+                  spellingMistakeReplacedEndPoint,
+                  matita.generateId(),
+                );
+                const selectionAfter: { value: matita.Selection } = {
+                  value: matita.makeSelection([
+                    matita.makeSelectionRange(
+                      [selectionAfterRange],
+                      selectionAfterRange.id,
+                      selectionAfterRange.id,
+                      matita.SelectionRangeIntention.Text,
+                      {},
+                      matita.generateId(),
+                    ),
+                  ]),
+                };
+                const currentSelectionRangeIds = new Set(this.stateControl.stateView.selection.selectionRanges.map((selectionRange) => selectionRange.id));
+                this.stateControl.delta.applyUpdate(
+                  () => {
+                    this.stateControl.delta.applyMutation(
+                      matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
+                        matita.makeText(
+                          getInsertTextConfigAtSelectionRange(
+                            this.stateControl.stateView.document,
+                            this.stateControl.stateView.customCollapsedSelectionTextConfig,
+                            matita.makeSelectionRange(
+                              [replaceRange],
+                              replaceRange.id,
+                              replaceRange.id,
+                              matita.SelectionRangeIntention.Text,
+                              {},
+                              matita.generateId(),
+                            ),
+                          ),
+                          suggestion,
+                        ),
+                      ]),
+                      undefined,
+                      (selectionRange) => {
+                        if (!currentSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(selectionRange)) {
+                          return undefined;
+                        }
+                        const collapsedRange = selectionRange.ranges[0];
+                        const paragraphPoint = collapsedRange.startPoint;
+                        matita.assertIsParagraphPoint(paragraphPoint);
+                        let newOffset: number;
+                        if (paragraphPoint.offset <= hoveredSpellingMistakeStartOffset) {
+                          newOffset = paragraphPoint.offset;
+                        } else if (paragraphPoint.offset > hoveredSpellingMistakeEndOffset) {
+                          newOffset = paragraphPoint.offset + suggestion.length - (hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset);
+                        } else {
+                          newOffset = hoveredSpellingMistakeStartOffset + suggestion.length;
+                        }
+                        const newPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, newOffset);
+                        const newRange = matita.makeRange(collapsedRange.contentReference, newPoint, newPoint, collapsedRange.id);
+                        return matita.makeSelectionRange(
+                          [newRange],
+                          newRange.id,
+                          newRange.id,
+                          selectionRange.intention,
+                          selectionRange.data,
+                          selectionRange.id,
+                        );
+                      },
+                    );
+                  },
+                  { [matita.RedoUndoUpdateKey.SelectionBefore]: selectionBefore, [matita.RedoUndoUpdateKey.SelectionAfter]: selectionAfter },
+                );
+              },
+              { [doNotScrollToSelectionAfterChangeDataKey]: true },
+            );
+          },
+          focusedSuggestionIndex: this.$p_spellingBoxFocusedSuggestionIndex,
+        }),
+      );
+    };
     pipe(
       mouseMove$,
       debounce(() => pipe(timer(250), takeUntil(cancelMouseMove$))),
@@ -6802,22 +7125,20 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         if (event.type !== PushType) {
           throwUnreachable();
         }
+        const mouseMoveEvent = event.value;
         if (
           didCancelMouseMove ||
+          mouseMoveEvent.buttons !== 0 ||
           this.$p_spellCheckControl === null ||
           !this.$p_spellCheckControl.getIsLoaded() ||
           (isSome(spellingBoxRenderMessage$.lastValue) && spellingBoxRenderMessage$.lastValue.value !== null)
         ) {
           return;
         }
-        const mouseMoveEvent = event.value;
         const viewPosition: ViewPosition = {
           left: mouseMoveEvent.x,
           top: mouseMoveEvent.y,
         };
-        if (mouseMoveEvent.buttons !== 0) {
-          return;
-        }
         const position = this.$p_calculatePositionFromViewPosition(viewPosition, false, false, true);
         if (position === null) {
           return;
@@ -6825,205 +7146,23 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         if (position.type !== HitPositionType.ParagraphText) {
           throwUnreachable();
         }
-        const {
-          isPastPreviousCharacterHalfPoint,
-          pointWithContentReference: { point },
-        } = position;
+        const { isPastPreviousCharacterHalfPoint } = position;
+        const { point } = position.pointWithContentReference;
         if (!matita.isParagraphPoint(point)) {
           return;
         }
-        const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
-        const { offset } = point;
-        const spellingMistakes = this.$p_spellCheckControl.getSpellingMistakesInParagraphAtParagraphReference(paragraphReference);
-        if (spellingMistakes === null) {
-          return;
+        handleSpellingBoxParagraphPointWithIsPastPreviousCharacterHalfPoint(point, isPastPreviousCharacterHalfPoint);
+      }, this),
+    );
+    pipe(
+      this.$p_spellingBoxQuickFixParagraphPoint$,
+      subscribe<matita.ParagraphPoint>((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
         }
-        let hoveredSpellingMistake: ParagraphSpellingMistake | undefined;
-        for (let i = 0; i < spellingMistakes.length; i++) {
-          const spellingMistake = spellingMistakes[i];
-          const { startOffset, endOffset } = spellingMistake;
-          if ((startOffset < offset && offset < endOffset) || (isPastPreviousCharacterHalfPoint ? offset === endOffset : offset === startOffset)) {
-            hoveredSpellingMistake = spellingMistake;
-            break;
-          }
-        }
-        if (hoveredSpellingMistake === undefined) {
-          return;
-        }
-        const hoveredSpellingMistakeStartOffset = hoveredSpellingMistake.startOffset;
-        const hoveredSpellingMistakeEndOffset = hoveredSpellingMistake.endOffset;
-        const misspelledWord = matita
-          .sliceParagraphChildren(
-            matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point),
-            hoveredSpellingMistakeStartOffset,
-            hoveredSpellingMistakeEndOffset,
-          )
-          .map((textNode) => {
-            matita.assertIsText(textNode);
-            return textNode.text;
-          })
-          .join('');
-        const suggestions = this.$p_spellCheckControl.suggestMisspelledWord(misspelledWord);
-        const { visibleLeft, visibleRight } = this.$p_getVisibleLeftAndRight();
-        const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
-        const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
-        const visibleBoundingRect = makeViewRectangle(relativeOffsetLeft, relativeOffsetTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
-        const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
-        textDecorationInfos = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
-          paragraphReference,
-          hoveredSpellingMistakeStartOffset,
-          hoveredSpellingMistakeEndOffset,
-          this.$p_getContainerScrollWidth(),
-          relativeOffsetLeft,
-          relativeOffsetTop,
-          paragraphMeasurement,
-        );
-        const firstTextDecorationInfo = textDecorationInfos[0];
-        let wordBoundingRectLeft = firstTextDecorationInfo.charactersBoundingRectangle.left;
-        let wordBoundingRectTop = firstTextDecorationInfo.charactersBoundingRectangle.top;
-        let wordBoundingRectBottom = firstTextDecorationInfo.charactersBoundingRectangle.bottom;
-        let wordBoundingRectRight = firstTextDecorationInfo.charactersBoundingRectangle.right;
-        for (let i = 0; i < textDecorationInfos.length; i++) {
-          const textDecorationInfo = textDecorationInfos[i];
-          const { charactersBoundingRectangle } = textDecorationInfo;
-          if (charactersBoundingRectangle.left < wordBoundingRectLeft) {
-            wordBoundingRectLeft = charactersBoundingRectangle.left;
-          }
-          if (charactersBoundingRectangle.top < wordBoundingRectTop) {
-            wordBoundingRectTop = charactersBoundingRectangle.top;
-          }
-          if (charactersBoundingRectangle.right > wordBoundingRectRight) {
-            wordBoundingRectRight = charactersBoundingRectangle.right;
-          }
-          if (charactersBoundingRectangle.bottom > wordBoundingRectBottom) {
-            wordBoundingRectBottom = charactersBoundingRectangle.bottom;
-          }
-        }
-        const wordBoundingRect = makeViewRectangle(
-          wordBoundingRectLeft,
-          wordBoundingRectTop,
-          wordBoundingRectRight - wordBoundingRectLeft,
-          wordBoundingRectBottom - wordBoundingRectTop,
-        );
-        const paragraphLength = matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point));
-        const fixedSuggestions = suggestions.filter((suggestion) => {
-          const words = suggestion.normalize().toLowerCase().split(/[ -]/g);
-          return words.every(
-            (word, i) => word.length > 2 || (i === 0 && (word === 'a' || word === 'i')) || (word.length === 2 && commonTwoLetterWords.has(word)),
-          );
-        });
-        spellingBoxRenderMessage$(
-          Push({
-            misspelledWord,
-            suggestions: fixedSuggestions,
-            visibleBoundingRect,
-            wordBoundingRect,
-            replaceWith: (suggestion) => {
-              this.stateControl.queueUpdate(
-                () => {
-                  this.$p_inputControl.focusButDoNotScrollTo();
-                  let paragraph: matita.Paragraph<ParagraphConfig, TextConfig, VoidConfig>;
-                  try {
-                    paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, point);
-                  } catch (error) {
-                    return;
-                  }
-                  const paragraphLengthNow = matita.getParagraphLength(paragraph);
-                  if (paragraphLength !== paragraphLengthNow) {
-                    return;
-                  }
-                  const inlineNodesWhereWordShouldBe = matita.sliceParagraphChildren(
-                    paragraph,
-                    hoveredSpellingMistakeStartOffset,
-                    hoveredSpellingMistakeEndOffset,
-                  );
-                  if (
-                    !inlineNodesWhereWordShouldBe.every(matita.isText) ||
-                    inlineNodesWhereWordShouldBe.map((textNode) => textNode.text).join('') !== misspelledWord
-                  ) {
-                    return;
-                  }
-                  const spellingMistakeStartPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
-                    paragraphReference,
-                    hoveredSpellingMistakeStartOffset,
-                  );
-                  const spellingMistakeEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, hoveredSpellingMistakeEndOffset);
-                  const replaceRange = matita.makeRange(
-                    matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
-                    spellingMistakeStartPoint,
-                    spellingMistakeEndPoint,
-                    matita.generateId(),
-                  );
-                  const selectionBeforeRange = matita.makeRange(
-                    matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
-                    spellingMistakeEndPoint,
-                    spellingMistakeEndPoint,
-                    matita.generateId(),
-                  );
-                  const selectionBefore: { value: matita.Selection } = {
-                    value: matita.makeSelection([
-                      matita.makeSelectionRange(
-                        [selectionBeforeRange],
-                        selectionBeforeRange.id,
-                        selectionBeforeRange.id,
-                        matita.SelectionRangeIntention.Text,
-                        {},
-                        matita.generateId(),
-                      ),
-                    ]),
-                  };
-                  const spellingMistakeReplacedEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
-                    paragraphReference,
-                    hoveredSpellingMistakeStartOffset + suggestion.length,
-                  );
-                  const selectionAfterRange = matita.makeRange(
-                    matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
-                    spellingMistakeReplacedEndPoint,
-                    spellingMistakeReplacedEndPoint,
-                    matita.generateId(),
-                  );
-                  const selectionAfter: { value: matita.Selection } = {
-                    value: matita.makeSelection([
-                      matita.makeSelectionRange(
-                        [selectionAfterRange],
-                        selectionAfterRange.id,
-                        selectionAfterRange.id,
-                        matita.SelectionRangeIntention.Text,
-                        {},
-                        matita.generateId(),
-                      ),
-                    ]),
-                  };
-                  this.stateControl.delta.applyUpdate(
-                    () => {
-                      this.stateControl.delta.applyMutation(
-                        matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
-                          matita.makeText(
-                            getInsertTextConfigAtSelectionRange(
-                              this.stateControl.stateView.document,
-                              this.stateControl.stateView.customCollapsedSelectionTextConfig,
-                              matita.makeSelectionRange(
-                                [replaceRange],
-                                replaceRange.id,
-                                replaceRange.id,
-                                matita.SelectionRangeIntention.Text,
-                                {},
-                                matita.generateId(),
-                              ),
-                            ),
-                            suggestion,
-                          ),
-                        ]),
-                      );
-                    },
-                    { [matita.RedoUndoUpdateKey.SelectionBefore]: selectionBefore, [matita.RedoUndoUpdateKey.SelectionAfter]: selectionAfter },
-                  );
-                },
-                { [doNotScrollToSelectionAfterChangeDataKey]: true },
-              );
-            },
-          }),
-        );
+        const paragraphPoint = event.value;
+        cancelSpellingBoxHandling();
+        handleSpellingBoxParagraphPointWithIsPastPreviousCharacterHalfPoint(paragraphPoint, null);
       }, this),
     );
     mouseElements.forEach((element) => {
@@ -8340,6 +8479,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         return null;
       }
       word = textMaybe.value;
+      if (/[\n\r]/.test(word)) {
+        return null;
+      }
     }
     return {
       newSelectionRange,
@@ -8497,6 +8639,18 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       } else {
         this.stateControl.delta.setSelection(matita.makeSelection([selectionRange]));
       }
+    };
+  }
+  openQuickFixAtSelection(): matita.RunUpdateFn {
+    return () => {
+      const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
+      if (focusSelectionRange === null || !matita.isSelectionRangeCollapsedInText(focusSelectionRange)) {
+        return;
+      }
+      const collapsedRange = focusSelectionRange.ranges[0];
+      const paragraphPoint = collapsedRange.startPoint;
+      matita.assertIsParagraphPoint(paragraphPoint);
+      this.$p_spellingBoxQuickFixParagraphPoint$(Push(paragraphPoint));
     };
   }
   private $p_getSelectionViewHasFocusValue(): boolean {
@@ -9102,6 +9256,29 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     this.$p_markKeyDown(normalizedKey, event);
     if (!this.$p_shortcutKeys.includes(normalizedKey)) {
+      return;
+    }
+    if (this.$p_spellingBoxFocusedSuggestionIndex !== null && this.$p_spellingBoxFocusedSuggestionIndex !== -1) {
+      assert(this.$p_isSpellingBoxOpen);
+      if (normalizedKey === 'ArrowDown') {
+        this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$(Push(1));
+        event.preventDefault();
+        return;
+      }
+      if (normalizedKey === 'ArrowUp') {
+        this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$(Push(-1));
+        event.preventDefault();
+        return;
+      }
+      if (normalizedKey === 'Enter') {
+        this.$p_spellingBoxFixSpellingWithCurrentlyFocusedSuggestion$(Push(undefined));
+        event.preventDefault();
+        return;
+      }
+    }
+    if (this.$p_isSpellingBoxOpen && normalizedKey === 'Escape') {
+      this.$p_spellingBoxCancelCurrent$(Push(undefined));
+      event.preventDefault();
       return;
     }
     const hasMeta = event.metaKey;
