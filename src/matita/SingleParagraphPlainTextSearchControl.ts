@@ -1,6 +1,5 @@
 import { CountedIndexableUniqueStringList } from '../common/CountedIndexableUniqueStringList';
 import { IntlSegmenter } from '../common/IntlSegmenter';
-import { LpsArray, computeLpsArray, searchKmp } from '../common/Kmp';
 import { UniqueStringQueue } from '../common/UniqueStringQueue';
 import { assert, assertIsNotNullish, assertUnreachable, throwUnreachable } from '../common/util';
 import { Disposable, DisposableClass, implDisposableMethods } from '../ruscel/disposable';
@@ -14,6 +13,7 @@ interface SingleParagraphPlainTextSearchControlConfig {
   stripNonLettersAndNumbers: boolean;
   wholeWords: boolean;
   searchQueryWordsIndividually: boolean;
+  replaceSimilarLooking: boolean;
 }
 function areConfigsEqual(config1: SingleParagraphPlainTextSearchControlConfig, config2: SingleParagraphPlainTextSearchControlConfig): boolean {
   return (
@@ -57,68 +57,96 @@ interface TextPart {
   text: string;
   startOffset: number;
   endOffset: number;
+  isSingleLongChar: boolean;
 }
-function makeTextPart(text: string, startOffset: number, endOffset: number): TextPart {
+function makeTextPart(text: string, startOffset: number, endOffset: number, isSingleLongChar: boolean): TextPart {
   return {
     text,
     startOffset,
     endOffset,
+    isSingleLongChar,
   };
 }
-// TODO: Filter for similar looking characters.
-function normalizePunctuation(char: string): string {
-  return char.replace(/[^\p{L}\p{N}]/gu, '');
+const similarCharacterMapping = new Map([
+  ['‘', "'"],
+  ['’', "'"],
+  ['“', '"'],
+  ['”', '"'],
+]);
+interface TextPartGroup {
+  textParts: TextPart[];
+  badOffsets: Set<number> | null;
 }
-function normalizeExtraDiacritics(char: string): string {
-  const normalizedNfd = char.normalize('NFD');
-  const withoutDiacritics = normalizedNfd.replace(/\p{Diacritic}/gu, '');
-  if (withoutDiacritics.length === 0) {
-    return normalizedNfd;
-  }
-  return withoutDiacritics;
-}
-function normalizeCase(char: string): string {
-  return char.toLocaleLowerCase();
-}
-function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextSearchControlConfig, graphemeSegmenter: IntlSegmenter): TextPart[] {
-  const { stripNonLettersAndNumbers, ignoreDiacritics, ignoreCase } = config;
-  if (!stripNonLettersAndNumbers && !ignoreDiacritics && !ignoreCase) {
-    return [textPart];
-  }
+function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextSearchControlConfig, graphemeSegmenter: IntlSegmenter): TextPartGroup {
+  const { stripNonLettersAndNumbers, ignoreDiacritics, ignoreCase, replaceSimilarLooking } = config;
+  let badOffsets: Set<number> | null = null;
   const segments = graphemeSegmenter.segment(textPart.text);
   const normalizedTextParts: TextPart[] = [];
-  let previousNormalizedEndOffset = -1;
+  let isPreviousGood = false;
+  let normalizedTextRunStartOffset = 0;
   for (const segment of segments) {
     const segmentOffset = segment.index;
     const char = segment.segment;
     let normalizedChar = char;
     if (ignoreDiacritics) {
-      normalizedChar = normalizeExtraDiacritics(normalizedChar);
-    }
-    if (ignoreCase) {
-      normalizedChar = normalizeCase(normalizedChar);
+      const normalizedNfd = normalizedChar.normalize('NFD');
+      const withoutDiacritics = normalizedNfd.replace(/\p{Diacritic}/gu, '');
+      if (withoutDiacritics.length === 0) {
+        normalizedChar = normalizedNfd;
+      } else {
+        normalizedChar = withoutDiacritics;
+      }
     }
     if (stripNonLettersAndNumbers) {
-      normalizedChar = normalizePunctuation(normalizedChar);
+      normalizedChar = normalizedChar.replace(/[^\p{L}\p{N}]/gu, '');
     }
+    if (replaceSimilarLooking) {
+      const normalizedNfkc = normalizedChar.normalize('NFKC');
+      const similarCharacter = similarCharacterMapping.get(normalizedChar);
+      if (similarCharacter === undefined) {
+        normalizedChar = normalizedNfkc;
+      } else {
+        normalizedChar = similarCharacter;
+      }
+    }
+    if (ignoreCase) {
+      normalizedChar = normalizedChar.toLowerCase();
+    }
+    normalizedChar = normalizedChar.normalize('NFC');
     if (normalizedChar.length === 0) {
+      isPreviousGood = false;
       continue;
     }
     const endOffset = segmentOffset + char.length;
-    if (previousNormalizedEndOffset === segmentOffset) {
+    const isCharGood = char.length === 1 && normalizedChar.length === 1;
+    const normalizedTextRunEndOffset = normalizedTextRunStartOffset + normalizedChar.length;
+    if (isPreviousGood && isCharGood) {
       const previousNormalizedTextPart = normalizedTextParts[normalizedTextParts.length - 1];
       previousNormalizedTextPart.text += normalizedChar;
       previousNormalizedTextPart.endOffset = endOffset;
     } else {
-      normalizedTextParts.push(makeTextPart(normalizedChar, textPart.startOffset + segmentOffset, textPart.startOffset + endOffset));
+      const isCharBad = !isCharGood;
+      if (isCharBad) {
+        if (badOffsets === null) {
+          badOffsets = new Set();
+        }
+        for (let i = normalizedTextRunStartOffset + 1; i < normalizedTextRunEndOffset; i++) {
+          badOffsets.add(i);
+        }
+      }
+      normalizedTextParts.push(makeTextPart(normalizedChar, textPart.startOffset + segmentOffset, textPart.startOffset + endOffset, isCharBad));
+      isPreviousGood = isCharGood;
     }
-    previousNormalizedEndOffset = segmentOffset + normalizedChar.length;
+    normalizedTextRunStartOffset = normalizedTextRunEndOffset;
   }
-  return normalizedTextParts;
+  return {
+    textParts: normalizedTextParts,
+    badOffsets,
+  };
 }
 function normalizeQuery(query: string, config: SingleParagraphPlainTextSearchControlConfig, graphemeSegmenter: IntlSegmenter): string {
-  return normalizeTextPart({ text: query, startOffset: 0, endOffset: query.length }, config, graphemeSegmenter)
-    .map((textPart) => textPart.text)
+  return normalizeTextPart(makeTextPart(query, 0, query.length, false), config, graphemeSegmenter)
+    .textParts.map((textPart) => textPart.text)
     .join('');
 }
 class AlreadyTrackingAllError extends Error {
@@ -127,19 +155,77 @@ class AlreadyTrackingAllError extends Error {
     super('Already tracking all paragraphs.', options);
   }
 }
-interface SearchPatternData {
-  pattern: string;
-  kmpLpsArray: LpsArray;
-}
 interface ProcessedParagraph {
-  textPartGroups: TextPart[][];
+  textPartGroups: TextPartGroup[];
   wordBoundaryIndices: number[] | null;
 }
-function makeProcessedParagraph(textPartGroups: TextPart[][], wordBoundaryIndices: number[] | null): ProcessedParagraph {
+function makeProcessedParagraph(textPartGroups: TextPartGroup[], wordBoundaryIndices: number[] | null): ProcessedParagraph {
   return {
     textPartGroups,
     wordBoundaryIndices,
   };
+}
+type LpsArray = number[];
+function computeLpsArray(pattern: string): number[] {
+  assert(pattern.length > 0);
+  const lps: number[] = [];
+  const M = pattern.length;
+  let len = 0;
+  let i = 1;
+  lps[0] = 0;
+  while (i < M) {
+    if (pattern.charAt(i) === pattern.charAt(len)) {
+      len++;
+      lps[i] = len;
+      i++;
+    } else {
+      if (len !== 0) {
+        len = lps[len - 1];
+      } else {
+        lps[i] = len;
+        i++;
+      }
+    }
+  }
+  return lps;
+}
+function searchKmp(
+  accessChar: (i: number) => string,
+  N: number,
+  pattern: string,
+  lps: LpsArray,
+  getShouldRejectMatch: (matchStartIndex: number) => boolean,
+): number[] {
+  const M = pattern.length;
+  let j = 0;
+  let i = 0;
+  const startIndices: number[] = [];
+  while (N - i >= M - j) {
+    if (pattern[j] === accessChar(i)) {
+      j++;
+      i++;
+    }
+    if (j === M) {
+      const matchStartIndex = i - M;
+      j = 0;
+      if (getShouldRejectMatch(matchStartIndex)) {
+        i = matchStartIndex + 1;
+      } else {
+        startIndices.push(matchStartIndex);
+      }
+    } else if (i < N && pattern[j] !== accessChar(i)) {
+      if (j !== 0) {
+        j = lps[j - 1];
+      } else {
+        i++;
+      }
+    }
+  }
+  return startIndices;
+}
+interface SearchPatternData {
+  pattern: string;
+  kmpLpsArray: LpsArray;
 }
 // TODO: Match return selection range instead of range, e.g. to exclude voids in middle of match.
 // TODO: Simplify with previous and next paragraph iterator.
@@ -564,7 +650,7 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
   private $p_processParagraphAtParagraphReference(paragraphReference: matita.BlockReference): ProcessedParagraph {
     const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
     matita.assertIsParagraph(paragraph);
-    const textPartGroups: TextPart[][] = [];
+    const textPartGroups: TextPartGroup[] = [];
     let startOffset = 0;
     const wordBoundaryIndices: number[] | null = this.$p_config.wholeWords ? [] : null;
     let i = 0;
@@ -587,10 +673,10 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         text += inline.text;
       }
       const textRunEndOffset = textRunStartOffset + text.length;
-      const textPart = makeTextPart(text, textRunStartOffset, textRunEndOffset);
-      const normalizedTextParts = normalizeTextPart(textPart, this.$p_config, this.$p_graphemeSegmenter);
-      if (normalizedTextParts.length > 0) {
-        textPartGroups.push(normalizedTextParts);
+      const textPart = makeTextPart(text, textRunStartOffset, textRunEndOffset, false);
+      const textPartGroup = normalizeTextPart(textPart, this.$p_config, this.$p_graphemeSegmenter);
+      if (textPartGroup.textParts.length > 0) {
+        textPartGroups.push(textPartGroup);
       }
       if (this.$p_config.wholeWords) {
         const segments = this.$p_wordSegmenter.segment(text);
@@ -614,7 +700,8 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
     }
     const matches: ParagraphMatch[] = [];
     for (let i = 0; i < textPartGroups.length; i++) {
-      const textParts = textPartGroups[i];
+      const textPartGroup = textPartGroups[i];
+      const { textParts, badOffsets } = textPartGroup;
       const firstTextPart = textParts[0];
       let searchStringLength = firstTextPart.text.length;
       for (let j = 1; j < textParts.length; j++) {
@@ -639,6 +726,9 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
         for (let j = 0; j < textParts.length; j++) {
           const textPart = textParts[j];
           if (isEnd || j === textParts.length - 1 ? matchIndex <= textPart.text.length : matchIndex < textPart.text.length) {
+            if (textPart.isSingleLongChar && matchIndex > 0) {
+              return textPart.endOffset;
+            }
             return textPart.startOffset + matchIndex;
           }
           matchIndex -= textPart.text.length;
@@ -648,7 +738,10 @@ class SingleParagraphPlainTextSearchControl extends DisposableClass {
       for (let j = 0; j < this.$p_searchPatterns.length; j++) {
         const searchPattern = this.$p_searchPatterns[j];
         const { pattern, kmpLpsArray } = searchPattern;
-        const matchStartIndices = searchKmp(accessChar, searchStringLength, pattern, kmpLpsArray);
+        const getShouldRejectMatch = (matchStartIndex: number): boolean => {
+          return badOffsets !== null && (badOffsets.has(matchStartIndex) || badOffsets.has(matchStartIndex + pattern.length));
+        };
+        const matchStartIndices = searchKmp(accessChar, searchStringLength, pattern, kmpLpsArray, getShouldRejectMatch);
         addMatches: for (let k = 0; k < matchStartIndices.length; k++) {
           const matchStartIndex = matchStartIndices[k];
           const matchEndIndex = matchStartIndex + searchPattern.pattern.length;

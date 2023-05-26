@@ -170,3 +170,7 @@ underrent/GD
 underreport/SGD
 underrepresent/GSD
 underrepresentation/SM
+Capoeira
+reentrancy
+reentrant
+girthy

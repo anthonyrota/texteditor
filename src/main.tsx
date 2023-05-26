@@ -56,7 +56,6 @@ import {
   ThrowType,
   timer,
   windowScheduledBySource,
-  spyBefore,
 } from './ruscel/source';
 import {
   pipe,
@@ -2036,6 +2035,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const options: [key: keyof SingleParagraphPlainTextSearchControlConfig, name: string, isInverted: boolean][] = [
     ['ignoreCase', 'Match Case', true],
     ['ignoreDiacritics', 'Match Diacritics', true],
+    ['replaceSimilarLooking', 'Similar Looking Characters', false],
     ['stripNonLettersAndNumbers', 'Strip Non Letters And Numbers', false],
     ['wholeWords', 'Whole Words', false],
     ['searchQueryWordsIndividually', 'Search Query Words Individually', false],
@@ -6751,7 +6751,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     );
     const cancelMouseMove$ = pipe(
       fromArray<Source<unknown>>([
-        mouseLeave$,
+        pipe(
+          mouseLeave$,
+          filter(() => this.$p_spellingBoxFocusedSuggestionIndex === null),
+        ),
         scroll$,
         this.stateControl.afterMutationPart$,
         this.stateControl.selectionChange$,
@@ -7944,6 +7947,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       stripNonLettersAndNumbers: false,
       searchQueryWordsIndividually: false,
       wholeWords: false,
+      replaceSimilarLooking: true,
     };
     this.$p_searchControl = new SingleParagraphPlainTextSearchControl(
       this.stateControl,
