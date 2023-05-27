@@ -5756,7 +5756,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
   sync(): void {
     this.$p_syncInputElement();
   }
-  isFocused(): boolean {
+  getIsFocused(): boolean {
     return document.activeElement === this.inputElement;
   }
   focusButDoNotScrollTo(): void {
@@ -5768,7 +5768,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     this.inputElement.blur();
   }
   private $p_syncInputElement(): void {
-    if (!this.isFocused() || this.getIsInComposition()) {
+    if (!this.getIsFocused() || this.getIsInComposition()) {
       return;
     }
     const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.$p_stateControl.stateView.selection);
@@ -8658,7 +8658,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     };
   }
   private $p_getSelectionViewHasFocusValue(): boolean {
-    return (document.hasFocus() && this.$p_inputControl.isFocused()) || this.$p_isDraggingSelection;
+    return (document.hasFocus() && this.$p_inputControl.getIsFocused()) || this.$p_isDraggingSelection;
   }
   private $p_updateSelectionViewHasFocus(): void {
     if (this.stateControl.isInUpdate) {
@@ -8912,11 +8912,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       this.$p_scrollSelectionIntoViewWhenFinishedUpdating = true;
     }
     if (this.stateControl.stateView.selection.selectionRanges.length === 0) {
-      if (this.$p_inputControl.isFocused()) {
+      if (this.$p_inputControl.getIsFocused()) {
         this.$p_inputControl.blur();
       }
     } else {
-      if (!this.$p_inputControl.isFocused() && !this.$p_isInSearchBox()) {
+      if (!this.$p_inputControl.getIsFocused() && !this.$p_isInSearchBox()) {
         this.$p_inputControl.focusButDoNotScrollTo();
       }
     }
@@ -9262,35 +9262,37 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     if (!this.$p_shortcutKeys.includes(normalizedKey)) {
       return;
     }
-    if (this.$p_spellingBoxFocusedSuggestionIndex !== null && this.$p_spellingBoxFocusedSuggestionIndex !== -1) {
-      assert(this.$p_isSpellingBoxOpen);
-      if (normalizedKey === 'ArrowDown') {
-        this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$(Push(1));
+    if (this.$p_inputControl.getIsFocused()) {
+      if (this.$p_spellingBoxFocusedSuggestionIndex !== null && this.$p_spellingBoxFocusedSuggestionIndex !== -1) {
+        assert(this.$p_isSpellingBoxOpen);
+        if (normalizedKey === 'ArrowDown') {
+          this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$(Push(1));
+          event.preventDefault();
+          return;
+        }
+        if (normalizedKey === 'ArrowUp') {
+          this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$(Push(-1));
+          event.preventDefault();
+          return;
+        }
+        if (normalizedKey === 'Enter') {
+          this.$p_spellingBoxFixSpellingWithCurrentlyFocusedSuggestion$(Push(undefined));
+          event.preventDefault();
+          return;
+        }
+      }
+      if (this.$p_isSpellingBoxOpen && normalizedKey === 'Escape') {
+        this.$p_spellingBoxCancelCurrent$(Push(undefined));
         event.preventDefault();
         return;
       }
-      if (normalizedKey === 'ArrowUp') {
-        this.$p_moveSpellingBoxFocusedSuggestionIndexUpDown$(Push(-1));
-        event.preventDefault();
-        return;
-      }
-      if (normalizedKey === 'Enter') {
-        this.$p_spellingBoxFixSpellingWithCurrentlyFocusedSuggestion$(Push(undefined));
-        event.preventDefault();
-        return;
-      }
-    }
-    if (this.$p_isSpellingBoxOpen && normalizedKey === 'Escape') {
-      this.$p_spellingBoxCancelCurrent$(Push(undefined));
-      event.preventDefault();
-      return;
     }
     const hasMeta = event.metaKey;
     const hasControl = event.ctrlKey;
     const hasAlt = event.altKey;
     const hasShift = event.shiftKey;
     const activeContexts: Context[] = [];
-    if (this.$p_inputControl.isFocused() && !this.$p_inputControl.getIsInComposition()) {
+    if (this.$p_inputControl.getIsFocused() && !this.$p_inputControl.getIsInComposition()) {
       activeContexts.push(Context.Editing);
     }
     if (this.$p_isDraggingSelection) {
