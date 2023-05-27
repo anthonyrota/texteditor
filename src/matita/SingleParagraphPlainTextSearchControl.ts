@@ -126,7 +126,7 @@ function normalizeTextPart(textPart: TextPart, config: SingleParagraphPlainTextS
       previousNormalizedTextPart.endOffset = endOffset;
     } else {
       const isCharBad = !isCharGood;
-      if (isCharBad) {
+      if (normalizedChar.length > 1) {
         if (badOffsets === null) {
           badOffsets = new Set();
         }
