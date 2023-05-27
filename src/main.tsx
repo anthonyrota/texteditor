@@ -1419,6 +1419,8 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
         ),
       [hasFocus$],
     ),
+    undefined,
+    true,
   );
   const hasFocus = isSome(hasFocusMaybe) && hasFocusMaybe.value;
   const cursorBlinkSpeed = 500;
@@ -8304,9 +8306,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (this.$p_isSearchElementContainerVisible$.currentValue) {
         this.$p_isSearchElementContainerVisible$(Push(false));
       }
-      queueMicrotaskDisposable(() => {
-        this.$p_inputControl.focusButDoNotScrollTo();
-      }, this);
+      this.$p_inputControl.focusButDoNotScrollTo();
     };
   }
   private $p_setSearchQuery(query: string): void {
