@@ -545,7 +545,13 @@ class SpellCheckControl extends DisposableClass {
     };
   }
   suggestMisspelledWord(misspelledWord: string): string[] {
-    return this.$p_spellChecker.suggest(misspelledWord);
+    const suggestions = this.$p_spellChecker.suggest(misspelledWord);
+    if (misspelledWord.includes('’') && !misspelledWord.includes("'")) {
+      for (let i = 0; i < suggestions.length; i++) {
+        suggestions[i] = suggestions[i].replaceAll("'", '’');
+      }
+    }
+    return suggestions;
   }
 }
 export { SpellCheckControl, forceSpellCheckControlTextEditUpdateDataKey, TextEditUpdateType, type ParagraphSpellingMistake };

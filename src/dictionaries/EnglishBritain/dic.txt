@@ -49781,3 +49781,6 @@ boson
 incept/DGVS
 inception/MS
 inceptive/MYS
+ethnol
+ethnolinguist/S
+ethnolinguistic/S
