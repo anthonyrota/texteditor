@@ -1,4 +1,4 @@
-// Adapted from hunspell-asm/emscripten-wasm-loader.
+// Adapted from hunspell-asm & emscripten-wasm-loader.
 import { v4 } from 'uuid';
 import { memoComputingValueNoArgs } from '../common/memoComputingValueNoArgs';
 type stringToUTF8Signature = (str: string, outPtr: number, maxBytesToWrite: number) => void;

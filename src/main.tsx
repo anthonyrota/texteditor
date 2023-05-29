@@ -5273,18 +5273,13 @@ class LocalUndoControl<
         this.$p_pushToStack();
       }
       this.$p_forceChange = null;
-      const defaultSelectionBefore = this.$p_stateControl.stateView.selection;
+      const selectionBefore = this.$p_stateControl.stateView.selection;
       pipe(
         afterMutation$,
         subscribe((event) => {
           assert(event.type === EndType);
           if (this.$p_selectionBefore === null) {
-            if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionBefore]) {
-              this.$p_selectionBefore = (lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionBefore] as { value: matita.Selection }).value;
-              assertIsNotNullish(this.$p_selectionBefore);
-            } else {
-              this.$p_selectionBefore = defaultSelectionBefore;
-            }
+            this.$p_selectionBefore = selectionBefore;
           }
         }, this),
       );
@@ -5303,12 +5298,7 @@ class LocalUndoControl<
         afterMutation$,
         subscribe((event) => {
           assert(event.type === EndType);
-          if (isSome(lastUpdateData) && !!lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionAfter]) {
-            this.$p_selectionAfter = (lastUpdateData.value[matita.RedoUndoUpdateKey.SelectionAfter] as { value: matita.Selection }).value;
-            assertIsNotNullish(this.$p_selectionAfter);
-          } else {
-            this.$p_selectionAfter = this.$p_stateControl.stateView.selection;
-          }
+          this.$p_selectionAfter = this.$p_stateControl.stateView.selection;
         }, this),
       );
     }
@@ -7023,98 +7013,48 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   spellingMistakeEndPoint,
                   matita.generateId(),
                 );
-                const selectionBeforeRange = matita.makeRange(
-                  matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
-                  spellingMistakeEndPoint,
-                  spellingMistakeEndPoint,
-                  matita.generateId(),
-                );
-                const selectionBefore: { value: matita.Selection } = {
-                  value: matita.makeSelection([
-                    matita.makeSelectionRange(
-                      [selectionBeforeRange],
-                      selectionBeforeRange.id,
-                      selectionBeforeRange.id,
-                      matita.SelectionRangeIntention.Text,
-                      {},
-                      matita.generateId(),
-                    ),
-                  ]),
-                };
-                const spellingMistakeReplacedEndPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(
-                  paragraphReference,
-                  hoveredSpellingMistakeStartOffset + suggestion.length,
-                );
-                const selectionAfterRange = matita.makeRange(
-                  matita.makeContentReferenceFromContent(matita.accessContentFromBlockReference(this.stateControl.stateView.document, paragraphReference)),
-                  spellingMistakeReplacedEndPoint,
-                  spellingMistakeReplacedEndPoint,
-                  matita.generateId(),
-                );
-                const selectionAfter: { value: matita.Selection } = {
-                  value: matita.makeSelection([
-                    matita.makeSelectionRange(
-                      [selectionAfterRange],
-                      selectionAfterRange.id,
-                      selectionAfterRange.id,
-                      matita.SelectionRangeIntention.Text,
-                      {},
-                      matita.generateId(),
-                    ),
-                  ]),
-                };
                 const currentSelectionRangeIds = new Set(this.stateControl.stateView.selection.selectionRanges.map((selectionRange) => selectionRange.id));
-                this.stateControl.delta.applyUpdate(
-                  () => {
-                    this.stateControl.delta.applyMutation(
-                      matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
-                        matita.makeText(
-                          getInsertTextConfigAtSelectionRange(
-                            this.stateControl.stateView.document,
-                            this.stateControl.stateView.customCollapsedSelectionTextConfig,
-                            matita.makeSelectionRange(
-                              [replaceRange],
-                              replaceRange.id,
-                              replaceRange.id,
-                              matita.SelectionRangeIntention.Text,
-                              {},
-                              matita.generateId(),
-                            ),
+                this.stateControl.delta.applyUpdate(() => {
+                  this.stateControl.delta.applyMutation(
+                    matita.makeSpliceParagraphMutation(spellingMistakeStartPoint, hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset, [
+                      matita.makeText(
+                        getInsertTextConfigAtSelectionRange(
+                          this.stateControl.stateView.document,
+                          this.stateControl.stateView.customCollapsedSelectionTextConfig,
+                          matita.makeSelectionRange(
+                            [replaceRange],
+                            replaceRange.id,
+                            replaceRange.id,
+                            matita.SelectionRangeIntention.Text,
+                            {},
+                            matita.generateId(),
                           ),
-                          suggestion,
                         ),
-                      ]),
-                      undefined,
-                      (selectionRange) => {
-                        if (!currentSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(selectionRange)) {
-                          return undefined;
-                        }
-                        const collapsedRange = selectionRange.ranges[0];
-                        const paragraphPoint = collapsedRange.startPoint;
-                        matita.assertIsParagraphPoint(paragraphPoint);
-                        let newOffset: number;
-                        if (paragraphPoint.offset <= hoveredSpellingMistakeStartOffset) {
-                          newOffset = paragraphPoint.offset;
-                        } else if (paragraphPoint.offset > hoveredSpellingMistakeEndOffset) {
-                          newOffset = paragraphPoint.offset + suggestion.length - (hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset);
-                        } else {
-                          newOffset = hoveredSpellingMistakeStartOffset + suggestion.length;
-                        }
-                        const newPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, newOffset);
-                        const newRange = matita.makeRange(collapsedRange.contentReference, newPoint, newPoint, collapsedRange.id);
-                        return matita.makeSelectionRange(
-                          [newRange],
-                          newRange.id,
-                          newRange.id,
-                          selectionRange.intention,
-                          selectionRange.data,
-                          selectionRange.id,
-                        );
-                      },
-                    );
-                  },
-                  { [matita.RedoUndoUpdateKey.SelectionBefore]: selectionBefore, [matita.RedoUndoUpdateKey.SelectionAfter]: selectionAfter },
-                );
+                        suggestion,
+                      ),
+                    ]),
+                    undefined,
+                    (selectionRange) => {
+                      if (!currentSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(selectionRange)) {
+                        return undefined;
+                      }
+                      const collapsedRange = selectionRange.ranges[0];
+                      const paragraphPoint = collapsedRange.startPoint;
+                      matita.assertIsParagraphPoint(paragraphPoint);
+                      let newOffset: number;
+                      if (paragraphPoint.offset <= hoveredSpellingMistakeStartOffset) {
+                        newOffset = paragraphPoint.offset;
+                      } else if (paragraphPoint.offset > hoveredSpellingMistakeEndOffset) {
+                        newOffset = paragraphPoint.offset + suggestion.length - (hoveredSpellingMistakeEndOffset - hoveredSpellingMistakeStartOffset);
+                      } else {
+                        newOffset = hoveredSpellingMistakeStartOffset + suggestion.length;
+                      }
+                      const newPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, newOffset);
+                      const newRange = matita.makeRange(collapsedRange.contentReference, newPoint, newPoint, collapsedRange.id);
+                      return matita.makeSelectionRange([newRange], newRange.id, newRange.id, selectionRange.intention, selectionRange.data, selectionRange.id);
+                    },
+                  );
+                });
               },
               { [doNotScrollToSelectionAfterChangeDataKey]: true },
             );

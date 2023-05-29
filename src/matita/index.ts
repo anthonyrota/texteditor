@@ -8356,8 +8356,6 @@ enum RedoUndoUpdateKey {
   IgnoreRecursiveUpdate = 'standard.redoUndoUpdateKey.ignoreRecursiveUpdate',
   CompositionUpdate = 'standard.redoUndoUpdateKey.compositionUpdate',
   UniqueGroupedUpdate = 'standard.redoUndoUpdateKey.uniqueGroupedUpdate',
-  SelectionBefore = 'standard.redoUndoUpdateKey.selectionBefore',
-  SelectionAfter = 'standard.redoUndoUpdateKey.selectionAfter',
 }
 let uniqueGroupedChangeType = 0;
 function makeUniqueGroupedChangeType(): string {
@@ -8372,9 +8370,7 @@ function getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack: UpdateD
       RedoUndoUpdateKey.RemoveTextBackwards in updateData ||
       RedoUndoUpdateKey.IgnoreRecursiveUpdate in updateData ||
       RedoUndoUpdateKey.CompositionUpdate in updateData ||
-      RedoUndoUpdateKey.UniqueGroupedUpdate in updateData ||
-      RedoUndoUpdateKey.SelectionBefore in updateData ||
-      RedoUndoUpdateKey.SelectionAfter in updateData
+      RedoUndoUpdateKey.UniqueGroupedUpdate in updateData
     ) {
       return Some(updateData);
     }

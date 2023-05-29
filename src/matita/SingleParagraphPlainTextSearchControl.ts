@@ -21,7 +21,8 @@ function areConfigsEqual(config1: SingleParagraphPlainTextSearchControlConfig, c
     config1.ignoreDiacritics === config2.ignoreDiacritics &&
     config1.stripNonLettersAndNumbers === config2.stripNonLettersAndNumbers &&
     config1.wholeWords === config2.wholeWords &&
-    config1.searchQueryWordsIndividually === config2.searchQueryWordsIndividually
+    config1.searchQueryWordsIndividually === config2.searchQueryWordsIndividually &&
+    config1.replaceSimilarLooking === config2.replaceSimilarLooking
   );
 }
 interface ParagraphMatch {
