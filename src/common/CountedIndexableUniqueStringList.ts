@@ -227,11 +227,11 @@ class AvlTreeCountedIndexableUniqueStringListInternalNode implements AvlTreeCoun
     let result: AvlTreeCountedIndexableUniqueStringListInternalNode = this;
     if (balance === -2) {
       const left = this.left as AvlTreeCountedIndexableUniqueStringListInternalNode;
-      if (left.$p_getBalance() === +1) {
+      if (left.$p_getBalance() === 1) {
         this.left = left.$p_rotateLeft();
       }
       result = this.$p_rotateRight();
-    } else if (balance === +2) {
+    } else if (balance === 2) {
       const right = this.right as AvlTreeCountedIndexableUniqueStringListInternalNode;
       if (right.$p_getBalance() === -1) {
         this.right = right.$p_rotateRight();

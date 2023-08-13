@@ -53,7 +53,9 @@ button {
 }
 .search-box {
   position: fixed;
-  top: 0;
+  /* TODO */
+  top: 36px;
+  z-index: 2;
   transform: translateY(var(--search-box_translate-y));
   filter: opacity(var(--search-box_opacity));
   right: var(--search-box_margin);
@@ -203,6 +205,7 @@ button {
   font-family: Roboto, sans-serif;
   box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
   line-height: 1.8;
+  z-index: 3;
 }
 .spelling-box__info {
   padding: 0 0.3em;
@@ -220,6 +223,79 @@ button {
   background-color: #eaeaea;
 }
 .spelling-box__suggestion--can-hover:hover {
+  background-color: #eaeaea;
+}
+.link-box {
+  position: absolute;
+  overflow-wrap: anywhere;
+  overflow: scroll;
+  background-color: #fff;
+  font-family: Roboto, sans-serif;
+  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  line-height: 1.8;
+  z-index: 3;
+  padding: 0.3em;
+}
+.link-box__label {
+  display: block;
+  width: 100%;
+  padding: 0.15em 0.3em;
+}
+.link-box__label-text {
+  display: inline-block;
+  width: 3em;
+}
+.link-box__input {
+  padding: 0 0.3em;
+}
+.link-box__button {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 0.15em 0;
+  color: rgb(26, 115, 232);
+  margin-top: 0.3em;
+}
+.link-box__button:focus:not(.link-box__button--disabled),
+.link-box__button:hover:not(.link-box__button--disabled) {
+  background-color: #eaeaea;
+}
+.link-box__button--disabled {
+  cursor: not-allowed;
+  color: #666;
+}
+.link-box__error {
+  color: rgb(217, 48, 37);
+  padding: 0 0.3em;
+}
+.link-box__button--has-error {
+  margin-top: 0;
+}
+.link-details {
+  position: absolute;
+  overflow-wrap: anywhere;
+  overflow: scroll;
+  background-color: #fff;
+  font-family: Roboto, sans-serif;
+  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  line-height: 1.8;
+  z-index: 2;
+  padding: 0.3em;
+}
+.link-details__link {
+  display: block;
+  color: rgb(26, 115, 232);
+  padding: 0 0.4em;
+}
+.link-details__button {
+  padding: 0 0.4em;
+  border-left: 1px solid #eaeaea;
+}
+.link-details__button:first-child {
+  border-left: none;
+}
+.link-details__button:focus,
+.link-details__button:hover {
   background-color: #eaeaea;
 }
 .list-item--checklist__checkbox {
@@ -250,4 +326,86 @@ button {
 .list-item--checklist__checkbox--checked::before {
   content: '\2713';
   color: #fff;
+}
+.toolbar {
+  background-color: #fff;
+  font-family: Roboto, sans-serif;
+  border-bottom: 1px solid #ddd;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.toolbar__dropdown-container {
+  position: relative;
+  display: inline-block;
+}
+.toolbar__dropdown-button {
+  width: auto;
+  padding: 8px;
+  cursor: default;
+  display: inline-flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 5px;
+}
+.toolbar__dropdown-button--not-first {
+  border-left: 1px solid #ddd;
+}
+.toolbar__dropdown-button:hover,
+.toolbar__dropdown-button--active {
+  background-color: #eaeaea;
+}
+.toolbar__dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background-color: #fff;
+  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  min-width: 120%;
+}
+.toolbar__dropdown--active {
+  display: block;
+}
+.toolbar__dropdown-item {
+  min-width: 100%;
+  text-align: left;
+  padding: 8px;
+  cursor: default;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 5px;
+}
+.toolbar__dropdown-item--no-children {
+  cursor: pointer;
+}
+.toolbar__dropdown-item--no-background-color:hover {
+  background-color: #eaeaea;
+}
+.toolbar__dropdown-item--has-background-color {
+  background-color: var(--toolbar__dropdown-item_background-color);
+}
+.toolbar__dropdown-item--has-background-color:hover {
+  background-color: var(--toolbar__dropdown-item_hover-background-color);
+}
+.toolbar__chevron-right {
+  flex-shrink: 0;
+}
+.toolbar__nested-dropdown-container {
+  position: relative;
+  width: auto;
+}
+.toolbar__nested-dropdown {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: auto;
+  background-color: #fff;
+  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  min-width: 100%;
+}
+.toolbar__nested-dropdown--active {
+  display: block;
 }

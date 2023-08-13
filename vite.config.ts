@@ -12,7 +12,7 @@ export default defineConfig({
     terserOptions: {
       mangle: {
         properties: {
-          regex: /^\$p_.*/,
+          regex: /^\$[mp]_.*/,
         },
       },
     },

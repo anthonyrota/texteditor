@@ -1,4 +1,4 @@
-import { RefObject, createRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { RefObject, createRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, Children, createContext, useContext } from 'react';
 import { flushSync, createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { v4 } from 'uuid';
@@ -6,6 +6,7 @@ import { isFirefox, isSafari } from './common/browserDetection';
 import { IndexableUniqueStringList } from './common/IndexableUniqueStringList';
 import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
 import { LruCache } from './common/LruCache';
+import { isValidHttpUrl, sanitizeUrl } from './common/sanitizeUrl';
 import { UniqueStringQueue } from './common/UniqueStringQueue';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
@@ -74,6 +75,86 @@ enum StoredListStyleType {
   OrderedList = 'ol',
   Checklist = 'checklist',
 }
+enum OrderedListStyle {
+  Decimal = 'decimal',
+  LowerAlpha = 'lowerAlpha',
+  UpperAlpha = 'upperAlpha',
+  LowerRoman = 'lowerRoman',
+  UpperRoman = 'upperRoman',
+  LowerGreek = 'lowerGreek',
+  UpperGreek = 'upperGreek',
+}
+const orderedListStyles = [
+  OrderedListStyle.Decimal,
+  OrderedListStyle.LowerAlpha,
+  OrderedListStyle.LowerGreek,
+  OrderedListStyle.LowerRoman,
+  OrderedListStyle.UpperAlpha,
+  OrderedListStyle.UpperGreek,
+  OrderedListStyle.UpperRoman,
+];
+function encodeNumberByString(number: number, string: string): string {
+  let markerText = '';
+  do {
+    markerText = string[(number - 1) % string.length] + markerText;
+    number = Math.floor((number - 1) / string.length);
+  } while (number > 0);
+  return markerText;
+}
+function makeLowerAlphaListMarkerText(number: number): string {
+  return encodeNumberByString(number, 'abcdefghijklmnopqrstuvwxyz');
+}
+function makeUpperAlphaListMarkerText(number: number): string {
+  return encodeNumberByString(number, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+}
+// https://blog.stevenlevithan.com/archives/javascript-roman-numeral-converter
+function romanize(num: number) {
+  const digits = String(num).split('');
+  const key = [
+    '',
+    'C',
+    'CC',
+    'CCC',
+    'CD',
+    'D',
+    'DC',
+    'DCC',
+    'DCCC',
+    'CM',
+    '',
+    'X',
+    'XX',
+    'XXX',
+    'XL',
+    'L',
+    'LX',
+    'LXX',
+    'LXXX',
+    'XC',
+    '',
+    'I',
+    'II',
+    'III',
+    'IV',
+    'V',
+    'VI',
+    'VII',
+    'VIII',
+    'IX',
+  ];
+  let roman = '';
+  let i = 3;
+  while (i--) {
+    roman = (key[Number(digits.pop()) + i * 10] || '') + roman;
+  }
+  return Array(+digits.join('') + 1).join('M') + roman;
+}
+function makeLowerGreekListMarkerText(number: number): string {
+  return encodeNumberByString(number, 'αβγδεζηθικλμνξοπρστυφχψω');
+}
+function makeUpperGreekListMarkerText(number: number): string {
+  return encodeNumberByString(number, 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ');
+}
 enum AccessedListStyleType {
   UnorderedList = 'ul',
   OrderedList = 'ol',
@@ -83,9 +164,10 @@ type ListStyle = {
   // Undefined = ul.
   type?: StoredListStyleType;
   OrderedList_startNumber?: number;
+  OrderedList_style?: OrderedListStyle;
 };
 function convertStoredOrderedListStartNumberToAccessedStartNumber(startNumber?: number): number {
-  return typeof startNumber === 'number' && Number.isInteger(startNumber) && startNumber >= 0 && startNumber < 2 ** 20 ? startNumber : 1;
+  return typeof startNumber === 'number' && Number.isInteger(startNumber) && startNumber >= 1 && startNumber < 2 ** 20 ? startNumber : 1;
 }
 function convertAccessedOrderedListStartNumberToStoredOrderedListStartNumber(startNumber: number): number | undefined {
   return startNumber === 1 ? undefined : startNumber;
@@ -194,6 +276,36 @@ function accessListTypeInTopLevelContentConfigFromListParagraphConfig(
   const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraphConfig.ListItem_indentLevel);
   return accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
 }
+function accessOrderedListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+  topLevelContentConfig: TopLevelContentConfig,
+  listId: string,
+  indentLevel: NumberedListIndent,
+): OrderedListStyle {
+  if (accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, indentLevel) !== AccessedListStyleType.OrderedList) {
+    throwUnreachable();
+  }
+  const listStyle = accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, indentLevel);
+  if (!matita.isJsonMap(listStyle)) {
+    return OrderedListStyle.Decimal;
+  }
+  let style = listStyle.OrderedList_style;
+  if (!(orderedListStyles as unknown[]).includes(style)) {
+    style = OrderedListStyle.Decimal;
+  }
+  return style as OrderedListStyle;
+}
+function accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(
+  topLevelContentConfig: TopLevelContentConfig,
+  paragraphConfig: ParagraphConfig,
+): OrderedListStyle {
+  if (accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContentConfig, paragraphConfig) !== AccessedListStyleType.OrderedList) {
+    throwUnreachable();
+  }
+  const listId = paragraphConfig.ListItem_listId;
+  assertIsNotNullish(listId);
+  const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraphConfig.ListItem_indentLevel);
+  return accessOrderedListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(topLevelContentConfig, listId, numberedIndentLevel);
+}
 function isStoredListTypeSet(storedListType: StoredListStyleType | undefined): boolean {
   return (
     storedListType === StoredListStyleType.UnorderedList ||
@@ -225,8 +337,11 @@ function convertAccessedListStyleTypeToStoredListType(accessedListType: Accessed
   assertUnreachable(accessedListType);
 }
 enum ParagraphType {
-  ListItem = 'list_item',
+  ListItem = 'listItem',
   Quote = 'quote',
+  Indent1 = 'indent1',
+  IndentHanging1 = 'indentHanging1',
+  IndentFirstLine1 = 'indentFirstLine1',
   Heading1 = 'heading1',
   Heading2 = 'heading2',
   Heading3 = 'heading3',
@@ -302,29 +417,124 @@ const resetMergeParagraphConfig: ParagraphConfig = {
   ListItem_indentLevel: undefined,
   alignment: undefined,
 };
+const resetMergeParagraphTypeConfig: ParagraphConfig = {
+  type: undefined,
+  ListItem_listId: undefined,
+  ListItem_Checklist_checked: undefined,
+  ListItem_indentLevel: undefined,
+};
 enum EmbedType {
   Collapsible = 'collapsible',
-  CaptionedImage = 'captioned_image',
-  Column = 'column',
-  Grid = 'grid',
+  CaptionedImage = 'captionedImage',
+  CaptionedVideo = 'video',
   Table = 'table',
   Callout = 'callout',
   Code = 'code',
-  TabbedCode = 'tabbed_code',
-  HorizontalRule = 'horizontal_rule',
-  FootnoteDetails = 'footnote_details',
+  Tabs = 'tabs',
+  HorizontalRule = 'horizontalRule',
+  FootnoteDetails = 'footnoteDetails',
+  Spoiler = 'spoiler',
+  Latex = 'latex',
+  Mermaid = 'mermaid',
+  Excalidraw = 'excalidraw',
+  Tweet = 'tweet',
+  YoutubeVideo = 'youtubeVideo',
+  NestableListItem = 'nestableListItem',
+  Poll = 'poll',
+  Giphy = 'giphy',
 }
-enum CaptionedImageAlignment {
-  LeftCaptionRight = 'left_caption_right',
-  RightCaptionLeft = 'right_caption_left',
-  CenterCaptionBottom = 'center_caption_bottom',
-  LeftCaptionBottom = 'left_caption_bottom',
-  RightCaptionBottom = 'right_caption_bottom',
+enum CodeLanguage {
+  JavaScript = 'js',
+  Json = 'json',
+  Html = 'html',
+  Css = 'css',
+  Sass = 'sass',
+  Scss = 'scss',
+  Less = 'less',
+  Flow = 'flow',
+  TypeScript = 'ts',
+  Markdown = 'md',
+  Bash = 'bash',
+  C = 'c',
+  Cpp = 'cpp',
+  ObjectiveC = 'objc',
+  Java = 'java',
+  Python = 'python',
+  Julia = 'julia',
+  R = 'r',
+  Ruby = 'ruby',
+  Rust = 'rust',
+  Go = 'go',
+  Sql = 'sql',
+  CSharp = 'cs',
+  Haskell = 'hs',
+}
+const supportedCodeLanguages = new Set([
+  CodeLanguage.JavaScript,
+  CodeLanguage.Json,
+  CodeLanguage.Html,
+  CodeLanguage.Css,
+  CodeLanguage.Sass,
+  CodeLanguage.Scss,
+  CodeLanguage.Less,
+  CodeLanguage.Flow,
+  CodeLanguage.TypeScript,
+  CodeLanguage.Markdown,
+  CodeLanguage.Bash,
+  CodeLanguage.C,
+  CodeLanguage.Cpp,
+  CodeLanguage.ObjectiveC,
+  CodeLanguage.Java,
+  CodeLanguage.Python,
+  CodeLanguage.Julia,
+  CodeLanguage.R,
+  CodeLanguage.Ruby,
+  CodeLanguage.Rust,
+  CodeLanguage.Go,
+  CodeLanguage.Sql,
+  CodeLanguage.CSharp,
+  CodeLanguage.Haskell,
+]);
+function accessCodeLanguage(codeLanguage: string): CodeLanguage | undefined {
+  if ((supportedCodeLanguages as Set<string>).has(codeLanguage)) {
+    return codeLanguage as CodeLanguage;
+  }
 }
 type EmbedConfig = {
   type?: EmbedType;
-  CaptionedImage_alignment?: CaptionedImageAlignment;
   FootnoteDetails_footnoteId?: string;
+  Code_lang?: CodeLanguage;
+};
+enum Color {
+  Red = 'red',
+  Green = 'green',
+  Blue = 'blue',
+  Purple = 'purple',
+}
+const colors = [Color.Red, Color.Green, Color.Blue, Color.Purple];
+const colorLabels: Record<Color, string> = {
+  [Color.Red]: 'Red',
+  [Color.Green]: 'Green',
+  [Color.Blue]: 'Blue',
+  [Color.Purple]: 'Purple',
+};
+const colorHexValues: Record<Color, string> = {
+  [Color.Red]: '#e02424',
+  [Color.Green]: '#31c48d',
+  [Color.Blue]: '#3f83f8',
+  [Color.Purple]: '#9061f9',
+};
+const highlightColorHexValues: Record<Color, string> = {
+  [Color.Red]: '#e0242455',
+  [Color.Green]: '#31c48d55',
+  [Color.Blue]: '#3f83f855',
+  [Color.Purple]: '#9061f955',
+};
+const darkerHighlightColorHexValues: Record<Color, string> = {
+  [Color.Red]: '#e02424aa',
+  [Color.Green]: '#31c48daa',
+  [Color.Blue]: '#3f83f8aa',
+  [Color.Purple]: '#9061f9aa',
 };
 enum TextConfigScript {
   Sub = 'sub',
@@ -337,6 +547,9 @@ type TextConfig = {
   code?: true;
   strikethrough?: true;
   script?: TextConfigScript;
+  color?: Color;
+  highlightColor?: Color;
+  link?: string;
 };
 const defaultTextConfig: TextConfig = {};
 const resetMergeTextConfig: TextConfig = {
@@ -346,6 +559,9 @@ const resetMergeTextConfig: TextConfig = {
   code: undefined,
   strikethrough: undefined,
   script: undefined,
+  color: undefined,
+  highlightColor: undefined,
+  link: undefined,
 };
 function getInsertTextConfigAtSelectionRangeWithoutCustomCollapsedSelectionTextConfig(
   document: matita.Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
@@ -393,12 +609,15 @@ function getInsertTextConfigAtSelectionRange(
 }
 enum VoidType {
   Image = 'image',
-  FootnoteMarker = 'footnote_marker',
+  FootnoteMarker = 'footnoteMarker',
+  FileChip = 'fileChip',
+  AudioChip = 'audioChip',
+  Latex = 'latex',
 }
 enum StoredVoidImageAlignment {
   Inline = 'inline',
-  FloatLeft = 'float_left',
-  FloatRight = 'float_right',
+  FloatLeft = 'floatLeft',
+  FloatRight = 'floatRight',
 }
 type VoidConfig = {
   type?: VoidType;
@@ -429,6 +648,7 @@ const getTextConfigTextRunSizingKey = (textConfig: TextConfig): string => {
 interface ParagraphStyleInjection {
   ListItem_type?: AccessedListStyleType;
   ListItem_OrderedList_number?: number;
+  ListItem_OrderedList_style?: OrderedListStyle;
 }
 class VirtualizedParagraphRenderControl extends DisposableClass implements matita.ParagraphRenderControl {
   paragraphReference: matita.BlockReference;
@@ -513,13 +733,25 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     isFirstInTextNode: boolean,
     isLastInTextNode: boolean,
   ): void {
+    if (textConfig.color !== undefined && colors.includes(textConfig.color)) {
+      textElement.style.color = colorHexValues[textConfig.color];
+    }
+    if (textConfig.highlightColor !== undefined && colors.includes(textConfig.highlightColor)) {
+      textElement.style.backgroundColor = highlightColorHexValues[textConfig.highlightColor];
+    }
+    let isUnderline = false;
+    if (typeof textConfig.link === 'string' && textConfig.link !== '') {
+      isUnderline = true;
+      textElement.style.color = 'rgb(26, 115, 232)';
+    }
     if (textConfig.bold === true) {
       textElement.style.fontWeight = 'bold';
     }
     if (textConfig.italic === true) {
       textElement.style.fontStyle = 'italic';
     }
-    if (textConfig.underline === true) {
+    isUnderline ||= textConfig.underline === true;
+    if (isUnderline) {
       if (textConfig.strikethrough === true) {
         textElement.style.textDecoration = 'underline line-through';
       } else {
@@ -578,7 +810,41 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         const listMarker = document.createElement('span');
         listMarker.style.whiteSpace = 'nowrap';
         assertIsNotNullish(injectedStyle.ListItem_OrderedList_number);
-        listMarker.append(document.createTextNode(`${injectedStyle.ListItem_OrderedList_number}.`));
+        assertIsNotNullish(injectedStyle.ListItem_OrderedList_style);
+        const number = injectedStyle.ListItem_OrderedList_number;
+        const style = injectedStyle.ListItem_OrderedList_style;
+        let listMarkerText: string;
+        switch (style) {
+          case OrderedListStyle.Decimal: {
+            listMarkerText = String(number);
+            break;
+          }
+          case OrderedListStyle.LowerAlpha: {
+            listMarkerText = makeLowerAlphaListMarkerText(number);
+            break;
+          }
+          case OrderedListStyle.UpperAlpha: {
+            listMarkerText = makeUpperAlphaListMarkerText(number);
+            break;
+          }
+          case OrderedListStyle.LowerRoman: {
+            listMarkerText = romanize(number).toLowerCase();
+            break;
+          }
+          case OrderedListStyle.UpperRoman: {
+            listMarkerText = romanize(number);
+            break;
+          }
+          case OrderedListStyle.LowerGreek: {
+            listMarkerText = makeLowerGreekListMarkerText(number);
+            break;
+          }
+          case OrderedListStyle.UpperGreek: {
+            listMarkerText = makeUpperGreekListMarkerText(number);
+            break;
+          }
+        }
+        listMarker.append(document.createTextNode(`${listMarkerText}.`));
         return listMarker;
       }
       case AccessedListStyleType.Checklist: {
@@ -604,9 +870,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     const accessedParagraphAlignment = convertStoredParagraphAlignmentToAccessedParagraphAlignment(paragraph.config.alignment);
     if (previousAccessedParagraphAlignment !== accessedParagraphAlignment) {
       this.containerHtmlElement.style.textAlign = accessedParagraphAlignment;
-      if (isSafari || isFirefox) {
+      if (isSafari) {
         if (accessedParagraphAlignment === AccessedParagraphAlignment.Justify) {
-          this.containerHtmlElement.style.whiteSpace = 'pre-line';
+          this.containerHtmlElement.style.whiteSpace = 'pre-wrap';
         } else if (previousAccessedParagraphAlignment === AccessedParagraphAlignment.Justify) {
           this.containerHtmlElement.style.whiteSpace = 'break-spaces';
         }
@@ -631,6 +897,16 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         this.containerHtmlElement.style.paddingLeft = '';
         this.containerHtmlElement.style.marginLeft = '';
         this.containerHtmlElement.style.marginRight = '';
+      }
+      if (this.$p_previousRenderedConfig !== undefined && this.$p_previousRenderedConfig.type === ParagraphType.Indent1) {
+        this.containerHtmlElement.style.paddingLeft = '';
+      }
+      if (this.$p_previousRenderedConfig !== undefined && this.$p_previousRenderedConfig.type === ParagraphType.IndentFirstLine1) {
+        this.containerHtmlElement.style.textIndent = '';
+      }
+      if (this.$p_previousRenderedConfig !== undefined && this.$p_previousRenderedConfig.type === ParagraphType.IndentHanging1) {
+        this.containerHtmlElement.style.paddingLeft = '';
+        this.containerHtmlElement.style.textIndent = '';
       }
       if (
         this.$p_previousRenderedConfig !== undefined &&
@@ -663,6 +939,19 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           }
           break;
         }
+        case ParagraphType.Indent1: {
+          this.containerHtmlElement.style.paddingLeft = '32px';
+          break;
+        }
+        case ParagraphType.IndentFirstLine1: {
+          this.containerHtmlElement.style.textIndent = '32px';
+          break;
+        }
+        case ParagraphType.IndentHanging1: {
+          this.containerHtmlElement.style.paddingLeft = '32px';
+          this.containerHtmlElement.style.textIndent = '-32px';
+          break;
+        }
         case ParagraphType.Heading1: {
           this.$p_fontSize = 2 * this.$p_baseFontSize;
           this.containerHtmlElement.style.fontWeight = 'bold';
@@ -682,13 +971,13 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           break;
         }
         case ParagraphType.Heading4: {
-          this.$p_fontSize = 1 * this.$p_baseFontSize;
+          this.$p_fontSize = 1.1 * this.$p_baseFontSize;
           this.containerHtmlElement.style.fontWeight = 'bold';
           this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
           break;
         }
         case ParagraphType.Heading5: {
-          this.$p_fontSize = 0.875 * this.$p_baseFontSize;
+          this.$p_fontSize = 0.94 * this.$p_baseFontSize;
           this.containerHtmlElement.style.fontWeight = 'bold';
           this.containerHtmlElement.style.fontSize = `${this.fontSize}px`;
           break;
@@ -750,7 +1039,8 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         assertIsNotNullish(injectedStyle.ListItem_type);
         const recreateMarker =
           this.$p_previousInjectedStyle.ListItem_type !== injectedStyle.ListItem_type ||
-          this.$p_previousInjectedStyle.ListItem_OrderedList_number !== injectedStyle.ListItem_OrderedList_number;
+          this.$p_previousInjectedStyle.ListItem_OrderedList_number !== injectedStyle.ListItem_OrderedList_number ||
+          this.$p_previousInjectedStyle.ListItem_OrderedList_style !== injectedStyle.ListItem_OrderedList_style;
         if (recreateMarker) {
           const previousListMarkerElement = this.listMarkerElement;
           this.listMarkerElement = this.$p_makeListMarker(paragraph.config, injectedStyle);
@@ -1125,16 +1415,19 @@ function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Some<T> | (() => Some<T>),
   updateSync?: boolean | ((value: Maybe<T>) => boolean),
+  inFlush?: (maybe: Maybe<T>) => void,
 ): Some<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
   updateSync?: boolean | ((value: Maybe<T>) => boolean),
+  inFlush?: (maybe: Maybe<T>) => void,
 ): Maybe<T>;
 function use$<T>(
   source: Source<T> | ((sink: Sink<T>, isFirst: boolean) => Source<T>),
   initialMaybe?: Maybe<T> | (() => Maybe<T>),
   updateSync?: boolean | ((value: Maybe<T>) => boolean),
+  inFlush?: (maybe: Maybe<T>) => void,
 ): Maybe<T> {
   const [value, setValueState] = useState<Maybe<T>>(initialMaybe ?? None);
   const isFirstUpdateRef = useRef(true);
@@ -1167,6 +1460,7 @@ function use$<T>(
       if (updateSyncResult === true) {
         flushSync(() => {
           setValue(maybe);
+          inFlush?.(maybe);
         });
       } else {
         setValue(maybe);
@@ -1718,7 +2012,7 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
         pushCurvedLineRectSpans(fragmentChildren, previousLineRect, rectangle, nextLineRect, 4, key, backgroundColor);
         continue;
       }
-      return (
+      fragmentChildren.push(
         <span
           key={key}
           style={{
@@ -1729,7 +2023,7 @@ function SearchOverlay(props: SearchOverlayProps): JSX.Element | null {
             height: rectangle.height,
             backgroundColor,
           }}
-        />
+        />,
       );
     }
   }
@@ -1745,6 +2039,7 @@ interface SearchBoxControlConfig {
 interface SearchBoxProps {
   isVisible$: CurrentValueSource<boolean>;
   selectAllText$: Source<undefined>;
+  onAfterSelectAll: () => void;
   containerWidth$: CurrentValueSource<number>;
   goToSearchResultImmediatelySink: Sink<boolean>;
   querySink: Sink<string>;
@@ -1771,6 +2066,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
   const {
     isVisible$,
     selectAllText$,
+    onAfterSelectAll,
     containerWidth$,
     goToSearchResultImmediatelySink,
     querySink,
@@ -1810,6 +2106,7 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     }
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     inputRef.current!.select();
+    onAfterSelectAll();
   }, [selectAllTextCounter]);
   const { value: position } = use$<Position>(
     useCallback((sink: Sink<Position>) => {
@@ -2101,6 +2398,52 @@ function SearchBox(props: SearchBoxProps): JSX.Element | null {
     </div>
   );
 }
+function useFloatingBoxPosition(
+  boundingRects: { visibleBoundingRect: ViewRectangle; wordBoundingRect: ViewRectangle } | null,
+  domRef: RefObject<HTMLElement>,
+): { positionLeft: number; positionTop: number; maxWidth: number; maxHeight: number; isCalculated: boolean } | null {
+  const domBoundingRectRef = useRef<DOMRect | null>(null);
+  const [_, setDummyState] = useState({});
+  useLayoutEffect(() => {
+    if (domBoundingRectRef.current !== null || boundingRects === null || domRef.current === null) {
+      domBoundingRectRef.current = null;
+      return;
+    }
+    domBoundingRectRef.current = domRef.current.getBoundingClientRect();
+    setDummyState({});
+  });
+  if (boundingRects === null) {
+    return null;
+  }
+  const { visibleBoundingRect, wordBoundingRect } = boundingRects;
+  const domBoundingRect = domBoundingRectRef.current;
+  let positionLeft: number;
+  let positionTop: number;
+  const isCalculated = domBoundingRect !== null;
+  if (isCalculated) {
+    if (wordBoundingRect.left + domBoundingRect.width <= visibleBoundingRect.right) {
+      positionLeft = wordBoundingRect.left;
+    } else {
+      positionLeft = Math.max(visibleBoundingRect.right - domBoundingRect.width, visibleBoundingRect.left);
+    }
+    if (wordBoundingRect.top - domBoundingRect.height >= visibleBoundingRect.top) {
+      positionTop = wordBoundingRect.top - domBoundingRect.height;
+    } else {
+      positionTop = wordBoundingRect.bottom;
+    }
+  } else {
+    positionLeft = 0;
+    positionTop = 0;
+  }
+  return {
+    positionLeft,
+    positionTop,
+    // TODO.
+    maxWidth: visibleBoundingRect.right - positionLeft,
+    maxHeight: visibleBoundingRect.bottom - positionTop,
+    isCalculated,
+  };
+}
 interface SpellingBoxRenderMessage {
   misspelledWord: string;
   suggestions: string[];
@@ -2116,42 +2459,17 @@ interface SpellingBoxProps {
 function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
   const { renderMessage$, spellingBoxRef } = props;
   const renderMessageMaybe = use$(renderMessage$, undefined, true);
-  const spellingBoxBoundingRectRef = useRef<DOMRect | null>(null);
-  const [_, setDummyState] = useState({});
-  useLayoutEffect(() => {
-    if (spellingBoxBoundingRectRef.current !== null || isNone(renderMessageMaybe) || renderMessageMaybe.value === null || spellingBoxRef.current === null) {
-      spellingBoxBoundingRectRef.current = null;
-      return;
-    }
-    spellingBoxBoundingRectRef.current = spellingBoxRef.current.getBoundingClientRect();
-    setDummyState({});
-  });
-  if (isNone(renderMessageMaybe)) {
-    return null;
-  }
-  const renderMessage = renderMessageMaybe.value;
+  const renderMessage = isSome(renderMessageMaybe) ? renderMessageMaybe.value : null;
+  const positions = useFloatingBoxPosition(renderMessage, spellingBoxRef);
   if (renderMessage === null) {
     return null;
   }
-  const { suggestions, visibleBoundingRect, wordBoundingRect, replaceWith, focusedSuggestionIndex } = renderMessage;
-  const spellingBoxBoundingRect = spellingBoxBoundingRectRef.current;
-  let positionLeft: number;
-  let positionTop: number;
-  if (spellingBoxBoundingRect === null) {
-    positionLeft = 0;
-    positionTop = 0;
-  } else {
-    if (wordBoundingRect.left + spellingBoxBoundingRect.width <= visibleBoundingRect.right) {
-      positionLeft = wordBoundingRect.left;
-    } else {
-      positionLeft = Math.max(visibleBoundingRect.right - spellingBoxBoundingRect.width, visibleBoundingRect.left);
-    }
-    if (wordBoundingRect.top - spellingBoxBoundingRect.height >= visibleBoundingRect.top) {
-      positionTop = wordBoundingRect.top - spellingBoxBoundingRect.height;
-    } else {
-      positionTop = wordBoundingRect.bottom;
-    }
+  if (!doViewRectanglesIntersect(renderMessage.visibleBoundingRect, renderMessage.wordBoundingRect)) {
+    return null;
   }
+  const { suggestions, replaceWith, focusedSuggestionIndex } = renderMessage;
+  assertIsNotNullish(positions);
+  const { positionLeft, positionTop, maxWidth, maxHeight } = positions;
   return (
     <div
       ref={spellingBoxRef}
@@ -2159,9 +2477,8 @@ function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
       style={{
         left: positionLeft,
         top: positionTop,
-        // TODO.
-        maxWidth: visibleBoundingRect.right - positionLeft,
-        maxHeight: visibleBoundingRect.bottom - positionTop,
+        maxWidth,
+        maxHeight,
       }}
     >
       <div className="spelling-box__info">{suggestions.length === 0 ? 'Unrecognized word' : 'Did you mean:'}</div>
@@ -2183,6 +2500,188 @@ function SpellingBox(props: SpellingBoxProps): JSX.Element | null {
           {suggestion}
         </button>
       ))}
+    </div>
+  );
+}
+interface LinkBoxRenderMessage {
+  startTextValue: string;
+  startLinkValue: string;
+  shouldGetText: boolean;
+  visibleBoundingRect: ViewRectangle;
+  wordBoundingRect: ViewRectangle;
+  applyLink: (link: string, text: string) => void;
+}
+interface LinkBoxProps {
+  renderMessage$: Source<LinkBoxRenderMessage | null>;
+}
+function LinkBox(props: LinkBoxProps): JSX.Element | null {
+  const { renderMessage$ } = props;
+  const [text, setText] = useState('');
+  const [url, setUrl] = useState('');
+  const [hasError, setHasError] = useState(false);
+  const renderMessageMaybe = use$(renderMessage$, undefined, true, (maybe) => {
+    const renderMessage = isSome(maybe) ? maybe.value : null;
+    setHasError(false);
+    if (renderMessage === null) {
+      setText('');
+      setUrl('');
+      return;
+    }
+    const { startTextValue, startLinkValue } = renderMessage;
+    setText(startTextValue);
+    setUrl(startLinkValue);
+  });
+  const linkBoxRef = useRef<HTMLDivElement>(null);
+  const renderMessage = isSome(renderMessageMaybe) ? renderMessageMaybe.value : null;
+  const positions = useFloatingBoxPosition(renderMessage, linkBoxRef);
+  const textInputRef = useRef<HTMLInputElement>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
+  const renderMessageCountRef = useRef<number>(0);
+  useEffect(() => {
+    if (renderMessage === null) {
+      renderMessageCountRef.current = 0;
+      return;
+    }
+    renderMessageCountRef.current++;
+    if (renderMessageCountRef.current !== 2) {
+      return;
+    }
+    if (renderMessage.shouldGetText) {
+      assertIsNotNullish(textInputRef.current);
+      textInputRef.current.focus();
+    } else {
+      assertIsNotNullish(urlInputRef.current);
+      urlInputRef.current.focus();
+    }
+  });
+  if (renderMessage === null) {
+    return null;
+  }
+  const { shouldGetText, applyLink } = renderMessage;
+  assertIsNotNullish(positions);
+  const { positionLeft, positionTop, maxWidth, maxHeight } = positions;
+  const submitForm = (): void => {
+    const sanitizedUrl = sanitizeUrl(url);
+    if (sanitizedUrl === null || !isValidHttpUrl(sanitizedUrl)) {
+      setHasError(true);
+      return;
+    }
+    setHasError(false);
+    applyLink(sanitizedUrl, text || url);
+  };
+  const isValid = url !== '';
+  return (
+    <div
+      ref={linkBoxRef}
+      className="link-box"
+      style={{
+        left: positionLeft,
+        top: positionTop,
+        maxWidth,
+        maxHeight,
+      }}
+      onKeyDown={(event) => {
+        if (isValid && event.code === 'Enter') {
+          submitForm();
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+    >
+      {shouldGetText && (
+        <label className="link-box__label">
+          <span className="link-box__label-text">Text:</span>
+          <input
+            className="link-box__input"
+            type="text"
+            value={text}
+            placeholder="Link text..."
+            onChange={(event) => {
+              setText(event.target.value);
+            }}
+            ref={textInputRef}
+          />
+        </label>
+      )}
+      <label className="link-box__label">
+        <span className="link-box__label-text">Link:</span>
+        <input
+          className="link-box__input"
+          type="url"
+          value={url}
+          placeholder="Link url..."
+          onChange={(event) => {
+            setUrl(event.target.value);
+            setHasError(false);
+          }}
+          ref={urlInputRef}
+        />
+      </label>
+      {hasError && <div className="link-box__error">Enter a valid URL</div>}
+      <button
+        className={['link-box__button', !isValid && 'link-box__button--disabled', hasError && 'link-box__button--has-error'].join(' ')}
+        onClick={submitForm}
+        disabled={!isValid}
+      >
+        Apply
+      </button>
+    </div>
+  );
+}
+interface LinkDetailsRenderMessage {
+  link: string;
+  visibleBoundingRect: ViewRectangle;
+  wordBoundingRect: ViewRectangle;
+  tempClose: () => void;
+  returnFocus: () => void;
+  editLink: () => void;
+  removeLink: () => void;
+}
+interface LinkDetailsProps {
+  renderMessage$: Source<LinkDetailsRenderMessage | null>;
+}
+function LinkDetails(props: LinkDetailsProps): JSX.Element | null {
+  const { renderMessage$ } = props;
+  const renderMessageMaybe = use$(renderMessage$, undefined, true);
+  const linkDetailsRef = useRef<HTMLDivElement>(null);
+  const renderMessage = isSome(renderMessageMaybe) ? renderMessageMaybe.value : null;
+  const positions = useFloatingBoxPosition(renderMessage, linkDetailsRef);
+  if (renderMessage === null) {
+    return null;
+  }
+  const { link, tempClose, returnFocus, editLink, removeLink } = renderMessage;
+  assertIsNotNullish(positions);
+  const { positionLeft, positionTop, maxWidth, maxHeight } = positions;
+  const onCopyLinkButtonClick = (): void => {
+    void navigator.clipboard.writeText(link).then(() => {
+      tempClose();
+    });
+  };
+  return (
+    <div
+      ref={linkDetailsRef}
+      className="link-details"
+      style={{
+        left: positionLeft,
+        top: positionTop,
+        maxWidth,
+        maxHeight,
+      }}
+    >
+      <a className="link-details__link" href={link} target="_blank" onClick={returnFocus}>
+        {link}
+      </a>
+      <div className="link-details__buttons">
+        <button className="link-details__button" onClick={onCopyLinkButtonClick}>
+          Copy Link
+        </button>
+        <button className="link-details__button" onClick={editLink}>
+          Edit Link
+        </button>
+        <button className="link-details__button" onClick={removeLink}>
+          Remove Link
+        </button>
+      </div>
     </div>
   );
 }
@@ -2210,6 +2709,14 @@ function areViewRectanglesEqual(viewRectangle1: ViewRectangle, viewRectangle2: V
     viewRectangle1.height === viewRectangle2.height
   );
 }
+function doViewRectanglesIntersect(viewRectangle1: ViewRectangle, viewRectangle2: ViewRectangle): boolean {
+  return (
+    viewRectangle1.right >= viewRectangle2.left &&
+    viewRectangle1.left <= viewRectangle2.right &&
+    viewRectangle1.top <= viewRectangle2.bottom &&
+    viewRectangle2.bottom >= viewRectangle1.top
+  );
+}
 function shiftViewRectangle(rectangle: ViewRectangle, deltaRight: number, deltaDown: number): ViewRectangle {
   return makeViewRectangle(rectangle.left + deltaRight, rectangle.top + deltaDown, rectangle.width, rectangle.height);
 }
@@ -2227,94 +2734,109 @@ interface RelativeParagraphMeasureCacheValue {
 interface AbsoluteParagraphMeasurement extends RelativeParagraphMeasureCacheValue {
   boundingRect: ViewRectangle;
 }
-enum StandardCommand {
-  MoveSelectionGraphemeBackwards = 'standard.moveSelectionGraphemeBackwards',
-  MoveSelectionWordBackwards = 'standard.moveSelectionWordBackwards',
-  MoveSelectionParagraphBackwards = 'standard.moveSelectionParagraphBackwards',
-  MoveSelectionParagraphStart = 'standard.moveSelectionParagraphStart',
-  MoveSelectionGraphemeForwards = 'standard.moveSelectionGraphemeForwards',
-  MoveSelectionWordForwards = 'standard.moveSelectionWordForwards',
-  MoveSelectionParagraphForwards = 'standard.moveSelectionParagraphForwards',
-  MoveSelectionParagraphEnd = 'standard.moveSelectionParagraphEnd',
-  MoveSelectionSoftLineStart = 'standard.moveSelectionSoftLineStart',
-  MoveSelectionSoftLineEnd = 'standard.moveSelectionSoftLineEnd',
-  MoveSelectionSoftLineDown = 'standard.moveSelectionSoftLineDown',
-  MoveSelectionSoftLineUp = 'standard.moveSelectionSoftLineUp',
-  MoveSelectionStartOfDocument = 'standard.moveSelectionStartOfDocument',
-  MoveSelectionEndOfDocument = 'standard.moveSelectionEndOfDocument',
-  ExtendSelectionGraphemeBackwards = 'standard.extendSelectionGraphemeBackwards',
-  ExtendSelectionWordBackwards = 'standard.extendSelectionWordBackwards',
-  ExtendSelectionParagraphBackwards = 'standard.extendSelectionParagraphBackwards',
-  ExtendSelectionParagraphStart = 'standard.extendSelectionParagraphStart',
-  ExtendSelectionGraphemeForwards = 'standard.extendSelectionGraphemeForwards',
-  ExtendSelectionWordForwards = 'standard.extendSelectionWordForwards',
-  ExtendSelectionParagraphForwards = 'standard.extendSelectionParagraphForwards',
-  ExtendSelectionParagraphEnd = 'standard.extendSelectionParagraphEnd',
-  ExtendSelectionSoftLineStart = 'standard.extendSelectionSoftLineStart',
-  ExtendSelectionSoftLineEnd = 'standard.extendSelectionSoftLineEnd',
-  ExtendSelectionSoftLineDown = 'standard.extendSelectionSoftLineDown',
-  ExtendSelectionSoftLineUp = 'standard.extendSelectionSoftLineUp',
-  ExtendSelectionStartOfDocument = 'standard.extendSelectionStartOfDocument',
-  ExtendSelectionEndOfDocument = 'standard.extendSelectionEndOfDocument',
-  RemoveSelectionGraphemeBackwards = 'standard.removeSelectionGraphemeBackwards',
-  RemoveSelectionWordBackwards = 'standard.removeSelectionWordBackwards',
-  RemoveSelectionGraphemeForwards = 'standard.removeSelectionGraphemeForwards',
-  RemoveSelectionWordForwards = 'standard.removeSelectionWordForwards',
-  RemoveSelectionSoftLineStart = 'standard.removeSelectionSoftLineStart',
-  RemoveSelectionSoftLineEnd = 'standard.removeSelectionSoftLineEnd',
-  TransposeGraphemes = 'standard.transposeGraphemes',
-  InsertParagraphBelow = 'standard.insertParagraphBelow',
-  InsertParagraphAbove = 'standard.insertParagraphAbove',
-  SelectAll = 'standard.selectAll',
-  InsertPlainText = 'standard.insertPlainText',
-  InsertPastedPlainText = 'standard.insertPastedPlainText',
-  InsertDroppedPlainText = 'standard.insertDroppedPlainText',
-  InsertLineBreak = 'standard.insertLineBreak',
-  SplitParagraph = 'standard.splitParagraph',
-  Undo = 'standard.undo',
-  Redo = 'standard.redo',
-  CollapseMultipleSelectionRangesToAnchorRange = 'standard.collapseMultipleSelectionRangesToAnchorRange',
-  CollapseMultipleSelectionRangesToFocusRange = 'standard.collapseMultipleSelectionRangesToFocusRange',
-  OpenSearch = 'standard.openSearch',
-  CloseSearch = 'standard.closeSearch',
-  SearchCurrentFocusSelectionRange = 'standard.searchCurrentFocusSelectionRange',
-  SelectAllInstancesOfWord = 'standard.selectAllInstancesOfWord',
-  SelectAllInstancesOfSearchQuery = 'standard.selectAllInstancesOfSearchQuery',
-  SelectNextInstanceOfWordAtFocus = 'standard.selectNextInstanceOfWordAtFocus',
-  SelectPreviousInstanceOfWordAtFocus = 'standard.selectPreviousInstanceOfWordAtFocus',
-  SelectNextInstanceOfSearchQuery = 'standard.selectNextInstanceOfSearchQuery',
-  SelectPreviousInstanceOfSearchQuery = 'standard.selectPreviousInstanceOfSearchQuery',
-  SelectNextSearchMatch = 'standard.selectNextSearchMatch',
-  SelectPreviousSearchMatch = 'standard.selectPreviousSearchMatch',
-  MoveCurrentBlocksAbove = 'standard.moveCurrentBlocksAbove',
-  MoveCurrentBlocksBelow = 'standard.moveCurrentBlocksBelow',
-  CloneCurrentBlocksAbove = 'standard.cloneCurrentBlocksAbove',
-  CloneCurrentBlocksBelow = 'standard.cloneCurrentBlocksBelow',
-  ApplyBold = 'standard.boldText',
-  ApplyItalic = 'standard.applyItalic',
-  ApplyUnderline = 'standard.applyUnderline',
-  ApplyCode = 'standard.applyCode',
-  ApplyStrikethrough = 'standard.applyStrikethrough',
-  ApplySubscript = 'standard.applySubscript',
-  ApplySuperscript = 'standard.applySuperscript',
-  ResetInlineStyle = 'standard.resetInlineStyle',
-  AlignParagraphLeft = 'standard.alignParagraphLeft',
-  AlignParagraphRight = 'standard.alignParagraphRight',
-  AlignParagraphCenter = 'standard.alignParagraphCenter',
-  AlignParagraphJustify = 'standard.alignParagraphJustify',
-  ToggleChecklistChecked = 'standard.toggleChecklistChecked',
-  ToggleChecklistCheckedIndividually = 'standard.toggleChecklistCheckedIndividually',
-  IncreaseListIndent = 'standard.increaseListIndent',
-  DecreaseListIndent = 'standard.decreaseListIndent',
-  ApplyBlockquote = 'standard.applyBlockquote',
-  ApplyHeading1 = 'standard.applyHeading1',
-  ApplyHeading2 = 'standard.applyHeading2',
-  ApplyHeading3 = 'standard.applyHeading3',
-  ApplyOrderedList = 'standard.applyOrderedList',
-  ApplyUnorderedList = 'standard.applyUnorderedList',
-  ApplyChecklist = 'standard.applyChecklist',
-  ResetParagraphStyle = 'standard.resetParagraphStyle',
-  OpenQuickFixAtSelection = 'standard.openQuickFixAtSelection',
+const enum StandardCommand {
+  MoveSelectionGraphemeBackwards,
+  MoveSelectionWordBackwards,
+  MoveSelectionParagraphBackwards,
+  MoveSelectionParagraphStart,
+  MoveSelectionGraphemeForwards,
+  MoveSelectionWordForwards,
+  MoveSelectionParagraphForwards,
+  MoveSelectionParagraphEnd,
+  MoveSelectionSoftLineStart,
+  MoveSelectionSoftLineEnd,
+  MoveSelectionSoftLineDown,
+  MoveSelectionSoftLineUp,
+  MoveSelectionStartOfDocument,
+  MoveSelectionEndOfDocument,
+  ExtendSelectionGraphemeBackwards,
+  ExtendSelectionWordBackwards,
+  ExtendSelectionParagraphBackwards,
+  ExtendSelectionParagraphStart,
+  ExtendSelectionGraphemeForwards,
+  ExtendSelectionWordForwards,
+  ExtendSelectionParagraphForwards,
+  ExtendSelectionParagraphEnd,
+  ExtendSelectionSoftLineStart,
+  ExtendSelectionSoftLineEnd,
+  ExtendSelectionSoftLineDown,
+  ExtendSelectionSoftLineUp,
+  ExtendSelectionStartOfDocument,
+  ExtendSelectionEndOfDocument,
+  RemoveSelectionGraphemeBackwards,
+  RemoveSelectionWordBackwards,
+  RemoveSelectionGraphemeForwards,
+  RemoveSelectionWordForwards,
+  RemoveSelectionSoftLineStart,
+  RemoveSelectionSoftLineEnd,
+  TransposeGraphemes,
+  InsertParagraphBelow,
+  InsertParagraphAbove,
+  SelectAll,
+  InsertPlainText,
+  InsertPastedPlainText,
+  InsertDroppedPlainText,
+  InsertLineBreak,
+  OpenFloatingLinkBoxAtSelection,
+  SplitParagraph,
+  Undo,
+  Redo,
+  CollapseMultipleSelectionRangesToAnchorRange,
+  CollapseMultipleSelectionRangesToFocusRange,
+  OpenSearch,
+  CloseSearch,
+  SearchCurrentFocusSelectionRange,
+  SelectAllInstancesOfWord,
+  SelectAllInstancesOfSearchQuery,
+  SelectNextInstanceOfWordAtFocus,
+  SelectPreviousInstanceOfWordAtFocus,
+  SelectNextInstanceOfSearchQuery,
+  SelectPreviousInstanceOfSearchQuery,
+  SelectNextSearchMatch,
+  SelectPreviousSearchMatch,
+  MoveCurrentBlocksAbove,
+  MoveCurrentBlocksBelow,
+  CloneCurrentBlocksAbove,
+  CloneCurrentBlocksBelow,
+  ApplyBold,
+  ApplyItalic,
+  ApplyUnderline,
+  ApplyCode,
+  ApplyStrikethrough,
+  ApplySubscript,
+  ApplySuperscript,
+  ResetTextScript,
+  ResetTextColor,
+  ResetHighlightColor,
+  ResetInlineStyle,
+  ResetParagraphType,
+  AlignParagraphLeft,
+  AlignParagraphRight,
+  AlignParagraphCenter,
+  AlignParagraphJustify,
+  ToggleChecklistChecked,
+  ToggleChecklistCheckedIndividually,
+  IncreaseListIndent,
+  DecreaseListIndent,
+  ApplyBlockquote,
+  ApplyIndent1,
+  ApplyHangingIndent1,
+  ApplyIndentFirstLine1,
+  ApplyHeading1,
+  ApplyHeading2,
+  ApplyHeading3,
+  ApplyHeading4,
+  ApplyHeading5,
+  ApplyHeading6,
+  ApplyOrderedList,
+  CycleOrderedListStyle,
+  ApplyOrderedListStyle,
+  ApplyUnorderedList,
+  ApplyChecklist,
+  ResetParagraphStyle,
+  OpenQuickFixAtSelection,
+  ApplyTextColor,
+  ApplyHighlightColor,
 }
 enum Platform {
   Apple = 'Apple',
@@ -2344,9 +2866,10 @@ function satisfiesSelector<T extends string>(values: T[], selector: Selector<T>)
   }
   return selector.any.some((selector) => satisfiesSelector(values, selector));
 }
+type CommandName = string | number;
 type KeyCommands = {
   key: string | null;
-  command: string | null;
+  command: CommandName | null;
   platform?: Selector<Platform> | null;
   context?: Selector<Context> | null;
 }[];
@@ -2400,6 +2923,7 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Shift+Enter', command: StandardCommand.InsertParagraphBelow, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+KeyA', command: StandardCommand.SelectAll, platform: Platform.Apple, context: Context.Editing },
   { key: 'Shift+Enter,Control+KeyO', command: StandardCommand.InsertLineBreak, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+KeyK', command: StandardCommand.OpenFloatingLinkBoxAtSelection, platform: Platform.Apple, context: Context.Editing },
   { key: 'Enter', command: StandardCommand.SplitParagraph, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+KeyZ,Meta+Shift+KeyY', command: StandardCommand.Undo, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Shift+KeyZ,Meta+KeyY', command: StandardCommand.Redo, platform: Platform.Apple, context: Context.Editing },
@@ -2451,10 +2975,15 @@ const defaultTextEditingKeyCommands: KeyCommands = [
   { key: 'Meta+Alt+Digit1', command: StandardCommand.ApplyHeading1, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Digit2', command: StandardCommand.ApplyHeading2, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Digit3', command: StandardCommand.ApplyHeading3, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Digit4', command: StandardCommand.ApplyHeading4, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Digit7', command: StandardCommand.ApplyUnorderedList, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Digit8', command: StandardCommand.ApplyOrderedList, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Shift+Digit8', command: StandardCommand.CycleOrderedListStyle, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Digit9', command: StandardCommand.ApplyChecklist, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Digit0', command: StandardCommand.ApplyBlockquote, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Shift+Digit0', command: StandardCommand.ApplyIndent1, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Semicolon', command: StandardCommand.ApplyIndentFirstLine1, platform: Platform.Apple, context: Context.Editing },
+  { key: 'Meta+Alt+Shift+Semicolon', command: StandardCommand.ApplyHangingIndent1, platform: Platform.Apple, context: Context.Editing },
   { key: 'Meta+Alt+Backslash', command: StandardCommand.ResetParagraphStyle, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+Enter', command: StandardCommand.ToggleChecklistChecked, platform: Platform.Apple, context: Context.Editing },
   { key: 'Control+Alt+Enter', command: StandardCommand.ToggleChecklistCheckedIndividually, platform: Platform.Apple, context: Context.Editing },
@@ -2989,7 +3518,7 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   },
 };
 interface CommandInfo<Data> {
-  commandName: string;
+  commandName: CommandName;
   data: Data;
 }
 interface InsertPlainTextCommandData {
@@ -3492,6 +4021,7 @@ function makeInsertPlainTextAtSelectionUpdateFn(
   text: string,
   selection?: matita.Selection,
   treatAsSelection?: boolean,
+  fixTextConfig?: (textConfig: TextConfig) => TextConfig,
 ): matita.RunUpdateFn {
   return () => {
     const lineTexts = text.split(/\r?\n/g).map((line) => line.replaceAll('\r', ''));
@@ -3500,22 +4030,15 @@ function makeInsertPlainTextAtSelectionUpdateFn(
       selectionRange: matita.SelectionRange,
     ): matita.ContentFragment<ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> => {
       return matita.makeContentFragment(
-        lineTexts.map((lineText) =>
-          matita.makeContentFragmentParagraph(
-            matita.makeParagraph(
-              {},
-              lineText === ''
-                ? []
-                : [
-                    matita.makeText(
-                      getInsertTextConfigAtSelectionRange(stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange),
-                      lineText,
-                    ),
-                  ],
-              matita.generateId(),
-            ),
-          ),
-        ),
+        lineTexts.map((lineText) => {
+          let textConfig = getInsertTextConfigAtSelectionRange(stateControl.stateView.document, customCollapsedSelectionTextConfig, selectionRange);
+          if (fixTextConfig) {
+            textConfig = fixTextConfig(textConfig);
+          }
+          return matita.makeContentFragmentParagraph(
+            matita.makeParagraph({}, lineText === '' ? [] : [matita.makeText(textConfig, lineText)], matita.generateId()),
+          );
+        }),
       );
     };
     const { customCollapsedSelectionTextConfig } = stateControl.stateView;
@@ -3578,6 +4101,9 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
         inlineNodeText === '-' ||
         inlineNodeText === '*' ||
         inlineNodeText === '>' ||
+        inlineNodeText === '>>' ||
+        inlineNodeText === '>-' ||
+        inlineNodeText === '>;' ||
         inlineNodeText === '#' ||
         inlineNodeText === '##' ||
         inlineNodeText === '###' ||
@@ -3621,6 +4147,9 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
       }
       if (
         inlineNodeText === '> ' ||
+        inlineNodeText === '>> ' ||
+        inlineNodeText === '>- ' ||
+        inlineNodeText === '>; ' ||
         inlineNodeText === '# ' ||
         inlineNodeText === '## ' ||
         inlineNodeText === '### ' ||
@@ -3631,6 +4160,12 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
         const newParagraphType =
           inlineNodeText === '> '
             ? ParagraphType.Quote
+            : inlineNodeText === '>> '
+            ? ParagraphType.Indent1
+            : inlineNodeText === '>- '
+            ? ParagraphType.IndentFirstLine1
+            : inlineNodeText === '>; '
+            ? ParagraphType.IndentHanging1
             : inlineNodeText === '# '
             ? ParagraphType.Heading1
             : inlineNodeText === '## '
@@ -4067,15 +4602,91 @@ function makeIndentOrDedentListUpdateFn(
                 newNumberedIndentLevel,
               );
               if (!matita.isJsonMap(storedListStyleAtNewIndent) || !isStoredListTypeSet(storedListStyleAtNewIndent.type)) {
+                const newNumberedIndentLevelAsString = String(newNumberedIndentLevel);
                 topLevelContentConfigMutations.push(
                   matita.makeUpdateContentConfigMutation(
                     topLevelContentReference,
                     matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(
-                      ['listStyles', 'listIdToStyle', paragraph.config.ListItem_listId, 'indentLevelToStyle', String(newNumberedIndentLevel), 'type'],
+                      ['listStyles', 'listIdToStyle', paragraph.config.ListItem_listId, 'indentLevelToStyle', newNumberedIndentLevelAsString, 'type'],
                       convertAccessedListStyleTypeToStoredListType(listTypeAtCurrentIndent),
                     ),
                   ),
                 );
+                if (listTypeAtCurrentIndent === AccessedListStyleType.OrderedList) {
+                  let newOrderedListStyle = accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+                  switch (newOrderedListStyle) {
+                    case OrderedListStyle.Decimal: {
+                      let hasUpper = false;
+                      let isLastBeforeLower = true;
+                      for (let indentLevel = 0; indentLevel <= maxListIndentLevel && !(indentLevel >= newNumberedIndentLevel && hasUpper); indentLevel++) {
+                        const listStyleAtIndent = accessListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                          topLevelContent.config,
+                          paragraph.config.ListItem_listId,
+                          indentLevel as NumberedListIndent,
+                        );
+                        if (
+                          matita.isJsonMap(listStyleAtIndent) &&
+                          convertStoredListStyleTypeToAccessedListType(listStyleAtIndent.type) === AccessedListStyleType.OrderedList
+                        ) {
+                          const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                            topLevelContent.config,
+                            paragraph.config.ListItem_listId,
+                            indentLevel as NumberedListIndent,
+                          );
+                          if ([OrderedListStyle.UpperAlpha, OrderedListStyle.UpperGreek, OrderedListStyle.UpperRoman].includes(orderedListStyle)) {
+                            hasUpper = true;
+                            isLastBeforeLower = false;
+                          } else if (
+                            [OrderedListStyle.LowerAlpha, OrderedListStyle.LowerGreek, OrderedListStyle.LowerRoman].includes(orderedListStyle) &&
+                            indentLevel < newNumberedIndentLevel
+                          ) {
+                            isLastBeforeLower = true;
+                          }
+                        }
+                      }
+                      if (hasUpper && !isLastBeforeLower) {
+                        newOrderedListStyle = OrderedListStyle.UpperAlpha;
+                      } else {
+                        newOrderedListStyle = OrderedListStyle.LowerAlpha;
+                      }
+                      break;
+                    }
+                    case OrderedListStyle.LowerAlpha: {
+                      newOrderedListStyle = OrderedListStyle.LowerRoman;
+                      break;
+                    }
+                    case OrderedListStyle.UpperAlpha: {
+                      newOrderedListStyle = OrderedListStyle.UpperRoman;
+                      break;
+                    }
+                    case OrderedListStyle.LowerRoman:
+                    case OrderedListStyle.UpperRoman:
+                    case OrderedListStyle.LowerGreek:
+                    case OrderedListStyle.UpperGreek: {
+                      newOrderedListStyle = OrderedListStyle.Decimal;
+                      break;
+                    }
+                    default: {
+                      assertUnreachable(newOrderedListStyle);
+                    }
+                  }
+                  topLevelContentConfigMutations.push(
+                    matita.makeUpdateContentConfigMutation(
+                      topLevelContentReference,
+                      matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(
+                        [
+                          'listStyles',
+                          'listIdToStyle',
+                          paragraph.config.ListItem_listId,
+                          'indentLevelToStyle',
+                          newNumberedIndentLevelAsString,
+                          'OrderedList_style',
+                        ],
+                        newOrderedListStyle,
+                      ),
+                    ),
+                  );
+                }
               }
             }
           }
@@ -4126,7 +4737,11 @@ function makeRemoveSelectionBackwardsByPointTransformFnUpdateFn(
         mutations.push(matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, resetListMergeParagraphConfig));
         continue;
       }
-      if (paragraph.config.type === ParagraphType.Quote) {
+      if (
+        paragraph.config.type === ParagraphType.Quote ||
+        paragraph.config.type === ParagraphType.Indent1 ||
+        paragraph.config.type === ParagraphType.IndentFirstLine1
+      ) {
         const paragraphReference = matita.makeBlockReferenceFromBlock(paragraph);
         mutations.push(matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: undefined }));
         continue;
@@ -4212,6 +4827,53 @@ function makeToggleChecklistCheckedAtSelectionUpdateFn(
         matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
           ListItem_Checklist_checked: newIsChecked,
         }),
+      );
+    }
+    if (mutations.length === 0) {
+      return;
+    }
+    stateControl.delta.applyMutation(matita.makeBatchMutation(mutations));
+  };
+}
+function makeMapOrderedListStyleAtSelectionUpdateFn(
+  stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+  topLevelContentReference: matita.ContentReference,
+  mapOrderedListStyle: (style: OrderedListStyle) => OrderedListStyle,
+  selection?: matita.Selection,
+): matita.RunUpdateFn {
+  return () => {
+    const selectionAt = selection ?? stateControl.stateView.selection;
+    const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
+    const cycledListIds = new Set<string>();
+    const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
+    for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, selectionAt)) {
+      const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
+      if (paragraph.config.type !== ParagraphType.ListItem) {
+        continue;
+      }
+      const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+      if (listType !== AccessedListStyleType.OrderedList) {
+        continue;
+      }
+      const listId = paragraph.config.ListItem_listId;
+      if (typeof listId !== 'string') {
+        throwUnreachable();
+      }
+      if (cycledListIds.has(listId)) {
+        continue;
+      }
+      cycledListIds.add(listId);
+      const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+      const newOrderedListStyle = mapOrderedListStyle(orderedListStyle);
+      const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel);
+      mutations.push(
+        matita.makeUpdateContentConfigMutation(
+          topLevelContentReference,
+          matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(
+            ['listStyles', 'listIdToStyle', listId, 'indentLevelToStyle', String(numberedIndentLevel), 'OrderedList_style'],
+            newOrderedListStyle,
+          ),
+        ),
       );
     }
     if (mutations.length === 0) {
@@ -4656,6 +5318,97 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
+  [StandardCommand.ApplyTextColor]: {
+    execute(stateControl, _viewControl, data) {
+      const newTextColor = data as Color;
+      assert(colors.includes(newTextColor));
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateTextConfigAtCurrentSelectionAndCustomCollapsedSelectionTextConfigUpdateFn(
+          stateControl,
+          (textConfig) => textConfig.color === newTextColor,
+          (isAllActive) => ({ color: isAllActive ? undefined : newTextColor }),
+          getInsertTextConfigAtSelectionRange,
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ApplyHighlightColor]: {
+    execute(stateControl, _viewControl, data) {
+      const newHighlightColor = data as Color;
+      assert(colors.includes(newHighlightColor));
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateTextConfigAtCurrentSelectionAndCustomCollapsedSelectionTextConfigUpdateFn(
+          stateControl,
+          (textConfig) => textConfig.highlightColor === newHighlightColor,
+          (isAllActive) => ({ highlightColor: isAllActive ? undefined : newHighlightColor }),
+          getInsertTextConfigAtSelectionRange,
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ResetTextScript]: {
+    execute(stateControl): void {
+      const resetTextScriptMergeConfig: TextConfig = {
+        script: undefined,
+      };
+      stateControl.queueUpdate(
+        () => {
+          if (matita.isSelectionCollapsedInText(stateControl.stateView.selection)) {
+            stateControl.delta.setCustomCollapsedSelectionTextConfig(resetTextScriptMergeConfig);
+            return;
+          }
+          stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetTextScriptMergeConfig));
+        },
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ResetTextColor]: {
+    execute(stateControl): void {
+      const resetTextColorMergeConfig: TextConfig = {
+        color: undefined,
+      };
+      stateControl.queueUpdate(
+        () => {
+          if (matita.isSelectionCollapsedInText(stateControl.stateView.selection)) {
+            stateControl.delta.setCustomCollapsedSelectionTextConfig(resetTextColorMergeConfig);
+            return;
+          }
+          stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetTextColorMergeConfig));
+        },
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ResetHighlightColor]: {
+    execute(stateControl): void {
+      const resetHighlightColorMergeConfig: TextConfig = {
+        highlightColor: undefined,
+      };
+      stateControl.queueUpdate(
+        () => {
+          if (matita.isSelectionCollapsedInText(stateControl.stateView.selection)) {
+            stateControl.delta.setCustomCollapsedSelectionTextConfig(resetHighlightColorMergeConfig);
+            return;
+          }
+          stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetHighlightColorMergeConfig));
+        },
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+      stateControl.queueUpdate(
+        () => {
+          if (matita.isSelectionCollapsedInText(stateControl.stateView.selection)) {
+            stateControl.delta.setCustomCollapsedSelectionTextConfig(resetMergeTextConfig);
+            return;
+          }
+          stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetMergeTextConfig));
+        },
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
   [StandardCommand.ResetInlineStyle]: {
     execute(stateControl): void {
       stateControl.queueUpdate(
@@ -4666,6 +5419,14 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
           }
           stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetMergeTextConfig));
         },
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ResetParagraphType]: {
+    execute(stateControl): void {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(stateControl, null, () => resetMergeParagraphTypeConfig),
         { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
     },
@@ -4746,6 +5507,42 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
+  [StandardCommand.ApplyIndent1]: {
+    execute(stateControl) {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(
+          stateControl,
+          (paragraphConfig) => paragraphConfig.type === ParagraphType.Indent1,
+          (isAllActive) => ({ type: isAllActive ? undefined : ParagraphType.Indent1 }),
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ApplyIndentFirstLine1]: {
+    execute(stateControl) {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(
+          stateControl,
+          (paragraphConfig) => paragraphConfig.type === ParagraphType.IndentFirstLine1,
+          (isAllActive) => ({ type: isAllActive ? undefined : ParagraphType.IndentFirstLine1 }),
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ApplyHangingIndent1]: {
+    execute(stateControl) {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(
+          stateControl,
+          (paragraphConfig) => paragraphConfig.type === ParagraphType.IndentHanging1,
+          (isAllActive) => ({ type: isAllActive ? undefined : ParagraphType.IndentHanging1 }),
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
   [StandardCommand.ApplyHeading1]: {
     execute(stateControl) {
       stateControl.queueUpdate(
@@ -4782,6 +5579,42 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       );
     },
   },
+  [StandardCommand.ApplyHeading4]: {
+    execute(stateControl) {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(
+          stateControl,
+          (paragraphConfig) => paragraphConfig.type === ParagraphType.Heading4,
+          (isAllActive) => ({ type: isAllActive ? undefined : ParagraphType.Heading4 }),
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ApplyHeading5]: {
+    execute(stateControl) {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(
+          stateControl,
+          (paragraphConfig) => paragraphConfig.type === ParagraphType.Heading5,
+          (isAllActive) => ({ type: isAllActive ? undefined : ParagraphType.Heading5 }),
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ApplyHeading6]: {
+    execute(stateControl) {
+      stateControl.queueUpdate(
+        matita.makeToggleUpdateParagraphConfigAtSelectionUpdateFn(
+          stateControl,
+          (paragraphConfig) => paragraphConfig.type === ParagraphType.Heading6,
+          (isAllActive) => ({ type: isAllActive ? undefined : ParagraphType.Heading6 }),
+        ),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
   [StandardCommand.ApplyOrderedList]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
@@ -4812,6 +5645,31 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
         {
           [doNotScrollToSelectionAfterChangeDataKey]: true,
         },
+      );
+    },
+  },
+  [StandardCommand.CycleOrderedListStyle]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeMapOrderedListStyleAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, (orderedListStyle) => {
+          const orderedListStyleIndex = orderedListStyles.indexOf(orderedListStyle);
+          const newOrderedListStyle = orderedListStyles[(orderedListStyleIndex + 1) % orderedListStyles.length];
+          return newOrderedListStyle;
+        }),
+
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
+      );
+    },
+  },
+  [StandardCommand.ApplyOrderedListStyle]: {
+    execute(stateControl, viewControl, data): void {
+      const newOrderedListStyle = data as OrderedListStyle;
+      assert(orderedListStyles.includes(newOrderedListStyle));
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(
+        makeMapOrderedListStyleAtSelectionUpdateFn(stateControl, documentRenderControl.topLevelContentReference, () => newOrderedListStyle),
+        { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
     },
   },
@@ -4876,6 +5734,12 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       stateControl.queueUpdate(() => {
         stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, getContentFragmentFromSelectionRange));
       });
+    },
+  },
+  [StandardCommand.OpenFloatingLinkBoxAtSelection]: {
+    execute(stateControl, viewControl): void {
+      const documentRenderControl = viewControl.accessDocumentRenderControl();
+      stateControl.queueUpdate(documentRenderControl.openFloatingLinkBoxAtSelection(), { [keepFloatingLinkBoxOpenUpdateKey]: true });
     },
   },
   [StandardCommand.SplitParagraph]: {
@@ -5395,10 +6259,10 @@ class LocalUndoControl<
       MyEmbedRenderControl
     >,
   ): void {
-    commandRegister.set(StandardCommand.Undo, {
+    commandRegister.set(String(StandardCommand.Undo), {
       execute: this.tryUndo.bind(this),
     });
-    commandRegister.set(StandardCommand.Redo, {
+    commandRegister.set(String(StandardCommand.Redo), {
       execute: this.tryRedo.bind(this),
     });
   }
@@ -6121,6 +6985,7 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
         assert(endOffset > startOffset);
         this.$p_stateControl.queueUpdate(
           () => {
+            // TODO: When multiple input events are batched together the last native offset can be incorrect.
             const startOffsetAdjustAmount = Math.min(startOffset - this.$p_lastNativeOffset, 0);
             const endOffsetAdjustAmount = Math.min(endOffset - this.$p_lastNativeOffset, 0);
             this.$p_insertTextWithAdjustAmounts(text, startOffsetAdjustAmount, endOffsetAdjustAmount);
@@ -6162,6 +7027,8 @@ class ListStyleInjectionControl extends DisposableClass {
         const numberedListIndexer = this.$p_numberedListIndexerMap.get(paragraph.config.ListItem_listId as string);
         assertIsNotNullish(numberedListIndexer);
         injectedStyle.ListItem_OrderedList_number = numberedListIndexer.getListItemNumber(paragraph.id);
+        const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
+        injectedStyle.ListItem_OrderedList_style = orderedListStyle;
       }
     }
   }
@@ -6448,43 +7315,42 @@ class ListStyleInjectionControl extends DisposableClass {
                   }
                   for (const [listId, numberedListIndexer] of this.$p_numberedListIndexerMap.entries()) {
                     for (let indentLevel = 0; indentLevel <= maxListIndentLevel; indentLevel++) {
-                      const previousListType = accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
-                        configBefore,
-                        listId,
-                        indentLevel as NumberedListIndent,
-                      );
-                      const listType = accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
-                        configAfter,
-                        listId,
-                        indentLevel as NumberedListIndent,
-                      );
-                      if (previousListType === listType) {
-                        if (listType === AccessedListStyleType.OrderedList) {
-                          const previousListStartNumber = accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
-                            configBefore,
-                            listId,
-                            indentLevel as NumberedListIndent,
-                          );
-                          const listStartNumber = accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
-                            configAfter,
-                            listId,
-                            indentLevel as NumberedListIndent,
-                          );
-                          if (previousListStartNumber !== listStartNumber) {
-                            for (const paragraphId of numberedListIndexer.iterateParagraphIds()) {
-                              const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
-                              const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
-                              matita.assertIsParagraph(paragraph);
-                              if (convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel) === indentLevel) {
-                                numberedListIndexer.markDirty();
-                                const paragraphRenderControl = this.$p_viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
-                                paragraphRenderControl.markDirtyContainer();
-                                this.$p_queueDirtyParagraph(paragraphId);
-                              }
-                            }
-                          }
+                      const numberedIndentLevel = indentLevel as NumberedListIndent;
+                      const previousListType = accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(configBefore, listId, numberedIndentLevel);
+                      const listType = accessListTypeInTopLevelContentConfigAtListIdAtNumberedIndentLevel(configAfter, listId, numberedIndentLevel);
+                      let shouldUpdate = false;
+                      decideShouldUpdate: if (previousListType !== listType) {
+                        shouldUpdate = true;
+                      } else if (listType === AccessedListStyleType.OrderedList) {
+                        const previousListStartNumber = accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                          configBefore,
+                          listId,
+                          numberedIndentLevel,
+                        );
+                        const listStartNumber = accessOrderedListStartNumberInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                          configAfter,
+                          listId,
+                          numberedIndentLevel,
+                        );
+                        if (previousListStartNumber !== listStartNumber) {
+                          shouldUpdate = true;
+                          break decideShouldUpdate;
                         }
-                      } else {
+                        const previousOrderedListStyle = accessOrderedListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                          configBefore,
+                          listId,
+                          numberedIndentLevel,
+                        );
+                        const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigAtListIdAtNumberedIndentLevel(
+                          configAfter,
+                          listId,
+                          numberedIndentLevel,
+                        );
+                        if (previousOrderedListStyle !== orderedListStyle) {
+                          shouldUpdate = true;
+                        }
+                      }
+                      if (shouldUpdate) {
                         for (const paragraphId of numberedListIndexer.iterateParagraphIds()) {
                           const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
                           const paragraph = matita.accessBlockFromBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
@@ -6512,6 +7378,282 @@ class ListStyleInjectionControl extends DisposableClass {
 }
 // prettier-ignore
 const commonTwoLetterWords = new Set(['am', 'an', 'as', 'at', 'be', 'bi', 'by', 'do', 'ex', 'go', 'he', 'hi', 'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'ok', 'on', 'or', 're', 'so', 'to', 'un', 'up', 'us', 'we']);
+const enum WhichDropdown {
+  Mark,
+  Paragraph,
+  Insert,
+}
+interface ToolbarDropdownItemContextValue {
+  activeChildText: string | null;
+  setActiveChildText: (newActiveParent: string | null) => void;
+}
+const ToolbarDropdownItemContext = createContext<ToolbarDropdownItemContextValue | null>(null);
+const ToolbarDropdownItemContextProvider = ToolbarDropdownItemContext.Provider;
+type ToolbarPropsRunCommandFn = (commandInfo: CommandInfo<any>) => void;
+interface ToolbarProps {
+  close$: Source<unknown>;
+  isToolbarOpenSink: Sink<boolean>;
+  resetFocusSink: Sink<undefined>;
+  runCommand: ToolbarPropsRunCommandFn;
+}
+function Toolbar(props: ToolbarProps): JSX.Element | null {
+  const { close$, isToolbarOpenSink, resetFocusSink, runCommand } = props;
+  const [activeDropdown, setActiveDropdown_] = useState<WhichDropdown | null>(null);
+  const setActiveDropdown = (newActiveDropdown: WhichDropdown | null) => {
+    isToolbarOpenSink(Push(newActiveDropdown !== null));
+    setActiveDropdown_(newActiveDropdown);
+  };
+  const unsetAsActive = () => {
+    resetFocusSink(Push(undefined));
+    setActiveDropdown(null);
+  };
+  useEffect(() => {
+    const disposable = Disposable();
+    pipe(
+      close$,
+      subscribe((event) => {
+        assert(event.type === PushType);
+        flushSync(() => {
+          setActiveDropdown(null);
+        });
+      }, disposable),
+    );
+    return () => {
+      disposable.dispose();
+    };
+  });
+  const makeRunCommandAction = (commandName: CommandName, data: unknown = null): (() => void) => {
+    return () => {
+      runCommand({
+        commandName,
+        data,
+      });
+      unsetAsActive();
+    };
+  };
+  return (
+    <>
+      <ToolbarDropdown
+        dropdown={WhichDropdown.Mark}
+        activeDropdown={activeDropdown}
+        setAsActive={() => setActiveDropdown(WhichDropdown.Mark)}
+        unsetAsActive={unsetAsActive}
+        isFirst={true}
+        text="Mark"
+      >
+        <ToolbarDropdownItem text="Bold" action={makeRunCommandAction(StandardCommand.ApplyBold)} />
+        <ToolbarDropdownItem text="Italic" action={makeRunCommandAction(StandardCommand.ApplyItalic)} />
+        <ToolbarDropdownItem text="Underline" action={makeRunCommandAction(StandardCommand.ApplyUnderline)} />
+        <ToolbarDropdownItem text="Code" action={makeRunCommandAction(StandardCommand.ApplyCode)} />
+        <ToolbarDropdownItem text="Strikethrough" action={makeRunCommandAction(StandardCommand.ApplyStrikethrough)} />
+        <ToolbarDropdownItem text="Script">
+          <ToolbarDropdownItem text="Default" action={makeRunCommandAction(StandardCommand.ResetTextScript)} />
+          <ToolbarDropdownItem text="Superscript" action={makeRunCommandAction(StandardCommand.ApplySuperscript)} />
+          <ToolbarDropdownItem text="Subscript" action={makeRunCommandAction(StandardCommand.ApplySubscript)} />
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Color">
+          <ToolbarDropdownItem text="Default" action={makeRunCommandAction(StandardCommand.ResetTextColor)} />
+          {colors.map((color) => (
+            <ToolbarDropdownItem
+              text={colorLabels[color]}
+              color={colorHexValues[color]}
+              key={color}
+              action={makeRunCommandAction(StandardCommand.ApplyTextColor, color)}
+            />
+          ))}
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Highlight">
+          <ToolbarDropdownItem text="Default" action={makeRunCommandAction(StandardCommand.ResetHighlightColor)} />
+          {colors.map((color) => (
+            <ToolbarDropdownItem
+              text={colorLabels[color]}
+              backgroundColor={highlightColorHexValues[color]}
+              hoverBackgroundColor={darkerHighlightColorHexValues[color]}
+              key={color}
+              action={makeRunCommandAction(StandardCommand.ApplyHighlightColor, color)}
+            />
+          ))}
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Link" action={makeRunCommandAction(StandardCommand.OpenFloatingLinkBoxAtSelection)} />
+        <ToolbarDropdownItem text="Clear All" action={makeRunCommandAction(StandardCommand.ResetInlineStyle)} />
+      </ToolbarDropdown>
+      <ToolbarDropdown
+        dropdown={WhichDropdown.Paragraph}
+        activeDropdown={activeDropdown}
+        setAsActive={() => setActiveDropdown(WhichDropdown.Paragraph)}
+        unsetAsActive={unsetAsActive}
+        isFirst={false}
+        text="Paragraph"
+      >
+        <ToolbarDropdownItem text="Default" action={makeRunCommandAction(StandardCommand.ResetParagraphType)} />
+        <ToolbarDropdownItem text="Heading">
+          <ToolbarDropdownItem text="Heading 1" action={makeRunCommandAction(StandardCommand.ApplyHeading1)} />
+          <ToolbarDropdownItem text="Heading 2" action={makeRunCommandAction(StandardCommand.ApplyHeading2)} />
+          <ToolbarDropdownItem text="Heading 3" action={makeRunCommandAction(StandardCommand.ApplyHeading3)} />
+          <ToolbarDropdownItem text="Heading 4" action={makeRunCommandAction(StandardCommand.ApplyHeading4)} />
+          <ToolbarDropdownItem text="Heading 5" action={makeRunCommandAction(StandardCommand.ApplyHeading5)} />
+          <ToolbarDropdownItem text="Heading 6" action={makeRunCommandAction(StandardCommand.ApplyHeading6)} />
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Blockquote" action={makeRunCommandAction(StandardCommand.ApplyBlockquote)} />
+        <ToolbarDropdownItem text="List">
+          <ToolbarDropdownItem text="Bullet List" action={makeRunCommandAction(StandardCommand.ApplyUnorderedList)} />
+          <ToolbarDropdownItem text="Ordered List" action={makeRunCommandAction(StandardCommand.ApplyOrderedList)} />
+          <ToolbarDropdownItem text="Checklist" action={makeRunCommandAction(StandardCommand.ApplyChecklist)} />
+          <ToolbarDropdownItem text="Ordered List Style">
+            <ToolbarDropdownItem text="Decimal" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.Decimal)} />
+            <ToolbarDropdownItem text="Lower Alpha" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.LowerAlpha)} />
+            <ToolbarDropdownItem text="Lower Roman" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.LowerRoman)} />
+            <ToolbarDropdownItem text="Lower Greek" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.LowerGreek)} />
+            <ToolbarDropdownItem text="Upper Alpha" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.UpperAlpha)} />
+            <ToolbarDropdownItem text="Upper Roman" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.UpperRoman)} />
+            <ToolbarDropdownItem text="Upper Greek" action={makeRunCommandAction(StandardCommand.ApplyOrderedListStyle, OrderedListStyle.UpperGreek)} />
+          </ToolbarDropdownItem>
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Alignment">
+          <ToolbarDropdownItem text="Left" action={makeRunCommandAction(StandardCommand.AlignParagraphLeft)} />
+          <ToolbarDropdownItem text="Right" action={makeRunCommandAction(StandardCommand.AlignParagraphRight)} />
+          <ToolbarDropdownItem text="Center" action={makeRunCommandAction(StandardCommand.AlignParagraphCenter)} />
+          <ToolbarDropdownItem text="Justify" action={makeRunCommandAction(StandardCommand.AlignParagraphJustify)} />
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Indent">
+          <ToolbarDropdownItem text="Indented" action={makeRunCommandAction(StandardCommand.ApplyIndent1)} />
+          <ToolbarDropdownItem text="Hanging Indent" action={makeRunCommandAction(StandardCommand.ApplyHangingIndent1)} />
+          <ToolbarDropdownItem text="First Line Indent" action={makeRunCommandAction(StandardCommand.ApplyIndentFirstLine1)} />
+        </ToolbarDropdownItem>
+        <ToolbarDropdownItem text="Insert Above" action={makeRunCommandAction(StandardCommand.InsertParagraphAbove)} />
+        <ToolbarDropdownItem text="Insert Below" action={makeRunCommandAction(StandardCommand.InsertParagraphBelow)} />
+        <ToolbarDropdownItem text="Clear All" action={makeRunCommandAction(StandardCommand.ResetParagraphStyle)} />
+      </ToolbarDropdown>
+      <ToolbarDropdown
+        dropdown={WhichDropdown.Insert}
+        activeDropdown={activeDropdown}
+        setAsActive={() => setActiveDropdown(WhichDropdown.Insert)}
+        unsetAsActive={unsetAsActive}
+        isFirst={false}
+        text="Insert"
+      >
+        <ToolbarDropdownItem text="Image" />
+        <ToolbarDropdownItem text="Chip" />
+        <ToolbarDropdownItem text="Footnote" />
+        <ToolbarDropdownItem text="Latex" />
+        <ToolbarDropdownItem text="Table" />
+        <ToolbarDropdownItem text="Collapsible" />
+        <ToolbarDropdownItem text="Video" />
+        <ToolbarDropdownItem text="Callout" />
+        <ToolbarDropdownItem text="Code" />
+        <ToolbarDropdownItem text="Tabs" />
+        <ToolbarDropdownItem text="Divider" />
+        <ToolbarDropdownItem text="Spoiler" />
+        <ToolbarDropdownItem text="Latex" />
+        <ToolbarDropdownItem text="Mermaid" />
+        <ToolbarDropdownItem text="Excalidraw" />
+        <ToolbarDropdownItem text="Tweet" />
+        <ToolbarDropdownItem text="Poll" />
+        <ToolbarDropdownItem text="Web Link" />
+        <ToolbarDropdownItem text="Giphy" />
+      </ToolbarDropdown>
+    </>
+  );
+}
+function useToolbarDropdownItemContextValue(isActive: boolean): ToolbarDropdownItemContextValue {
+  const [activeChildText, setActiveChildText] = useState<string | null>(null);
+  if (!isActive && activeChildText !== null) {
+    setActiveChildText(null);
+  }
+  const childToolbarDropdownItemContextValue = useMemo(() => ({ activeChildText, setActiveChildText }), [activeChildText]);
+  return childToolbarDropdownItemContextValue;
+}
+interface ToolbarDropdownProps extends React.PropsWithChildren {
+  dropdown: WhichDropdown;
+  activeDropdown: WhichDropdown | null;
+  setAsActive: () => void;
+  unsetAsActive: () => void;
+  text: string;
+  isFirst: boolean;
+}
+function ToolbarDropdown(props: ToolbarDropdownProps): JSX.Element | null {
+  const { dropdown, activeDropdown, setAsActive, unsetAsActive, text, isFirst, children } = props;
+  const isActive = dropdown === activeDropdown;
+  const childToolbarDropdownItemContextValue = useToolbarDropdownItemContextValue(isActive);
+  return (
+    <div className="toolbar__dropdown-container">
+      <button
+        className={['toolbar__dropdown-button', isFirst || 'toolbar__dropdown-button--not-first', isActive && 'toolbar__dropdown-button--active']
+          .filter(Boolean)
+          .join(' ')}
+        onClick={() => {
+          if (activeDropdown === dropdown) {
+            unsetAsActive();
+          } else {
+            setAsActive();
+          }
+        }}
+        onMouseOver={() => {
+          if (activeDropdown === null || activeDropdown === dropdown) {
+            return;
+          }
+          setAsActive();
+        }}
+      >
+        {text}
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="16" height="16">
+          <path d="M233.4 406.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L256 338.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z" />
+        </svg>
+      </button>
+      <ToolbarDropdownItemContextProvider value={childToolbarDropdownItemContextValue}>
+        <div className={['toolbar__dropdown', isActive && 'toolbar__dropdown--active'].filter(Boolean).join(' ')}>{children}</div>
+      </ToolbarDropdownItemContextProvider>
+    </div>
+  );
+}
+interface ToolbarDropdownItemProps extends React.PropsWithChildren {
+  text: string;
+  color?: string;
+  backgroundColor?: string;
+  hoverBackgroundColor?: string;
+  action?: () => void; // TODO.
+}
+function ToolbarDropdownItem(props: ToolbarDropdownItemProps): JSX.Element | null {
+  const { text, color, backgroundColor, hoverBackgroundColor, action, children } = props;
+  const parentToolbarDropdownItemContextValue = useContext(ToolbarDropdownItemContext);
+  assertIsNotNullish(parentToolbarDropdownItemContextValue);
+  const { activeChildText, setActiveChildText } = parentToolbarDropdownItemContextValue;
+  const hasChildren = Children.count(children) > 0;
+  const onMouseOver = useCallback(() => {
+    setActiveChildText(hasChildren ? text : null);
+  }, [setActiveChildText, hasChildren, text]);
+  const isActive = hasChildren && activeChildText === text;
+  const childToolbarDropdownItemContextValue = useToolbarDropdownItemContextValue(isActive);
+  const style = {
+    color,
+    '--toolbar__dropdown-item_background-color': backgroundColor,
+    '--toolbar__dropdown-item_hover-background-color': hoverBackgroundColor,
+  };
+  const toolbarDropdownItemBaseClassName = `toolbar__dropdown-item ${
+    backgroundColor ? 'toolbar__dropdown-item--has-background-color' : 'toolbar__dropdown-item--no-background-color'
+  }`;
+  if (hasChildren) {
+    return (
+      <div className="toolbar__nested-dropdown-container" onMouseOver={onMouseOver}>
+        <div className={toolbarDropdownItemBaseClassName} style={style}>
+          {text}
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512" width="16" height="16" className="toolbar__chevron-right">
+            <path d="M310.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L242.7 256 73.4 86.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l192 192z" />
+          </svg>
+        </div>
+        <ToolbarDropdownItemContextProvider value={childToolbarDropdownItemContextValue}>
+          <div className={['toolbar__nested-dropdown', isActive && 'toolbar__nested-dropdown--active'].join(' ')}>{children}</div>
+        </ToolbarDropdownItemContextProvider>
+      </div>
+    );
+  }
+  return (
+    <button className={`${toolbarDropdownItemBaseClassName} toolbar__dropdown-item--no-children`} style={style} onMouseOver={onMouseOver} onClick={action}>
+      {text}
+    </button>
+  );
+}
+const keepFloatingLinkBoxOpenUpdateKey = 'keepFloatingLinkBoxOpenUpdateKey';
 class VirtualizedDocumentRenderControl extends DisposableClass implements matita.DocumentRenderControl {
   rootHtmlElement: HTMLElement;
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
@@ -6521,6 +7663,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   dirtyParagraphIdQueue: UniqueStringQueue;
   relativeParagraphMeasurementCache: LruCache<string, RelativeParagraphMeasureCacheValue>;
   private $p_containerHtmlElement!: HTMLElement;
+  private $p_toolbarContainerElement!: HTMLElement;
   private $p_topLevelContentViewContainerElement!: HTMLElement;
   private $p_selectionRectsViewContainerElement!: HTMLElement;
   private $p_selectionCursorsViewContainerElement!: HTMLElement;
@@ -6528,6 +7671,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_searchElementContainerElement!: HTMLElement;
   private $p_spellingMistakesOverlayContainerElement!: HTMLElement;
   private $p_spellingBoxElement!: HTMLElement;
+  private $p_linkBoxElement!: HTMLElement;
+  private $p_linkDetailsElement!: HTMLElement;
   private $p_searchInputRef = createRef<HTMLInputElement>();
   private $p_selectionView$: CurrentValueDistributor<SelectionViewMessage>;
   private $p_searchOverlay$: CurrentValueDistributor<SearchOverlayMessage>;
@@ -6559,7 +7704,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_searchOverlay$ = CurrentValueDistributor<SearchOverlayMessage>({
       calculateMatchInfos: () => [],
       renderSync: false,
-      roundCorners: true,
+      roundCorners: isFirefox,
     });
     this.$p_spellingMistakesOverlay$ = CurrentValueDistributor<SpellingMistakesOverlayMessage>({
       spellingMistakeOverlayInfos: [],
@@ -6616,6 +7761,10 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_moveSpellingBoxFocusedSuggestionIndexUpDown$ = Distributor<-1 | 1>();
   private $p_spellingBoxFixSpellingWithCurrentlyFocusedSuggestion$ = Distributor<undefined>();
   private $p_spellingBoxCancelCurrent$ = Distributor<undefined>();
+  private $p_isToolbarOpen$ = CurrentValueDistributor<boolean>(false);
+  private $p_closeToolbar$ = Distributor<unknown>();
+  private $p_linkBoxRenderMessage$ = LastValueDistributor<LinkBoxRenderMessage | null>();
+  private $p_linkDetailsRenderMessage$ = LastValueDistributor<LinkDetailsRenderMessage | null>();
   init(): void {
     this.$p_spellCheckControl = new SpellCheckControl(this.stateControl, this.topLevelContentReference);
     this.add(this.$p_spellCheckControl);
@@ -6638,12 +7787,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     });
     this.add(this.$p_listStyleInjectionControl);
     this.$p_containerHtmlElement = document.createElement('div');
+    this.$p_toolbarContainerElement = document.createElement('div');
     this.$p_topLevelContentViewContainerElement = document.createElement('div');
     this.$p_selectionRectsViewContainerElement = document.createElement('div');
     this.$p_spellingMistakesOverlayContainerElement = document.createElement('div');
     this.$p_selectionCursorsViewContainerElement = document.createElement('div');
     this.$p_searchOverlayContainerElement = document.createElement('div');
     this.$p_spellingBoxElement = document.createElement('div');
+    this.$p_linkBoxElement = document.createElement('div');
+    this.$p_linkDetailsElement = document.createElement('div');
+    this.$p_toolbarContainerElement.classList.add('toolbar');
+    this.$p_topLevelContentViewContainerElement.style.paddingTop = '8px';
     pipe(
       this.stateControl.afterMutationPart$,
       map((message) => message.viewDelta),
@@ -6747,11 +7901,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           mouseLeave$,
           filter(() => this.$p_spellingBoxFocusedSuggestionIndex === null),
         ),
-        scroll$,
         this.stateControl.afterMutationPart$,
         this.stateControl.selectionChange$,
         this.stateControl.customCollapsedSelectionTextConfigChange$,
         topLevelContentViewContentWidthResize$,
+        fromReactiveValue<[globalThis.MouseEvent]>((callback, disposable) =>
+          addEventListener(this.$p_toolbarContainerElement, 'mouseenter', callback, disposable, { passive: true }),
+        ),
+        fromReactiveValue<[globalThis.MouseEvent]>((callback, disposable) =>
+          addEventListener(this.$p_linkBoxElement, 'mouseenter', callback, disposable, { passive: true }),
+        ),
+        fromReactiveValue<[globalThis.MouseEvent]>((callback, disposable) =>
+          addEventListener(this.$p_linkDetailsElement, 'mouseenter', callback, disposable, { passive: true }),
+        ),
       ]),
       flat(),
       share(),
@@ -6934,33 +8096,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         relativeOffsetTop,
         paragraphMeasurement,
       );
-      const firstTextDecorationInfo = textDecorationInfos[0];
-      let wordBoundingRectLeft = firstTextDecorationInfo.charactersBoundingRectangle.left;
-      let wordBoundingRectTop = firstTextDecorationInfo.charactersBoundingRectangle.top;
-      let wordBoundingRectBottom = firstTextDecorationInfo.charactersBoundingRectangle.bottom;
-      let wordBoundingRectRight = firstTextDecorationInfo.charactersBoundingRectangle.right;
-      for (let i = 0; i < textDecorationInfos.length; i++) {
-        const textDecorationInfo = textDecorationInfos[i];
-        const { charactersBoundingRectangle } = textDecorationInfo;
-        if (charactersBoundingRectangle.left < wordBoundingRectLeft) {
-          wordBoundingRectLeft = charactersBoundingRectangle.left;
-        }
-        if (charactersBoundingRectangle.top < wordBoundingRectTop) {
-          wordBoundingRectTop = charactersBoundingRectangle.top;
-        }
-        if (charactersBoundingRectangle.right > wordBoundingRectRight) {
-          wordBoundingRectRight = charactersBoundingRectangle.right;
-        }
-        if (charactersBoundingRectangle.bottom > wordBoundingRectBottom) {
-          wordBoundingRectBottom = charactersBoundingRectangle.bottom;
-        }
-      }
-      const wordBoundingRect = makeViewRectangle(
-        wordBoundingRectLeft,
-        wordBoundingRectTop,
-        wordBoundingRectRight - wordBoundingRectLeft,
-        wordBoundingRectBottom - wordBoundingRectTop,
-      );
+      const wordBoundingRect = this.$p_makeWordBoundingRect(textDecorationInfos);
       const paragraphLength = matita.getParagraphLength(matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, paragraphPoint));
       const fixedSuggestions = suggestions.filter((suggestion) => {
         const words = suggestion.normalize().toLowerCase().split(/[ -]/g);
@@ -6968,6 +8104,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           (word, i) => word.length > 2 || (i === 0 && (word === 'a' || word === 'i')) || (word.length === 2 && commonTwoLetterWords.has(word)),
         );
       });
+      this.$p_closeToolbarAndFocus();
       this.$p_isSpellingBoxOpen = true;
       this.$p_spellingBoxFocusedSuggestionIndex = isPastPreviousCharacterHalfPoint === null ? (suggestions.length === 0 ? -1 : 0) : null;
       this.$p_undoControl.forceNextChange(() => true);
@@ -7041,6 +8178,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                       const collapsedRange = selectionRange.ranges[0];
                       const paragraphPoint = collapsedRange.startPoint;
                       matita.assertIsParagraphPoint(paragraphPoint);
+                      if (!matita.areBlockReferencesAtSameBlock(matita.makeBlockReferenceFromParagraphPoint(paragraphPoint), paragraphReference)) {
+                        return undefined;
+                      }
                       let newOffset: number;
                       if (paragraphPoint.offset <= hoveredSpellingMistakeStartOffset) {
                         newOffset = paragraphPoint.offset;
@@ -7847,6 +8987,58 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         }),
       );
     };
+    pipe(
+      fromArray([
+        this.stateControl.afterMutationPart$,
+        this.stateControl.selectionChange$,
+        this.stateControl.customCollapsedSelectionTextConfigChange$,
+        pipe(
+          this.$p_selectionViewHasFocus$,
+          filter<boolean>((hasFocus) => hasFocus),
+        ),
+        pipe(
+          this.$p_isSearchElementContainerVisible$,
+          filter<boolean>((isVisible) => isVisible),
+        ),
+      ]),
+      flat()<unknown>,
+      subscribe(this.$p_closeToolbar$),
+    );
+    const toolbarResetFocusSink = Sink((event) => {
+      assert(event.type === PushType);
+      this.$p_inputControl.focusButDoNotScrollTo();
+    });
+    pipe(
+      this.$p_isToolbarOpen$,
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const isToolbarOpen = event.value;
+        if (!isToolbarOpen) {
+          return;
+        }
+        if (this.$p_isSearchElementContainerVisible$.currentValue) {
+          this.$p_isSearchElementContainerVisible$(Push(false));
+        }
+        this.$p_closeLinkBox();
+      }, this),
+    );
+    pipe(
+      topLevelContentViewContentWidthResize$,
+      subscribe(() => {
+        this.$p_closeLinkBox();
+      }, this),
+    );
+    renderReactNodeIntoHtmlContainerElement(
+      <Toolbar
+        close$={this.$p_closeToolbar$}
+        isToolbarOpenSink={this.$p_isToolbarOpen$}
+        resetFocusSink={toolbarResetFocusSink}
+        runCommand={this.runCommand.bind(this)}
+      />,
+      this.$p_toolbarContainerElement,
+    );
     renderReactNodeIntoHtmlContainerElement(
       <SelectionView
         selectionView$={this.$p_selectionView$}
@@ -7865,16 +9057,34 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       <SpellingBox renderMessage$={spellingBoxRenderMessage$} spellingBoxRef={spellingBoxRef} />,
       this.$p_spellingBoxElement,
     );
+    renderReactNodeIntoHtmlContainerElement(<LinkBox renderMessage$={this.$p_linkBoxRenderMessage$} />, this.$p_linkBoxElement);
+    renderReactNodeIntoHtmlContainerElement(<LinkDetails renderMessage$={this.$p_linkDetailsRenderMessage$} />, this.$p_linkDetailsElement);
+    pipe(
+      this.stateControl.beforeRunUpdate$,
+      subscribe((event) => {
+        if (event.type !== PushType) {
+          throwUnreachable();
+        }
+        const { updateDataStack } = event.value;
+        if (updateDataStack.some((updateData) => updateData[keepFloatingLinkBoxOpenUpdateKey])) {
+          return;
+        }
+        this.$p_closeLinkBox();
+      }, this),
+    );
     this.$p_searchElementContainerElement = document.createElement('div');
     this.$p_containerHtmlElement.style.position = 'relative';
     this.$p_containerHtmlElement.append(
+      this.$p_toolbarContainerElement,
       this.$p_inputControl.inputElement,
       this.$p_searchOverlayContainerElement,
       this.$p_selectionRectsViewContainerElement,
       this.$p_spellingMistakesOverlayContainerElement,
       this.$p_topLevelContentViewContainerElement,
       this.$p_selectionCursorsViewContainerElement,
+      this.$p_linkDetailsElement,
       this.$p_searchElementContainerElement,
+      this.$p_linkBoxElement,
       this.$p_spellingBoxElement,
     );
     let searchContainerWidth$: CurrentValueDistributor<number> | undefined;
@@ -8101,6 +9311,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         <SearchBox
           isVisible$={this.$p_isSearchElementContainerVisible$}
           selectAllText$={this.$p_searchElementSelectAllText$}
+          onAfterSelectAll={() => {
+            this.$p_isSearchSelectAllTextWaiting = false;
+          }}
           containerWidth$={searchContainerWidth$}
           goToSearchResultImmediatelySink={goToSearchResultImmediatelySink}
           querySink={searchQuerySink}
@@ -8124,11 +9337,17 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       );
     }, this);
     this.rootHtmlElement.append(this.$p_containerHtmlElement);
-    const scrollThrottled$ = pipe(
-      scroll$,
-      throttle(() => timer(16)),
+    // TODO.
+    const scrollAndResize$ = pipe(
+      fromArray([
+        topLevelContentViewContentWidthResize$,
+        pipe(
+          scroll$,
+          throttle(() => timer(16)),
+        ),
+      ]),
+      flat()<unknown>,
     );
-    const scrollAndResize$ = pipe(fromArray([topLevelContentViewContentWidthResize$, scrollThrottled$]), flat()<unknown>);
     pipe(
       fromArray([
         this.$p_isSearchElementContainerVisible$,
@@ -8142,6 +9361,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       subscribe(this.$p_replaceVisibleSearchResults.bind(this), this),
     );
     pipe(scrollAndResize$, subscribe(this.$p_replaceVisibleSpellingMistakes.bind(this), this));
+    // TODO.
+    pipe(scrollAndResize$, subscribe(this.$p_syncFloatingLinkDetails.bind(this), this));
     pipe(
       topLevelContentViewContentWidthResize$,
       map(getContainerWidth),
@@ -8194,6 +9415,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$p_replaceVisibleSearchResults();
         this.$p_replaceVisibleSpellingMistakes();
         this.$p_replaceViewSelectionRanges(true);
+        this.$p_syncFloatingLinkDetails();
       }, this),
     );
     pipe(
@@ -8231,12 +9453,206 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addWindowEventListener('keydown', this.$p_onGlobalKeyDown.bind(this), this);
     addWindowEventListener('keyup', this.$p_onGlobalKeyUp.bind(this), this);
   }
+  private $p_closeToolbarAndFocus(): void {
+    this.$p_closeToolbar$(Push(undefined));
+    this.$p_inputControl.focusButDoNotScrollTo();
+  }
+  private $p_makeWordBoundingRect(textDecorationInfos: TextDecorationInfo[]): ViewRectangle {
+    assert(textDecorationInfos.length > 0);
+    const firstTextDecorationInfo = textDecorationInfos[0];
+    let wordBoundingRectLeft = firstTextDecorationInfo.charactersBoundingRectangle.left;
+    let wordBoundingRectTop = firstTextDecorationInfo.charactersBoundingRectangle.top;
+    let wordBoundingRectBottom = firstTextDecorationInfo.charactersBoundingRectangle.bottom;
+    let wordBoundingRectRight = firstTextDecorationInfo.charactersBoundingRectangle.right;
+    for (let i = 0; i < textDecorationInfos.length; i++) {
+      const textDecorationInfo = textDecorationInfos[i];
+      const { charactersBoundingRectangle } = textDecorationInfo;
+      if (charactersBoundingRectangle.left < wordBoundingRectLeft) {
+        wordBoundingRectLeft = charactersBoundingRectangle.left;
+      }
+      if (charactersBoundingRectangle.top < wordBoundingRectTop) {
+        wordBoundingRectTop = charactersBoundingRectangle.top;
+      }
+      if (charactersBoundingRectangle.right > wordBoundingRectRight) {
+        wordBoundingRectRight = charactersBoundingRectangle.right;
+      }
+      if (charactersBoundingRectangle.bottom > wordBoundingRectBottom) {
+        wordBoundingRectBottom = charactersBoundingRectangle.bottom;
+      }
+    }
+    const wordBoundingRect = makeViewRectangle(
+      wordBoundingRectLeft,
+      wordBoundingRectTop,
+      wordBoundingRectRight - wordBoundingRectLeft,
+      wordBoundingRectBottom - wordBoundingRectTop,
+    );
+    return wordBoundingRect;
+  }
+  $p_isLinkBoxOpen(): boolean {
+    return isSome(this.$p_linkBoxRenderMessage$.lastValue) && this.$p_linkBoxRenderMessage$.lastValue.value !== null;
+  }
+  $p_closeLinkBox(): void {
+    if (this.$p_isLinkBoxOpen()) {
+      this.$p_linkBoxRenderMessage$(Push(null));
+    }
+  }
+  private $p_makeWordBoundingRectMightBeEmpty(textDecorationInfos: TextDecorationInfo[], relativeOffsetLeft: number, relativeOffsetTop: number): ViewRectangle {
+    if (textDecorationInfos.length > 0) {
+      return this.$p_makeWordBoundingRect(textDecorationInfos);
+    }
+    const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
+    assertIsNotNullish(focusSelectionRange);
+    const focusRange = matita.getFocusRangeFromSelectionRange(focusSelectionRange);
+    const focusPoint = matita.getFocusPointFromRange(focusRange);
+    matita.assertIsParagraphPoint(focusPoint);
+    const lineWrapFocusCursorWrapToNextLineDataValue = getLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(focusSelectionRange.data);
+    const isMarkedLineWrapToNextLine =
+      lineWrapFocusCursorWrapToNextLineDataValue !== undefined &&
+      this.isSelectionSecondaryDataExpirationIdActive(lineWrapFocusCursorWrapToNextLineDataValue.expirationId);
+    const cursorInfo = this.$p_getCursorPositionAndHeightFromParagraphPointFillingLine(focusPoint, isMarkedLineWrapToNextLine);
+    return makeViewRectangle(cursorInfo.position.left + relativeOffsetLeft, cursorInfo.position.top + relativeOffsetTop, 0, cursorInfo.height);
+  }
+  openFloatingLinkBoxAtSelection(startValues?: { text: string; link: string }): matita.RunUpdateFn {
+    return () => {
+      surroundNearestLink: if (!startValues) {
+        const linkDetailsInfo = this.$p_getFloatingLinkDetailsInfo();
+        if (linkDetailsInfo === null) {
+          break surroundNearestLink;
+        }
+        // TODO.
+        const contentReference = matita.makeContentReferenceFromContent(
+          matita.accessContentFromBlockReference(this.stateControl.stateView.document, linkDetailsInfo.paragraphReference),
+        );
+        const startPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(linkDetailsInfo.paragraphReference, linkDetailsInfo.startOffset);
+        const endPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(linkDetailsInfo.paragraphReference, linkDetailsInfo.endOffset);
+        const range = matita.makeRange(contentReference, startPoint, endPoint, matita.generateId());
+        const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+        const selection = matita.makeSelection([selectionRange]);
+        startValues = {
+          text: linkDetailsInfo.text,
+          link: linkDetailsInfo.link,
+        };
+        this.stateControl.delta.setSelection(selection);
+      }
+      if (this.$p_isSpellingBoxOpen) {
+        this.$p_spellingBoxCancelCurrent$(Push(undefined));
+      }
+      const selection = this.stateControl.stateView.selection;
+      const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(this.stateControl.stateView.selection);
+      if (focusSelectionRange === null) {
+        return;
+      }
+      this.$p_scrollSelectionIntoView();
+      const focusRange = matita.getFocusRangeFromSelectionRange(focusSelectionRange);
+      let hasSeenFocusRange = false;
+      let isCoveringText = false;
+      const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
+      let containerWidth_: number | undefined;
+      const containerWidth = (): number => {
+        if (containerWidth_ === undefined) {
+          containerWidth_ = this.$p_getContainerScrollWidth();
+        }
+        return containerWidth_;
+      };
+      const textDecorationInfos: TextDecorationInfo[] = [];
+      for (let i = 0; i < selection.selectionRanges.length; i++) {
+        const selectionRange = selection.selectionRanges[i];
+        for (let i = 0; i < selectionRange.ranges.length; i++) {
+          const range = selectionRange.ranges[i];
+          const isFocusRange = range.id === focusRange.id;
+          if (isFocusRange) {
+            hasSeenFocusRange = true;
+          }
+          const rangeDirection = matita.getRangeDirection(this.stateControl.stateView.document, range);
+          const firstPoint = rangeDirection === matita.RangeDirection.Forwards ? range.startPoint : range.endPoint;
+          const lastPoint = rangeDirection === matita.RangeDirection.Forwards ? range.endPoint : range.startPoint;
+          for (const paragraphReference of matita.iterParagraphsInRange(this.stateControl.stateView.document, focusRange)) {
+            let startOffset: number;
+            let endOffset: number;
+            if (
+              matita.isParagraphPoint(firstPoint) &&
+              matita.areBlockReferencesAtSameBlock(paragraphReference, matita.makeBlockReferenceFromParagraphPoint(firstPoint))
+            ) {
+              startOffset = firstPoint.offset;
+            } else {
+              startOffset = 0;
+            }
+            if (
+              matita.isParagraphPoint(lastPoint) &&
+              matita.areBlockReferencesAtSameBlock(paragraphReference, matita.makeBlockReferenceFromParagraphPoint(lastPoint))
+            ) {
+              endOffset = lastPoint.offset;
+            } else {
+              const paragraph = matita.accessBlockFromBlockReference(this.stateControl.stateView.document, paragraphReference);
+              matita.assertIsParagraph(paragraph);
+              endOffset = matita.getParagraphLength(paragraph);
+            }
+            if (endOffset > startOffset) {
+              isCoveringText = true;
+              if (hasSeenFocusRange && !isFocusRange) {
+                break;
+              }
+            }
+            if (isFocusRange) {
+              const textDecorationInfosForParagraph = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
+                paragraphReference,
+                startOffset,
+                endOffset,
+                containerWidth(),
+                relativeOffsetLeft,
+                relativeOffsetTop,
+                this.$p_measureParagraphAtParagraphReference(paragraphReference),
+              );
+              textDecorationInfos.push(...textDecorationInfosForParagraph);
+            }
+          }
+          if (isFocusRange && isCoveringText) {
+            break;
+          }
+        }
+      }
+      const { visibleLeft, visibleRight } = this.$p_getVisibleLeftAndRight();
+      const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
+      const visibleBoundingRect = makeViewRectangle(relativeOffsetLeft, relativeOffsetTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+      const wordBoundingRect = this.$p_makeWordBoundingRectMightBeEmpty(textDecorationInfos, relativeOffsetLeft, relativeOffsetTop);
+      const startTextValue = startValues?.text || '';
+      const startLinkValue = startValues?.link || '';
+      this.$p_linkBoxRenderMessage$(
+        Push({
+          visibleBoundingRect,
+          wordBoundingRect,
+          shouldGetText: !isCoveringText || startTextValue !== '',
+          startTextValue,
+          startLinkValue,
+          applyLink: (link, text) => {
+            assert(link !== '');
+            this.$p_closeLinkBox();
+            this.$p_inputControl.focusButDoNotScrollTo();
+            this.stateControl.queueUpdate(() => {
+              if (isCoveringText) {
+                this.stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(this.stateControl, null, () => ({ link })));
+                if (startTextValue !== '' && text !== startTextValue) {
+                  this.stateControl.delta.applyUpdate(makeInsertPlainTextAtSelectionUpdateFn(this.stateControl, text));
+                }
+                return;
+              }
+              this.stateControl.delta.applyUpdate(
+                makeInsertPlainTextAtSelectionUpdateFn(this.stateControl, text, undefined, undefined, (textConfig) => ({ ...textConfig, link })),
+              );
+            });
+          },
+        }),
+      );
+    };
+  }
+  private $p_isSearchSelectAllTextWaiting = false;
   openSearch(focusSearchInput = true): matita.RunUpdateFn {
     return () => {
       if (!this.$p_isSearchElementContainerVisible$.currentValue) {
         this.$p_isSearchElementContainerVisible$(Push(true));
       }
       if (focusSearchInput) {
+        this.$p_isSearchSelectAllTextWaiting = true;
         this.$p_searchElementSelectAllText$(Push(undefined));
       }
     };
@@ -8591,6 +10007,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       if (focusSelectionRange === null || !matita.isSelectionRangeCollapsedInText(focusSelectionRange)) {
         return;
       }
+      this.$p_scrollSelectionIntoView();
       const collapsedRange = focusSelectionRange.ranges[0];
       const paragraphPoint = collapsedRange.startPoint;
       matita.assertIsParagraphPoint(paragraphPoint);
@@ -8826,7 +10243,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     return !!this.$p_searchInputRef.current && document.activeElement === this.$p_searchInputRef.current;
   }
   private $p_isInSearchBox(): boolean {
-    return !!document.activeElement && this.$p_searchElementContainerElement.contains(document.activeElement);
+    return (!!document.activeElement && this.$p_searchElementContainerElement.contains(document.activeElement)) || this.$p_isSearchSelectAllTextWaiting;
   }
   private $p_activeSelectionSecondaryDataExpirationIds = new Set<number>();
   private $p_activeSelectionSecondaryDataExpirationIdCounter = 0;
@@ -9000,6 +10417,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       notVisibleTop = 0;
       notVisibleBottom = 0;
     }
+    // TODO.
+    visibleTop += 40;
+    notVisibleTop += 40;
     return {
       visible: {
         top: visibleTop,
@@ -9042,6 +10462,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     point: matita.ParagraphPoint,
     isMarkedLineWrapToNextLine: boolean,
   ): { position: ViewPosition; height: number; measuredParagraphLineRanges: MeasuredParagraphLineRange[]; measuredParagraphLineRangeIndex: number } {
+    // TODO: This errored?
     const isLineWrapToNextLine = isMarkedLineWrapToNextLine && this.isParagraphPointAtWrappedLineWrapPoint(point);
     const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
     const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(paragraphReference);
@@ -9173,6 +10594,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     'Comma',
     'Period',
     'Backslash',
+    'Semicolon',
   ];
   private $p_keyDownId = 0;
   private $p_keyDownSet = new Map<string, number>();
@@ -9200,6 +10622,22 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     }
     this.$p_markKeyDown(normalizedKey, event);
     if (!this.$p_shortcutKeys.includes(normalizedKey)) {
+      return;
+    }
+    if (
+      this.$p_isToolbarOpen$.currentValue &&
+      normalizedKey === 'Escape' &&
+      document.activeElement !== null &&
+      this.$p_toolbarContainerElement.contains(document.activeElement)
+    ) {
+      this.$p_closeToolbarAndFocus();
+      event.preventDefault();
+      return;
+    }
+    if (this.$p_isLinkBoxOpen() && normalizedKey === 'Escape') {
+      this.$p_closeLinkBox();
+      this.$p_inputControl.focusButDoNotScrollTo();
+      event.preventDefault();
       return;
     }
     if (this.$p_inputControl.getIsFocused()) {
@@ -9315,7 +10753,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   runCommand(commandInfo: CommandInfo<any>): void {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const { commandName, data } = commandInfo;
-    const registeredCommand = this.$p_commandRegister.get(commandName);
+    const registeredCommand = this.$p_commandRegister.get(String(commandName));
     if (!registeredCommand) {
       return;
     }
@@ -9841,6 +11279,219 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_replaceVisibleSpellingMistakes();
     this.$p_inputControl.sync();
     this.$p_useSearchScrollMargins = false;
+    this.$p_syncFloatingLinkDetails();
+  }
+  private $p_getFloatingLinkDetailsInfo(): {
+    paragraphReference: matita.BlockReference;
+    startOffset: number;
+    endOffset: number;
+    text: string;
+    link: string;
+  } | null {
+    const selectionRanges = this.stateControl.stateView.selection.selectionRanges;
+    if (selectionRanges.length !== 1) {
+      return null;
+    }
+    const selectionRange = selectionRanges[0];
+    if (selectionRange.ranges.length !== 1) {
+      return null;
+    }
+    const range = selectionRange.ranges[0];
+    const direction = matita.getRangeDirection(this.stateControl.stateView.document, range);
+    const firstPoint = direction === matita.RangeDirection.Backwards ? range.endPoint : range.startPoint;
+    const lastPoint = direction === matita.RangeDirection.Backwards ? range.startPoint : range.endPoint;
+    if (!matita.isParagraphPoint(firstPoint) || !matita.isParagraphPoint(lastPoint) || !matita.areParagraphPointsAtSameParagraph(firstPoint, lastPoint)) {
+      return null;
+    }
+    const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(firstPoint);
+    const firstInlineNodeWithStartOffset = matita.getInlineNodeWithStartOffsetAfterParagraphPoint(this.stateControl.stateView.document, firstPoint);
+    if (firstInlineNodeWithStartOffset === null || !matita.isText(firstInlineNodeWithStartOffset.inline)) {
+      return null;
+    }
+    const link = firstInlineNodeWithStartOffset.inline.config.link;
+    if (typeof link !== 'string' || link === '') {
+      return null;
+    }
+    let textNode = firstInlineNodeWithStartOffset.inline;
+    let textNodeStartOffset = firstInlineNodeWithStartOffset.startOffset;
+    while (true) {
+      const nextInlineNodeWithStartOffset = matita.getInlineNodeWithStartOffsetAfterParagraphPoint(
+        this.stateControl.stateView.document,
+        matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, textNodeStartOffset + textNode.text.length),
+      );
+      if (nextInlineNodeWithStartOffset === null) {
+        if (lastPoint.offset > textNodeStartOffset + textNode.text.length) {
+          throwUnreachable();
+        }
+        break;
+      }
+      if (matita.isVoid(nextInlineNodeWithStartOffset.inline)) {
+        if (lastPoint.offset > textNodeStartOffset + textNode.text.length) {
+          return null;
+        }
+        break;
+      }
+      const nextTextNodeLink = nextInlineNodeWithStartOffset.inline.config.link;
+      if (nextTextNodeLink !== link) {
+        if (lastPoint.offset > textNodeStartOffset + textNode.text.length) {
+          return null;
+        }
+        break;
+      }
+      textNode = nextInlineNodeWithStartOffset.inline;
+      textNodeStartOffset = nextInlineNodeWithStartOffset.startOffset;
+    }
+    const endOffset = textNodeStartOffset + textNode.text.length;
+    textNode = firstInlineNodeWithStartOffset.inline;
+    textNodeStartOffset = firstInlineNodeWithStartOffset.startOffset;
+    while (true) {
+      const previousInlineNodeWithStartOffset = matita.getInlineNodeWithStartOffsetBeforeParagraphPoint(
+        this.stateControl.stateView.document,
+        matita.makeParagraphPointFromParagraphReferenceAndOffset(paragraphReference, textNodeStartOffset),
+      );
+      if (previousInlineNodeWithStartOffset === null || matita.isVoid(previousInlineNodeWithStartOffset.inline)) {
+        break;
+      }
+      const previousTextNodeLink = previousInlineNodeWithStartOffset.inline.config.link;
+      if (previousTextNodeLink !== link) {
+        break;
+      }
+      textNode = previousInlineNodeWithStartOffset.inline;
+      textNodeStartOffset = previousInlineNodeWithStartOffset.startOffset;
+    }
+    const startOffset = textNodeStartOffset;
+    const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, firstPoint);
+    const text = matita
+      .sliceParagraphChildren(paragraph, startOffset, endOffset)
+      .map((textNode) => {
+        matita.assertIsText(textNode);
+        return textNode.text;
+      })
+      .join('');
+    return {
+      paragraphReference,
+      startOffset,
+      endOffset,
+      text,
+      link,
+    };
+  }
+  private $p_isLinkDetailsOpen(): boolean {
+    return isSome(this.$p_linkDetailsRenderMessage$.lastValue) && this.$p_linkDetailsRenderMessage$.lastValue.value !== null;
+  }
+  private $p_closeLinkDetails(): void {
+    if (this.$p_isLinkDetailsOpen()) {
+      this.$p_linkDetailsRenderMessage$(Push(null));
+    }
+  }
+  private $p_tempCloseLinkDetails = false;
+  private $p_syncFloatingLinkDetails(): void {
+    if (this.$p_tempCloseLinkDetails) {
+      this.$p_tempCloseLinkDetails = false;
+      this.$p_closeLinkDetails();
+      return;
+    }
+    if (this.$p_isLinkBoxOpen() || this.$p_isInSearchBox()) {
+      this.$p_closeLinkDetails();
+      return;
+    }
+    const linkDetailsInfo = this.$p_getFloatingLinkDetailsInfo();
+    if (linkDetailsInfo === null) {
+      this.$p_closeLinkDetails();
+      return;
+    }
+    const { visibleLeft, visibleRight } = this.$p_getVisibleLeftAndRight();
+    const { visibleTop, visibleBottom } = this.$p_getVisibleTopAndBottom();
+    const { relativeOffsetLeft, relativeOffsetTop } = this.$p_calculateRelativeOffsets();
+    const visibleBoundingRect = makeViewRectangle(relativeOffsetLeft, relativeOffsetTop, visibleRight - visibleLeft, visibleBottom - visibleTop);
+    const paragraphMeasurement = this.$p_measureParagraphAtParagraphReference(linkDetailsInfo.paragraphReference);
+    const textDecorationInfos = this.$p_calculateTextDecorationInfosForParagraphAtBlockReference(
+      linkDetailsInfo.paragraphReference,
+      linkDetailsInfo.startOffset,
+      linkDetailsInfo.endOffset,
+      this.$p_getContainerScrollWidth(),
+      relativeOffsetLeft,
+      relativeOffsetTop,
+      paragraphMeasurement,
+    );
+    const wordBoundingRect = this.$p_makeWordBoundingRect(textDecorationInfos);
+    const makeSelectionCoveringLink = (): matita.Selection => {
+      const contentReference = matita.makeContentReferenceFromContent(
+        matita.accessContentFromBlockReference(this.stateControl.stateView.document, linkDetailsInfo.paragraphReference),
+      );
+      const startPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(linkDetailsInfo.paragraphReference, linkDetailsInfo.startOffset);
+      const endPoint = matita.makeParagraphPointFromParagraphReferenceAndOffset(linkDetailsInfo.paragraphReference, linkDetailsInfo.endOffset);
+      const range = matita.makeRange(contentReference, startPoint, endPoint, matita.generateId());
+      const selectionRange = matita.makeSelectionRange([range], range.id, range.id, matita.SelectionRangeIntention.Text, {}, matita.generateId());
+      const selection = matita.makeSelection([selectionRange]);
+      return selection;
+    };
+    const isSelectionSame = (
+      originalSelection: matita.Selection,
+      originalStateView: matita.StateView<DocumentConfig, TopLevelContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
+    ): boolean => {
+      const transformedSelection = this.stateControl.transformSelectionForwardsFromFirstStateViewToSecondStateView(
+        {
+          selection: originalSelection,
+          fixWhen: matita.MutationSelectionTransformFixWhen.NoFix,
+          shouldTransformAsSelection: true,
+        },
+        originalStateView,
+        this.stateControl.stateView,
+      );
+      return matita.areSelectionsCoveringSameContent(originalSelection, transformedSelection);
+    };
+    const originalSelection = this.stateControl.stateView.selection;
+    this.$p_linkDetailsRenderMessage$(
+      Push({
+        visibleBoundingRect,
+        wordBoundingRect,
+        link: linkDetailsInfo.link,
+        tempClose: () => {
+          this.$p_tempCloseLinkDetails = true;
+          this.$p_inputControl.focusButDoNotScrollTo();
+        },
+        returnFocus: () => {
+          this.$p_inputControl.focusButDoNotScrollTo();
+        },
+        editLink: () => {
+          let originalStateView: matita.StateView<DocumentConfig, TopLevelContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | null =
+            this.stateControl.snapshotStateThroughStateView();
+          this.stateControl.queueUpdate(() => {
+            const originalSelectionCoveringLink = makeSelectionCoveringLink();
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            if (isSelectionSame(originalSelectionCoveringLink, originalStateView!)) {
+              this.stateControl.delta.setSelection(originalSelectionCoveringLink);
+              this.stateControl.delta.applyUpdate(this.openFloatingLinkBoxAtSelection(linkDetailsInfo), { [keepFloatingLinkBoxOpenUpdateKey]: true });
+            }
+            originalStateView = null;
+          });
+        },
+        removeLink: () => {
+          let originalStateView: matita.StateView<DocumentConfig, TopLevelContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> | null =
+            this.stateControl.snapshotStateThroughStateView();
+          this.stateControl.queueUpdate(() => {
+            const originalSelectionCoveringLink = makeSelectionCoveringLink();
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            if (isSelectionSame(originalSelectionCoveringLink, originalStateView!)) {
+              if (matita.isSelectionCollapsedInText(originalSelection)) {
+                this.stateControl.delta.applyUpdate(
+                  matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(this.stateControl, null, () => ({ link: undefined }), originalSelectionCoveringLink),
+                );
+              } else {
+                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                if (isSelectionSame(originalSelection, originalStateView!)) {
+                  this.stateControl.delta.applyUpdate(
+                    matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(this.stateControl, null, () => ({ link: undefined }), originalSelection),
+                  );
+                }
+              }
+            }
+            originalStateView = null;
+          });
+        },
+      }),
+    );
   }
   private $p_trackMatchesDisposable: Disposable | null = null;
   private $p_calculateVisibleSearchResultsMatchInfos = (): SearchOverlayMatchInfo[] => {
@@ -9992,7 +11643,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         onRender: () => {
           this.$p_renderOverlayAsync = false;
         },
-        roundCorners: true,
+        roundCorners: isFirefox,
       }),
     );
   }
@@ -10150,7 +11801,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           viewCursorAndRangeInfosForRanges,
           selectionRangeId: selectionRange.id,
           isInComposition,
-          roundCorners: true,
+          roundCorners: isFirefox,
         }),
       ),
     );
@@ -10313,7 +11964,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     return textDecorationInfos;
   }
   private $p_getBufferMarginTopBottom(): number {
-    return Math.min(isFirefox ? 300 : 600, window.innerHeight);
+    return Math.min(600, window.innerHeight);
   }
   // TODO: Fix this mess.
   // TODO: check works when removing paragraphs?
