@@ -1,6 +1,7 @@
 import { lookup } from 'bcp-47-match';
 import { CountedIndexableUniqueStringList } from '../common/CountedIndexableUniqueStringList';
 import { IntlSegmenter } from '../common/IntlSegmenter';
+import { detectUrls } from '../common/urls';
 import { UniqueStringQueue } from '../common/UniqueStringQueue';
 import { assert, throwUnreachable } from '../common/util';
 import { Dictionaries } from '../dictionaries';
@@ -492,8 +493,16 @@ class SpellCheckControl extends DisposableClass {
     textStartOffset: number,
     pendingTextEditParagraphTextUpdateRanges: TextUpdateRange[] | undefined,
   ): IterableIterator<ParagraphSpellingMistake> {
+    const linkRanges = detectUrls(text);
     const segments = this.$p_wordSegmenter.segment(text);
     const getSpellingMistakeForWordAtIndex = (word: string, index: number): ParagraphSpellingMistake | null => {
+      for (let i = 0; i < linkRanges.length; i++) {
+        const linkRange = linkRanges[i];
+        const { startIndex, endIndex } = linkRange;
+        if (index <= endIndex && index + word.length >= startIndex) {
+          return null;
+        }
+      }
       const wordStartParagraphOffset = textStartOffset + index;
       if (pendingTextEditParagraphTextUpdateRanges !== undefined) {
         const wordEndParagraphOffset = wordStartParagraphOffset + word.length;

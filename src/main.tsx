@@ -6,8 +6,8 @@ import { isFirefox, isSafari } from './common/browserDetection';
 import { IndexableUniqueStringList } from './common/IndexableUniqueStringList';
 import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
 import { LruCache } from './common/LruCache';
-import { isValidHttpUrl, sanitizeUrl } from './common/sanitizeUrl';
 import { UniqueStringQueue } from './common/UniqueStringQueue';
+import { isValidHttpUrl, sanitizeUrl } from './common/urls';
 import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
 import {
@@ -536,6 +536,7 @@ const darkerHighlightColorHexValues: Record<Color, string> = {
   [Color.Blue]: '#3f83f8aa',
   [Color.Purple]: '#9061f9aa',
 };
+const linkFontColor = 'rgb(26, 115, 232)';
 enum TextConfigScript {
   Sub = 'sub',
   Super = 'super',
@@ -683,13 +684,17 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
   get fontSize(): number {
     return this.$p_fontSize;
   }
-  convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
+  convertLineTopAndHeightAndInsertTextConfigAndMeasurementsToCursorTopAndHeightAndMaybeColor(
     lineTop: number,
     lineHeight: number,
     insertTextConfig: TextConfig,
     measuredParagraphLineRanges: MeasuredParagraphLineRange[],
     measuredParagraphLineRangeIndex: number,
-  ): { top: number; height: number } {
+  ): { top: number; height: number; color?: string } {
+    const insertLink = insertTextConfig.link;
+    const insertColor = insertTextConfig.color;
+    const hasLink = typeof insertLink === 'string' && insertLink !== '';
+    const color = hasLink ? linkFontColor : (colors as (string | undefined)[]).includes(insertColor) ? colorHexValues[insertColor as Color] : undefined;
     const measuredParagraphLineRange = measuredParagraphLineRanges[measuredParagraphLineRangeIndex];
     if (measuredParagraphLineRange.startOffset !== measuredParagraphLineRange.endOffset) {
       const documentRenderControl = this.$p_viewControl.accessDocumentRenderControl();
@@ -705,10 +710,11 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           const characterMeasurementIndex = Math.max(inlineNodeWithStartOffset.startOffset - measuredParagraphLineRange.startOffset, 0);
           const characterRectangle = measuredParagraphLineRange.characterRectangles[characterMeasurementIndex];
           assertIsNotNullish(characterRectangle);
-          return { height: characterRectangle.height, top: characterRectangle.top };
+          return { top: characterRectangle.top, height: characterRectangle.height, color };
         }
       }
     }
+    // The line is empty, so we guess the positioning of the cursor.
     let height: number;
     let top: number;
     if (insertTextConfig.script === undefined) {
@@ -723,7 +729,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         top -= 0.23 * height;
       }
     }
-    return { top, height };
+    return { top, height, color };
   }
   private $p_addInlineStylesToTextElement(
     textElement: HTMLElement,
@@ -736,13 +742,10 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
     if (textConfig.color !== undefined && colors.includes(textConfig.color)) {
       textElement.style.color = colorHexValues[textConfig.color];
     }
-    if (textConfig.highlightColor !== undefined && colors.includes(textConfig.highlightColor)) {
-      textElement.style.backgroundColor = highlightColorHexValues[textConfig.highlightColor];
-    }
     let isUnderline = false;
     if (typeof textConfig.link === 'string' && textConfig.link !== '') {
       isUnderline = true;
-      textElement.style.color = 'rgb(26, 115, 232)';
+      textElement.style.color = linkFontColor;
     }
     if (textConfig.bold === true) {
       textElement.style.fontWeight = 'bold';
@@ -783,6 +786,9 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         textElement.style.borderTopRightRadius = '4px';
         textElement.style.borderBottomRightRadius = '4px';
       }
+    }
+    if (textConfig.highlightColor !== undefined && colors.includes(textConfig.highlightColor)) {
+      textElement.style.backgroundColor = highlightColorHexValues[textConfig.highlightColor];
     }
   }
   private $p_accessParagraph(): matita.Paragraph<ParagraphConfig, TextConfig, VoidConfig> {
@@ -1647,6 +1653,7 @@ interface ViewCursorInfo {
   paragraphReference: matita.BlockReference;
   offset: number;
   rangeDirection: matita.RangeDirection;
+  customColor?: string;
 }
 interface ViewRangeInfo {
   rectangle: ViewRectangle;
@@ -1837,7 +1844,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
         }
         for (let l = 0; l < viewCursorInfos.length; l++) {
           const viewCursorInfo = viewCursorInfos[l];
-          const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection, insertTextConfig } = viewCursorInfo;
+          const { isAnchor, isFocus, isItalic, offset, paragraphReference, rangeDirection, insertTextConfig, customColor } = viewCursorInfo;
           cursorElements.push(
             <BlinkingCursor
               key={uniqueKeyControl.makeUniqueKey(
@@ -1848,6 +1855,7 @@ function SelectionView(props: SelectionViewProps): JSX.Element | null {
               hasFocus={hasFocus}
               isDragging={isDragging}
               isItalic={isItalic}
+              customColor={customColor}
             />,
           );
         }
@@ -1867,10 +1875,11 @@ interface BlinkingCursorProps {
   hasFocus: boolean;
   isDragging: boolean;
   isItalic: boolean;
+  customColor?: string;
 }
 const cursorWidth = 2;
 function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
-  const { viewCursorInfo, synchronizedCursorVisibility$, hasFocus, isDragging, isItalic } = props;
+  const { viewCursorInfo, synchronizedCursorVisibility$, hasFocus, isDragging, isItalic, customColor } = props;
   if (!viewCursorInfo.isFocus) {
     return null;
   }
@@ -1894,7 +1903,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         left: viewCursorInfo.position.left - cursorWidth / 2,
         width: cursorWidth,
         height: viewCursorInfo.height,
-        backgroundColor: hasFocus || isDragging ? '#222' : '#88888899',
+        backgroundColor: hasFocus || isDragging ? customColor ?? '#222' : '#88888899',
         transform: isItalic ? 'skew(-7deg)' : undefined,
         visibility: isVisibleMaybe.value ? 'visible' : 'hidden',
       }}
@@ -5394,16 +5403,6 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
             return;
           }
           stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetHighlightColorMergeConfig));
-        },
-        { [doNotScrollToSelectionAfterChangeDataKey]: true },
-      );
-      stateControl.queueUpdate(
-        () => {
-          if (matita.isSelectionCollapsedInText(stateControl.stateView.selection)) {
-            stateControl.delta.setCustomCollapsedSelectionTextConfig(resetMergeTextConfig);
-            return;
-          }
-          stateControl.delta.applyUpdate(matita.makeToggleUpdateTextConfigAtSelectionUpdateFn(stateControl, null, () => resetMergeTextConfig));
         },
         { [doNotScrollToSelectionAfterChangeDataKey]: true },
       );
@@ -9512,7 +9511,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const cursorInfo = this.$p_getCursorPositionAndHeightFromParagraphPointFillingLine(focusPoint, isMarkedLineWrapToNextLine);
     return makeViewRectangle(cursorInfo.position.left + relativeOffsetLeft, cursorInfo.position.top + relativeOffsetTop, 0, cursorInfo.height);
   }
-  openFloatingLinkBoxAtSelection(startValues?: { text: string; link: string }): matita.RunUpdateFn {
+  openFloatingLinkBoxAtSelection(startValues?: { text?: string; link?: string }): matita.RunUpdateFn {
     return () => {
       surroundNearestLink: if (!startValues) {
         const linkDetailsInfo = this.$p_getFloatingLinkDetailsInfo();
@@ -9608,6 +9607,39 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           }
           if (isFocusRange && isCoveringText) {
             break;
+          }
+        }
+      }
+      getStartingLinkText: if (!startValues && selection.selectionRanges.length === 1) {
+        const selectionRange = selection.selectionRanges[0];
+        if (selectionRange.ranges.length === 1) {
+          const range = selectionRange.ranges[0];
+          if (
+            matita.isParagraphPoint(range.startPoint) &&
+            matita.isParagraphPoint(range.endPoint) &&
+            matita.areParagraphPointsAtSameParagraph(range.startPoint, range.endPoint)
+          ) {
+            const paragraph = matita.accessParagraphFromParagraphPoint(this.stateControl.stateView.document, range.startPoint);
+            if (range.startPoint.offset === range.endPoint.offset) {
+              break getStartingLinkText;
+            }
+            const startOffset = Math.min(range.startPoint.offset, range.endPoint.offset);
+            const endOffset = Math.max(range.startPoint.offset, range.endPoint.offset);
+            const inlineNodes = matita.sliceParagraphChildren(paragraph, startOffset, endOffset);
+            let niceContainedText = '';
+            assert(inlineNodes.length > 0);
+            for (let i = 0; i < inlineNodes.length; i++) {
+              const inlineNode = inlineNodes[i];
+              if (!matita.isText(inlineNode) || typeof inlineNode.config.link === 'string') {
+                break getStartingLinkText;
+              }
+              niceContainedText += inlineNode.text;
+            }
+            if (isValidHttpUrl(niceContainedText)) {
+              startValues = {
+                link: niceContainedText,
+              };
+            }
           }
         }
       }
@@ -12071,18 +12103,21 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
       );
       let cursorTop: number;
       let cursorHeight: number;
+      let cursorColor: string | undefined;
       const isCollapsed = direction === matita.RangeDirection.NeutralText;
       if (isCollapsed) {
         const firstParagraphRenderControl = this.viewControl.accessParagraphRenderControlAtBlockReference(firstParagraphReference);
-        const cursorTopAndHeight = firstParagraphRenderControl.convertLineTopAndHeightToCursorTopAndHeightWithInsertTextConfig(
-          cursorPositionAndHeight.position.top,
-          cursorPositionAndHeight.height,
-          insertTextConfig,
-          cursorPositionAndHeight.measuredParagraphLineRanges,
-          cursorPositionAndHeight.measuredParagraphLineRangeIndex,
-        );
-        cursorTop = cursorTopAndHeight.top + relativeOffsetTop;
-        cursorHeight = cursorTopAndHeight.height;
+        const cursorTopAndHeightAndMaybeColor =
+          firstParagraphRenderControl.convertLineTopAndHeightAndInsertTextConfigAndMeasurementsToCursorTopAndHeightAndMaybeColor(
+            cursorPositionAndHeight.position.top,
+            cursorPositionAndHeight.height,
+            insertTextConfig,
+            cursorPositionAndHeight.measuredParagraphLineRanges,
+            cursorPositionAndHeight.measuredParagraphLineRangeIndex,
+          );
+        cursorTop = cursorTopAndHeightAndMaybeColor.top + relativeOffsetTop;
+        cursorHeight = cursorTopAndHeightAndMaybeColor.height;
+        cursorColor = cursorTopAndHeightAndMaybeColor.color;
       } else {
         cursorTop = cursorPositionAndHeight.position.top + relativeOffsetTop;
         cursorHeight = cursorPositionAndHeight.height;
@@ -12101,6 +12136,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         offset: cursorPoint.offset,
         rangeDirection: direction,
         insertTextConfig,
+        customColor: cursorColor,
       };
       // TODO: Refactor so this function is pure?
       if (isFocusSelectionRange) {

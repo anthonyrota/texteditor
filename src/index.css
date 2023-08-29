@@ -200,7 +200,7 @@ button {
 .spelling-box {
   position: absolute;
   overflow-wrap: anywhere;
-  overflow: scroll;
+  overflow: auto;
   background-color: #fff;
   font-family: Roboto, sans-serif;
   box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
@@ -228,7 +228,7 @@ button {
 .link-box {
   position: absolute;
   overflow-wrap: anywhere;
-  overflow: scroll;
+  overflow: auto;
   background-color: #fff;
   font-family: Roboto, sans-serif;
   box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
@@ -274,7 +274,7 @@ button {
 .link-details {
   position: absolute;
   overflow-wrap: anywhere;
-  overflow: scroll;
+  overflow: auto;
   background-color: #fff;
   font-family: Roboto, sans-serif;
   box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
