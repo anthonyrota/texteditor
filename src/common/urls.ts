@@ -41,6 +41,7 @@ function isValidHttpUrl(string: string): boolean {
   }
   return url.protocol === 'http:' || url.protocol === 'https:';
 }
+// From Android code.
 const urlRegexp = RegExp(
   "((?:(http|https|Http|Https|rtsp|Rtsp):\\/\\/(?:(?:[a-zA-Z0-9\\$\\-\\_\\.\\+\\!\\*\\'\\(\\)" +
     '\\,\\;\\?\\&\\=]|(?:\\%[a-fA-F0-9]{2})){1,64}(?:\\:(?:[a-zA-Z0-9\\$\\-\\_' +

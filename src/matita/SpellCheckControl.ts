@@ -1,8 +1,8 @@
 import { lookup } from 'bcp-47-match';
 import { CountedIndexableUniqueStringList } from '../common/CountedIndexableUniqueStringList';
 import { IntlSegmenter } from '../common/IntlSegmenter';
-import { detectUrls } from '../common/urls';
 import { UniqueStringQueue } from '../common/UniqueStringQueue';
+import { detectUrls } from '../common/urls';
 import { assert, throwUnreachable } from '../common/util';
 import { Dictionaries } from '../dictionaries';
 import { Hunspell, HunspellFactory, loadModule } from '../hunspell';
@@ -100,16 +100,10 @@ interface TextEditUpdateData {
 }
 const forceSpellCheckControlTextEditUpdateDataKey = 'forceSpellCheckControlTextEditUpdateKey';
 // TODO: Special code spell checking.
-class SpellCheckControl extends DisposableClass {
-  private $p_stateControl: matita.StateControl<
-    matita.NodeConfig,
-    matita.NodeConfig,
-    matita.NodeConfig,
-    matita.NodeConfig,
-    matita.NodeConfig,
-    matita.NodeConfig
-  >;
+class SpellCheckControl<TextConfig extends matita.NodeConfig> extends DisposableClass {
+  private $p_stateControl: matita.StateControl<matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, TextConfig, matita.NodeConfig>;
   private $p_topLevelContentReference: matita.ContentReference;
+  private $p_shouldIgnoreTextNodeWithTextConfig: (textConfig: TextConfig) => boolean;
   private $p_spellChecker!: Hunspell;
   private $p_pendingParagraphIds!: UniqueStringQueue;
   private $p_insertTextParagraphsIds = new Set<string>();
@@ -120,12 +114,14 @@ class SpellCheckControl extends DisposableClass {
   private $p_isLoaded = false;
   didLoad$: Distributor<never>;
   constructor(
-    stateControl: matita.StateControl<matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig>,
+    stateControl: matita.StateControl<matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, TextConfig, matita.NodeConfig>,
     topLevelContentReference: matita.ContentReference,
+    shouldIgnoreTextNodeWithTextConfig: (textConfig: TextConfig) => boolean,
   ) {
     super();
     this.$p_stateControl = stateControl;
     this.$p_topLevelContentReference = topLevelContentReference;
+    this.$p_shouldIgnoreTextNodeWithTextConfig = shouldIgnoreTextNodeWithTextConfig;
     this.$p_wordSegmenter = new stateControl.stateControlConfig.IntlSegmenter(undefined, {
       granularity: 'word',
     });
@@ -454,12 +450,12 @@ class SpellCheckControl extends DisposableClass {
     let text = '';
     for (let i = 0; i < paragraph.children.length; i++) {
       const inlineNode = paragraph.children[i];
-      if (matita.isVoid(inlineNode)) {
+      if (matita.isVoid(inlineNode) || this.$p_shouldIgnoreTextNodeWithTextConfig(inlineNode.config)) {
         if (text.length > 0) {
           paragraphSpellingMistakes.push(...this.$p_findMistakesInTextAtStartOffset(text, textStartOffset, pendingTextEditParagraphTextUpdateRanges));
         }
+        textStartOffset += text.length + matita.getInlineLength(inlineNode);
         text = '';
-        textStartOffset += text.length + 1;
         continue;
       }
       text += inlineNode.text;

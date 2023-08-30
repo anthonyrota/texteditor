@@ -7753,7 +7753,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_selectionViewHasFocus$ = CurrentValueDistributor(false);
   private $p_resetSynchronizedCursorVisibility$ = CurrentValueDistributor<undefined>(undefined);
   private $p_inputControl!: FloatingVirtualizedTextInputControl;
-  private $p_spellCheckControl: SpellCheckControl | null = null;
+  private $p_spellCheckControl: SpellCheckControl<TextConfig> | null = null;
   private $p_spellingBoxQuickFixParagraphPoint$ = Distributor<matita.ParagraphPoint>();
   private $p_isSpellingBoxOpen = false;
   private $p_spellingBoxFocusedSuggestionIndex: number | null = null;
@@ -7765,7 +7765,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_linkBoxRenderMessage$ = LastValueDistributor<LinkBoxRenderMessage | null>();
   private $p_linkDetailsRenderMessage$ = LastValueDistributor<LinkDetailsRenderMessage | null>();
   init(): void {
-    this.$p_spellCheckControl = new SpellCheckControl(this.stateControl, this.topLevelContentReference);
+    this.$p_spellCheckControl = new SpellCheckControl(
+      this.stateControl,
+      this.topLevelContentReference,
+      (textConfig) => typeof textConfig.link === 'string' && textConfig.link !== '',
+    );
     this.add(this.$p_spellCheckControl);
     this.$p_spellCheckControl.add(
       Disposable(() => {
