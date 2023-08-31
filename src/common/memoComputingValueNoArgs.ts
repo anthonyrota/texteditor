@@ -3,7 +3,7 @@ export function memoComputingValueNoArgs<T>(computeValue: () => T): () => T {
   let computedValue: Maybe<T> = None;
   return () => {
     if (isSome(computedValue)) {
-      return computedValue.value;
+      return computedValue.$m_value;
     }
     const value = computeValue();
     computedValue = Some(value);

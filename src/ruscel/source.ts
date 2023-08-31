@@ -173,7 +173,7 @@ function combine<T>(sources: Source<T>[]): Source<T[]> {
         }
         valueMaybes[i] = Some(event.value);
         if (responded === sources.length) {
-          sink(Push(valueMaybes.map((valueMaybe) => (valueMaybe as Some<T>).value)));
+          sink(Push(valueMaybes.map((valueMaybe) => (valueMaybe as Some<T>).$m_value)));
         }
       });
       sink.add(sourceSink);
@@ -318,7 +318,7 @@ function filterMap<T, R>(transform: (value: T, index: number) => Maybe<R>): Oper
           if (isNone(maybe)) {
             return;
           }
-          sink(Push(maybe.value));
+          sink(Push(maybe.$m_value));
           return;
         }
         sink(event);
@@ -437,7 +437,7 @@ function memoConsecutive<T, K>(
             return true;
           }
           const currentKey = getKey(value);
-          const isEqual = computeIsEqual(lastKey.value, currentKey, index);
+          const isEqual = computeIsEqual(lastKey.$m_value, currentKey, index);
           if (!isEqual) {
             lastKey = Some(currentKey);
           }

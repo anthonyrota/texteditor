@@ -1,11 +1,11 @@
 class LinkedListNode {
-  value: string;
-  previousNode: LinkedListNode | null;
-  nextNode: LinkedListNode | null;
+  $m_value: string;
+  $m_previousNode: LinkedListNode | null;
+  $m_nextNode: LinkedListNode | null;
   constructor(value: string, previousNode: LinkedListNode | null, nextNode: LinkedListNode | null) {
-    this.value = value;
-    this.previousNode = previousNode;
-    this.nextNode = nextNode;
+    this.$m_value = value;
+    this.$m_previousNode = previousNode;
+    this.$m_nextNode = nextNode;
   }
 }
 class UniqueStringQueue {
@@ -20,75 +20,75 @@ class UniqueStringQueue {
         this.$p_firstNode = new LinkedListNode(value, null, null);
         lastNode = this.$p_firstNode;
       } else {
-        lastNode.nextNode = new LinkedListNode(value, lastNode, null);
-        lastNode = lastNode.nextNode;
+        lastNode.$m_nextNode = new LinkedListNode(value, lastNode, null);
+        lastNode = lastNode.$m_nextNode;
       }
       this.$p_valueToNode[value] = lastNode;
       this.$p_queueLength++;
     }
   }
-  getIsQueued(value: string): boolean {
+  $m_getIsQueued(value: string): boolean {
     return value in this.$p_valueToNode;
   }
-  queue(value: string): void {
-    this.dequeue(value);
+  $m_queue(value: string): void {
+    this.$m_dequeue(value);
     if (this.$p_firstNode === null) {
       this.$p_firstNode = new LinkedListNode(value, null, null);
     } else {
       const firstNode = this.$p_firstNode;
       this.$p_firstNode = new LinkedListNode(value, null, firstNode);
-      firstNode.previousNode = this.$p_firstNode;
+      firstNode.$m_previousNode = this.$p_firstNode;
     }
     this.$p_valueToNode[value] = this.$p_firstNode;
     this.$p_queueLength++;
   }
-  dequeue(value: string): boolean {
+  $m_dequeue(value: string): boolean {
     const node = this.$p_valueToNode[value];
     if (node === undefined) {
       return false;
     }
     delete this.$p_valueToNode[value];
-    const { previousNode, nextNode } = node;
+    const { $m_previousNode: previousNode, $m_nextNode: nextNode } = node;
     if (previousNode === null) {
       if (nextNode === null) {
         this.$p_firstNode = null;
       } else {
-        nextNode.previousNode = null;
+        nextNode.$m_previousNode = null;
         this.$p_firstNode = nextNode;
       }
     } else {
       if (nextNode === null) {
-        previousNode.nextNode = null;
+        previousNode.$m_nextNode = null;
       } else {
-        previousNode.nextNode = nextNode;
-        nextNode.previousNode = previousNode;
+        previousNode.$m_nextNode = nextNode;
+        nextNode.$m_previousNode = previousNode;
       }
     }
     this.$p_queueLength--;
     return true;
   }
-  shift(): string | null {
+  $m_shift(): string | null {
     if (this.$p_firstNode === null) {
       return null;
     }
     this.$p_queueLength--;
-    const { value, nextNode } = this.$p_firstNode;
+    const { $m_value: value, $m_nextNode: nextNode } = this.$p_firstNode;
     delete this.$p_valueToNode[value];
     if (nextNode !== null) {
-      nextNode.previousNode = null;
+      nextNode.$m_previousNode = null;
     }
     this.$p_firstNode = nextNode;
     return value;
   }
-  getQueueLength(): number {
+  $m_getQueueLength(): number {
     return this.$p_queueLength;
   }
-  toArray(): string[] {
+  $m_toArray(): string[] {
     const values: string[] = [];
     let node = this.$p_firstNode;
     while (node !== null) {
-      values.push(node.value);
-      node = node.nextNode;
+      values.push(node.$m_value);
+      node = node.$m_nextNode;
     }
     return values;
   }

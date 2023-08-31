@@ -13,7 +13,7 @@ import { End, PushType, ThrowType, subscribe, take } from '../ruscel/source';
 import { pipe, requestIdleCallbackDisposable } from '../ruscel/util';
 import { nonLatinLettersRegexp } from './nonLatinLettersRegexp';
 import * as matita from '.';
-enum LanguageIdentifier {
+const enum LanguageIdentifier {
   EnglishAmerica = 'en-US',
   EnglishBritain = 'en-GB',
   EnglishCanada = 'en-CA',
@@ -57,8 +57,8 @@ function loadDictionariesForLanguageIdentifier(languageIdentifier: LanguageIdent
   }
 }
 interface ParagraphSpellingMistake {
-  startOffset: number;
-  endOffset: number;
+  $m_startOffset: number;
+  $m_endOffset: number;
 }
 const mountedFileInfoMap = new Map<string, { filePath: string; refCount: number }>();
 function ensureMounted(hunspellFactory: HunspellFactory, fileIdentifier: string, fileContents: string, disposable: Disposable): string {
@@ -87,16 +87,16 @@ function ensureMounted(hunspellFactory: HunspellFactory, fileIdentifier: string,
   return filePath;
 }
 interface TextUpdateRange {
-  startOffset: number;
-  endOffset: number;
+  $m_startOffset: number;
+  $m_endOffset: number;
 }
-enum TextEditUpdateType {
+const enum TextEditUpdateType {
   Composition = 'Composition',
   InsertOrRemove = 'InsertOrRemove',
 }
 interface TextEditUpdateData {
-  updateType: TextEditUpdateType;
-  force: boolean;
+  $m_updateType: TextEditUpdateType;
+  $m_force: boolean;
 }
 const forceSpellCheckControlTextEditUpdateDataKey = 'forceSpellCheckControlTextEditUpdateKey';
 // TODO: Special code spell checking.
@@ -112,7 +112,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
   private $p_spellingMistakesParagraphCounts = new CountedIndexableUniqueStringList([]);
   private $p_wordSegmenter: IntlSegmenter;
   private $p_isLoaded = false;
-  didLoad$: Distributor<never>;
+  $m_didLoad$: Distributor<never>;
   constructor(
     stateControl: matita.StateControl<matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, matita.NodeConfig, TextConfig, matita.NodeConfig>,
     topLevelContentReference: matita.ContentReference,
@@ -125,8 +125,8 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
     this.$p_wordSegmenter = new stateControl.stateControlConfig.IntlSegmenter(undefined, {
       granularity: 'word',
     });
-    this.didLoad$ = Distributor<never>();
-    this.add(this.didLoad$);
+    this.$m_didLoad$ = Distributor<never>();
+    this.add(this.$m_didLoad$);
     const languageIdentifier = getDefaultLanguageIdentifier();
     if (languageIdentifier === null) {
       this.dispose();
@@ -146,19 +146,19 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
         this.$p_pendingParagraphIds = new UniqueStringQueue(this.$p_iterateAllParagraphIds());
         this.$p_queueWorkIfNeeded();
         this.$p_trackChanges();
-        this.didLoad$(End);
+        this.$m_didLoad$(End);
       })
       .catch((error) => {
         console.log('error loading spellchecker resources', error);
         this.dispose();
       });
   }
-  getIsLoaded(): boolean {
+  $m_getIsLoaded(): boolean {
     return this.$p_isLoaded;
   }
-  getSpellingMistakesInParagraphAtParagraphReference(paragraphReference: matita.BlockReference): ParagraphSpellingMistake[] | null {
+  $m_getSpellingMistakesInParagraphAtParagraphReference(paragraphReference: matita.BlockReference): ParagraphSpellingMistake[] | null {
     const paragraphId = matita.getBlockIdFromBlockReference(paragraphReference);
-    if (this.$p_pendingParagraphIds.dequeue(paragraphId)) {
+    if (this.$p_pendingParagraphIds.$m_dequeue(paragraphId)) {
       this.$p_checkParagraph(paragraphId);
     }
     const paragraphSpellingMistakes = this.$p_spellingMistakesMap.get(paragraphId);
@@ -173,23 +173,23 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
       if (forceSpellCheckControlTextEditUpdateDataKey in updateData) {
         const updateType = updateData[forceSpellCheckControlTextEditUpdateDataKey];
         assert(updateType === TextEditUpdateType.Composition || updateType === TextEditUpdateType.InsertOrRemove);
-        return { updateType: updateType as TextEditUpdateType, force: true };
+        return { $m_updateType: updateType as TextEditUpdateType, $m_force: true };
       }
     }
     const updateDataMaybe = matita.getLastWithRedoUndoUpdateDataInUpdateDataStack(updateDataStack);
     if (isNone(updateDataMaybe)) {
       return null;
     }
-    const updateData = updateDataMaybe.value;
+    const updateData = updateDataMaybe.$m_value;
     if (
       matita.RedoUndoUpdateKey.InsertText in updateData ||
       matita.RedoUndoUpdateKey.RemoveTextForwards in updateData ||
       matita.RedoUndoUpdateKey.RemoveTextBackwards in updateData
     ) {
-      return { updateType: TextEditUpdateType.InsertOrRemove, force: false };
+      return { $m_updateType: TextEditUpdateType.InsertOrRemove, $m_force: false };
     }
     if (matita.RedoUndoUpdateKey.CompositionUpdate in updateData) {
-      return { updateType: TextEditUpdateType.Composition, force: false };
+      return { $m_updateType: TextEditUpdateType.Composition, $m_force: false };
     }
     return null;
   }
@@ -210,7 +210,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
           return;
         }
         for (const paragraphId of this.$p_pendingTextEditParagraphTextUpdateRangesMap.keys()) {
-          this.$p_pendingParagraphIds.queue(paragraphId);
+          this.$p_pendingParagraphIds.$m_queue(paragraphId);
         }
         this.$p_pendingTextEditParagraphTextUpdateRangesMap.clear();
       }, this),
@@ -239,17 +239,17 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
             !matita.isParagraphPoint(range.startPoint) ||
             !matita.isParagraphPoint(range.endPoint) ||
             !matita.areParagraphPointsAtSameParagraph(range.startPoint, range.endPoint) ||
-            (textEditUpdateData.updateType === TextEditUpdateType.InsertOrRemove && range.startPoint.offset !== range.endPoint.offset)
+            (textEditUpdateData.$m_updateType === TextEditUpdateType.InsertOrRemove && range.startPoint.offset !== range.endPoint.offset)
           ) {
             continue;
           }
           const paragraphId = matita.getParagraphIdFromParagraphPoint(range.startPoint);
-          if (!textEditUpdateData.force && !this.$p_insertTextParagraphsIds.has(paragraphId)) {
+          if (!textEditUpdateData.$m_force && !this.$p_insertTextParagraphsIds.has(paragraphId)) {
             continue;
           }
           const textUpdateRange: TextUpdateRange = {
-            startOffset: Math.min(range.startPoint.offset, range.endPoint.offset),
-            endOffset: Math.max(range.startPoint.offset, range.endPoint.offset),
+            $m_startOffset: Math.min(range.startPoint.offset, range.endPoint.offset),
+            $m_endOffset: Math.max(range.startPoint.offset, range.endPoint.offset),
           };
           const textUpdateRangesForParagraph = this.$p_pendingTextEditParagraphTextUpdateRangesMap.get(paragraphId);
           if (textUpdateRangesForParagraph === undefined) {
@@ -279,7 +279,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
     );
   }
   private $p_queueParagraphWithParagraphId(paragraphId: string, isTextEditUpdate: boolean): void {
-    this.$p_pendingParagraphIds.queue(paragraphId);
+    this.$p_pendingParagraphIds.$m_queue(paragraphId);
     if (isTextEditUpdate) {
       this.$p_insertTextParagraphsIds.add(paragraphId);
     }
@@ -301,12 +301,12 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
   private $p_removeCachedSpellingMistakesOfParagraphWithParagraphId(paragraphId: string): void {
     if (this.$p_spellingMistakesMap.has(paragraphId)) {
       this.$p_spellingMistakesMap.delete(paragraphId);
-      const indexToRemove = this.$p_spellingMistakesParagraphCounts.indexOf(paragraphId);
-      this.$p_spellingMistakesParagraphCounts.remove(indexToRemove, indexToRemove);
+      const indexToRemove = this.$p_spellingMistakesParagraphCounts.$m_indexOf(paragraphId);
+      this.$p_spellingMistakesParagraphCounts.$m_remove(indexToRemove, indexToRemove);
     }
   }
   private $p_removeParagraphWithParagraphId(paragraphId: string): void {
-    this.$p_pendingParagraphIds.dequeue(paragraphId);
+    this.$p_pendingParagraphIds.$m_dequeue(paragraphId);
     this.$p_insertTextParagraphsIds.delete(paragraphId);
     this.$p_removeCachedSpellingMistakesOfParagraphWithParagraphId(paragraphId);
   }
@@ -422,7 +422,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
   }
   private $p_workDisposable: Disposable | null = null;
   private $p_queueWorkIfNeeded(): void {
-    if (this.$p_pendingParagraphIds.getQueueLength() > 0) {
+    if (this.$p_pendingParagraphIds.$m_getQueueLength() > 0) {
       if (this.$p_workDisposable === null) {
         this.$p_workDisposable = Disposable();
         this.add(this.$p_workDisposable);
@@ -435,7 +435,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
   private $p_performWork = (deadline: IdleDeadline): void => {
     this.$p_workDisposable = null;
     let paragraphId: string | null;
-    while (deadline.timeRemaining() > 0 && (paragraphId = this.$p_pendingParagraphIds.shift())) {
+    while (deadline.timeRemaining() > 0 && (paragraphId = this.$p_pendingParagraphIds.$m_shift())) {
       this.$p_checkParagraph(paragraphId);
     }
     this.$p_queueWorkIfNeeded();
@@ -468,12 +468,12 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
       return;
     }
     this.$p_spellingMistakesMap.set(paragraphId, paragraphSpellingMistakes);
-    if (this.$p_spellingMistakesParagraphCounts.has(paragraphId)) {
-      this.$p_spellingMistakesParagraphCounts.setCount(paragraphId, paragraphSpellingMistakes.length);
+    if (this.$p_spellingMistakesParagraphCounts.$m_has(paragraphId)) {
+      this.$p_spellingMistakesParagraphCounts.$m_setCount(paragraphId, paragraphSpellingMistakes.length);
     } else {
       const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
       const paragraphBlockIndices = matita.indexBlockAtBlockReference(this.$p_stateControl.stateView.document, paragraphReference);
-      this.$p_spellingMistakesParagraphCounts.insertValueAndCountUsingComparisonFunction(
+      this.$p_spellingMistakesParagraphCounts.$m_insertValueAndCountUsingComparisonFunction(
         paragraphId,
         paragraphSpellingMistakes.length,
         (compareWithParagraphId) => {
@@ -494,7 +494,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
     const getSpellingMistakeForWordAtIndex = (word: string, index: number): ParagraphSpellingMistake | null => {
       for (let i = 0; i < linkRanges.length; i++) {
         const linkRange = linkRanges[i];
-        const { startIndex, endIndex } = linkRange;
+        const { $m_startIndex: startIndex, $m_endIndex: endIndex } = linkRange;
         if (index <= endIndex && index + word.length >= startIndex) {
           return null;
         }
@@ -504,7 +504,7 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
         const wordEndParagraphOffset = wordStartParagraphOffset + word.length;
         for (let i = 0; i < pendingTextEditParagraphTextUpdateRanges.length; i++) {
           const pendingTextEditParagraphTextUpdateRange = pendingTextEditParagraphTextUpdateRanges[i];
-          const { startOffset, endOffset } = pendingTextEditParagraphTextUpdateRange;
+          const { $m_startOffset: startOffset, $m_endOffset: endOffset } = pendingTextEditParagraphTextUpdateRange;
           if (wordStartParagraphOffset <= endOffset && wordEndParagraphOffset >= startOffset) {
             return null;
           }
@@ -545,11 +545,11 @@ class SpellCheckControl<TextConfig extends matita.NodeConfig> extends Disposable
       return null;
     }
     return {
-      startOffset: offsetInParagraph,
-      endOffset: offsetInParagraph + word.length,
+      $m_startOffset: offsetInParagraph,
+      $m_endOffset: offsetInParagraph + word.length,
     };
   }
-  suggestMisspelledWord(misspelledWord: string): string[] {
+  $m_suggestMisspelledWord(misspelledWord: string): string[] {
     const suggestions = this.$p_spellChecker.suggest(misspelledWord);
     if (misspelledWord.includes('’') && !misspelledWord.includes("'")) {
       for (let i = 0; i < suggestions.length; i++) {

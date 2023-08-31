@@ -34,8 +34,8 @@ function assertIsNotNullish<T>(value: T, options?: ErrorOptions): asserts value 
   assert(value != null, 'Value should not be null.', options);
 }
 interface GroupConsecutiveItemsInArrayGroup<T, GI> {
-  groupInfos: GI[];
-  items: T[];
+  $m_groupInfos: GI[];
+  $m_items: T[];
 }
 function groupConsecutiveItemsInArray<T, GI>(
   items: T[],
@@ -49,11 +49,11 @@ function groupConsecutiveItemsInArray<T, GI>(
     const groupInfo = getGroup(item);
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     if (i === 0 || !compareGroups(lastGroupInfo!, groupInfo)) {
-      groups.push({ groupInfos: [groupInfo], items: [item] });
+      groups.push({ $m_groupInfos: [groupInfo], $m_items: [item] });
     } else {
       const lastGroup = groups[groups.length - 1];
-      lastGroup.groupInfos.push(groupInfo);
-      lastGroup.items.push(item);
+      lastGroup.$m_groupInfos.push(groupInfo);
+      lastGroup.$m_items.push(item);
     }
     lastGroupInfo = groupInfo;
   }

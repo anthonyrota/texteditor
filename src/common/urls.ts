@@ -85,8 +85,8 @@ const urlRegexp = RegExp(
   'g',
 );
 interface StringRange {
-  startIndex: number;
-  endIndex: number;
+  $m_startIndex: number;
+  $m_endIndex: number;
 }
 function detectUrls(string: string): StringRange[] {
   const stringRanges: StringRange[] = [];
@@ -96,8 +96,8 @@ function detectUrls(string: string): StringRange[] {
     const matchText = match[0];
     const matchEnd = matchStart + matchText.length;
     stringRanges.push({
-      startIndex: matchStart,
-      endIndex: matchEnd,
+      $m_startIndex: matchStart,
+      $m_endIndex: matchEnd,
     });
   }
   return stringRanges;

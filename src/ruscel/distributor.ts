@@ -270,7 +270,7 @@ function LastValueDistributor<T>(initialValue: Maybe<T> = None): LastValueDistri
     implDisposableMethods((eventOrSink: Event<T> | Sink<T>) => {
       if (typeof eventOrSink === 'function') {
         if ((!finalEvent || finalEvent.type === EndType) && isSome(distributor.lastValue)) {
-          eventOrSink(Push(distributor.lastValue.value));
+          eventOrSink(Push(distributor.lastValue.$m_value));
         }
         if (finalEvent) {
           eventOrSink(finalEvent);

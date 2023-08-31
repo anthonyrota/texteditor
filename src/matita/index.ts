@@ -67,7 +67,7 @@ function areJsonEqual(j1: Json, j2: Json): boolean {
   const j2Keys = Object.keys(j2);
   return j1Keys.length === j2Keys.length && Object.entries(j1).every(([k, v]) => areJsonEqual(v, j2[k]));
 }
-enum NodeType {
+const enum NodeType {
   Document = 'Document',
   Content = 'Content',
   Paragraph = 'Paragraph',
@@ -388,7 +388,7 @@ function cloneParagraph<ParagraphConfig extends NodeConfig, TextConfig extends N
   return makeParagraph(paragraph.config, paragraph.children.map(cloneInline), paragraph.id);
 }
 function cloneEmbed<EmbedConfig extends NodeConfig>(embed: Embed<EmbedConfig>): Embed<EmbedConfig> {
-  return makeEmbed(embed.config, embed.contentIds.toArray().map(makeContentReferenceFromContentId), embed.id);
+  return makeEmbed(embed.config, embed.contentIds.$m_toArray().map(makeContentReferenceFromContentId), embed.id);
 }
 function cloneBlock<ParagraphConfig extends NodeConfig, EmbedConfig extends NodeConfig, TextConfig extends NodeConfig, VoidConfig extends NodeConfig>(
   block: Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
@@ -404,7 +404,7 @@ function cloneParagraphAndChangeIds<ParagraphConfig extends NodeConfig, TextConf
   return makeParagraph(paragraph.config, paragraph.children.map(cloneInlineAndChangeIds), generateId());
 }
 function cloneEmbedAndChangeIds<EmbedConfig extends NodeConfig>(embed: Embed<EmbedConfig>): Embed<EmbedConfig> {
-  return makeEmbed(embed.config, embed.contentIds.toArray().map(makeContentReferenceFromContentId), generateId());
+  return makeEmbed(embed.config, embed.contentIds.$m_toArray().map(makeContentReferenceFromContentId), generateId());
 }
 function cloneBlockAndChangeIds<
   ParagraphConfig extends NodeConfig,
@@ -438,10 +438,10 @@ function cloneInlineAndChangeIds<TextConfig extends NodeConfig, VoidConfig exten
   return cloneVoidAndChangeIds(inline);
 }
 function cloneContent<ContentConfig extends NodeConfig>(content: Content<ContentConfig>): Content<ContentConfig> {
-  return makeContent(content.config, content.blockIds.toArray().map(makeBlockReferenceFromBlockId), content.id);
+  return makeContent(content.config, content.blockIds.$m_toArray().map(makeBlockReferenceFromBlockId), content.id);
 }
 function cloneContentAndChangeIds<ContentConfig extends NodeConfig>(content: Content<ContentConfig>): Content<ContentConfig> {
-  return makeContent(content.config, content.blockIds.toArray().map(makeBlockReferenceFromBlockId), generateId());
+  return makeContent(content.config, content.blockIds.$m_toArray().map(makeBlockReferenceFromBlockId), generateId());
 }
 function cloneContentFragmentAndChangeIds<
   ContentConfig extends NodeConfig,
@@ -1135,7 +1135,7 @@ function makeNestedBlock<ParagraphConfig extends NodeConfig, EmbedConfig extends
     contentReference,
   };
 }
-enum ContentFragmentBlockType {
+const enum ContentFragmentBlockType {
   Paragraph,
   Embed,
 }
@@ -1289,7 +1289,7 @@ function makeContentListFragment<
     contentListFragmentContents,
   };
 }
-enum PointType {
+const enum PointType {
   Paragraph = 'Paragraph',
   Block = 'Block',
   StartOfContent = 'StartOfContent',
@@ -1563,7 +1563,7 @@ function getNumberOfBlocksInContentAtContentReference<
   VoidConfig extends NodeConfig,
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, contentReference: ContentReference): number {
   const content = accessContentFromContentReference(document, contentReference);
-  return content.blockIds.getLength();
+  return content.blockIds.$m_getLength();
 }
 function isContentAtContentReferenceEmpty<
   DocumentConfig extends NodeConfig,
@@ -1584,7 +1584,7 @@ function getIndexOfBlockInContentFromBlockReference<
   VoidConfig extends NodeConfig,
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, blockReference: BlockReference): number {
   const content = accessContentFromBlockReference(document, blockReference);
-  const index = content.blockIds.indexOf(blockReference.blockId);
+  const index = content.blockIds.$m_indexOf(blockReference.blockId);
   if (index === -1) {
     throw new BlockNotInContentError({
       cause: {
@@ -1609,7 +1609,7 @@ function accessBlockAtIndexInContentAtContentReference<
   index: number,
 ): Block<ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> {
   const content = accessContentFromContentReference(document, contentReference);
-  if (index < 0 || index >= content.blockIds.getLength()) {
+  if (index < 0 || index >= content.blockIds.$m_getLength()) {
     throw new BlockNotInContentError({
       cause: {
         document,
@@ -1618,7 +1618,7 @@ function accessBlockAtIndexInContentAtContentReference<
       },
     });
   }
-  return accessBlockFromBlockReference(document, makeBlockReferenceFromBlockId(content.blockIds.access(index)));
+  return accessBlockFromBlockReference(document, makeBlockReferenceFromBlockId(content.blockIds.$m_access(index)));
 }
 function accessLastBlockInContentAtContentReference<
   DocumentConfig extends NodeConfig,
@@ -1687,7 +1687,7 @@ function getNumberOfEmbedContentsInEmbedAtBlockReference<
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, embedReference: BlockReference): number {
   const embed = accessBlockFromBlockReference(document, embedReference);
   assertIsEmbed(embed);
-  return embed.contentIds.getLength();
+  return embed.contentIds.$m_getLength();
 }
 function isEmbedAtBlockReferenceEmpty<
   DocumentConfig extends NodeConfig,
@@ -1734,7 +1734,7 @@ function getIndexOfEmbedContentFromContentReference<
   VoidConfig extends NodeConfig,
 >(document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>, contentReference: ContentReference): number {
   const embed = accessEmbedFromContentReference(document, contentReference);
-  const index = embed.contentIds.indexOf(contentReference.contentId);
+  const index = embed.contentIds.$m_indexOf(contentReference.contentId);
   if (index === -1) {
     throw new ContentNotInEmbedError({
       cause: { document, embed, contentReference },
@@ -1756,7 +1756,7 @@ function accessContentAtIndexInEmbedAtBlockReference<
 ): Content<ContentConfig> {
   const embed = accessBlockFromBlockReference(document, embedReference);
   assertIsEmbed(embed);
-  if (index < 0 || index >= embed.contentIds.getLength()) {
+  if (index < 0 || index >= embed.contentIds.$m_getLength()) {
     throw new ContentNotInEmbedError({
       cause: {
         document,
@@ -1765,7 +1765,7 @@ function accessContentAtIndexInEmbedAtBlockReference<
       },
     });
   }
-  return accessContentFromContentReference(document, makeContentReferenceFromContentId(embed.contentIds.access(index)));
+  return accessContentFromContentReference(document, makeContentReferenceFromContentId(embed.contentIds.$m_access(index)));
 }
 function accessLastContentInEmbedAtBlockReference<
   DocumentConfig extends NodeConfig,
@@ -2220,7 +2220,7 @@ function matchRangeOnPointTypesWithoutDirection<T>(range: Range, accessors: Matc
   }
   throwUnreachable();
 }
-enum RangeDirection {
+const enum RangeDirection {
   Forwards = 'Forwards',
   Backwards = 'Backwards',
   NeutralText = 'NeutralText',
@@ -2288,7 +2288,7 @@ function getRangeDirection(document: Document<NodeConfig, NodeConfig, NodeConfig
     }
   }
 }
-enum SelectionRangeIntention {
+const enum SelectionRangeIntention {
   Block = 'Block',
   Text = 'Text',
 }
@@ -2455,23 +2455,23 @@ interface EmbedRenderControl {
   onContentsInsertedAfter(contentReferences: ContentReference[], insertAfterContentReference: ContentReference | null): void;
 }
 interface ParagraphRenderControl {
-  paragraphReference: BlockReference;
-  onConfigOrChildrenChanged(isParagraphChildrenUpdated: boolean, isParagraphTextUpdated: boolean): void;
+  $m_paragraphReference: BlockReference;
+  $m_onConfigOrChildrenChanged(isParagraphChildrenUpdated: boolean, isParagraphTextUpdated: boolean): void;
 }
 interface ContentRenderControl {
-  contentReference: ContentReference;
-  onConfigChanged(): void;
-  onBlocksRemoved(blockReferences: BlockReference[]): void;
-  onBlocksInsertedAfter(blockReferences: BlockReference[], insertAfterBlockReference: BlockReference | null): void;
+  $m_contentReference: ContentReference;
+  $m_onConfigChanged(): void;
+  $m_onBlocksRemoved(blockReferences: BlockReference[]): void;
+  $m_onBlocksInsertedAfter(blockReferences: BlockReference[], insertAfterBlockReference: BlockReference | null): void;
 }
 interface DocumentRenderControl extends Disposable {
-  onConfigChanged(): void;
-  init: () => void;
+  $m_onConfigChanged(): void;
+  $m_init: () => void;
 }
 interface BaseRenderControl<MyDocumentRenderControl extends DocumentRenderControl> {
   makeDocumentRenderControl(rootHtmlElement: HTMLElement): MyDocumentRenderControl;
 }
-enum ViewDeltaChangeType {
+const enum ViewDeltaChangeType {
   BlocksInserted = 'BlocksInserted',
   BlocksMoved = 'BlocksMoved',
   BlockConfigOrParagraphChildrenUpdated = 'BlockConfigOrParagraphChildrenUpdated',
@@ -2612,7 +2612,7 @@ function makeViewDeltaAndViewDeltaControl(onViewDeltasMarkedBeforeMutationCommit
   };
   return { viewDelta: { changes: viewDeltaChanges }, viewDeltaControl };
 }
-enum RegisterUnregisterEventType {
+const enum RegisterUnregisterEventType {
   Register = 'Register',
   Unregister = 'Unregister',
 }
@@ -2716,7 +2716,7 @@ function makeViewControl<
     }
     documentRenderControl = baseRenderControl.makeDocumentRenderControl(rootHtmlElement);
     viewControl.add(documentRenderControl);
-    documentRenderControl.init();
+    documentRenderControl.$m_init();
   }
   type RenderControlMap = {
     contents: Record<string, MyContentRenderControl | undefined>;
@@ -2734,15 +2734,15 @@ function makeViewControl<
       case ViewDeltaChangeType.BlocksInserted: {
         const { blockReferences, contentReference, insertAfterBlockReference } = viewDeltaChange;
         const contentRenderControl = accessContentRenderControlAtContentReference(contentReference);
-        contentRenderControl.onBlocksInsertedAfter(blockReferences, insertAfterBlockReference);
+        contentRenderControl.$m_onBlocksInsertedAfter(blockReferences, insertAfterBlockReference);
         break;
       }
       case ViewDeltaChangeType.BlocksMoved: {
         const { blockReferences, moveAfterBlockReference, moveFromContentReference, moveIntoContentReference } = viewDeltaChange;
         const oldContentRenderControl = accessContentRenderControlAtContentReference(moveFromContentReference);
         const newContentRenderControl = accessContentRenderControlAtContentReference(moveIntoContentReference);
-        oldContentRenderControl.onBlocksRemoved(blockReferences);
-        newContentRenderControl.onBlocksInsertedAfter(blockReferences, moveAfterBlockReference);
+        oldContentRenderControl.$m_onBlocksRemoved(blockReferences);
+        newContentRenderControl.$m_onBlocksInsertedAfter(blockReferences, moveAfterBlockReference);
         break;
       }
       case ViewDeltaChangeType.BlockConfigOrParagraphChildrenUpdated: {
@@ -2753,14 +2753,14 @@ function makeViewControl<
           embedRenderControl.onConfigChanged();
         } else {
           const paragraphRenderControl = accessParagraphRenderControlAtBlockReference(blockReference);
-          paragraphRenderControl.onConfigOrChildrenChanged(isParagraphChildrenUpdated, isParagraphTextUpdated);
+          paragraphRenderControl.$m_onConfigOrChildrenChanged(isParagraphChildrenUpdated, isParagraphTextUpdated);
         }
         break;
       }
       case ViewDeltaChangeType.BlocksRemoved: {
         const { blockReferences, contentReference } = viewDeltaChange;
         const contentRenderControl = accessContentRenderControlAtContentReference(contentReference);
-        contentRenderControl.onBlocksRemoved(blockReferences);
+        contentRenderControl.$m_onBlocksRemoved(blockReferences);
         break;
       }
       case ViewDeltaChangeType.ContentsInserted: {
@@ -2773,7 +2773,7 @@ function makeViewControl<
       case ViewDeltaChangeType.ContentConfigUpdated: {
         const { contentReference } = viewDeltaChange;
         const contentRenderControl = accessContentRenderControlAtContentReference(contentReference);
-        contentRenderControl.onConfigChanged();
+        contentRenderControl.$m_onConfigChanged();
         break;
       }
       case ViewDeltaChangeType.ContentsRemoved: {
@@ -2785,7 +2785,7 @@ function makeViewControl<
       }
       case ViewDeltaChangeType.DocumentConfigUpdated: {
         const documentRenderControl = accessDocumentRenderControl();
-        documentRenderControl.onConfigChanged();
+        documentRenderControl.$m_onConfigChanged();
         break;
       }
       default: {
@@ -2807,23 +2807,23 @@ function makeViewControl<
   disposable.add(embedRenderControlRegisterUnregister$);
   const renderControlRegister: RenderControlRegister<MyContentRenderControl, MyParagraphRenderControl, MyEmbedRenderControl> = {
     registerContentRenderControl(contentRenderControl) {
-      assert(!(contentRenderControl.contentReference.contentId in renderControlMap.contents));
-      renderControlMap.contents[contentRenderControl.contentReference.contentId] = contentRenderControl;
+      assert(!(contentRenderControl.$m_contentReference.contentId in renderControlMap.contents));
+      renderControlMap.contents[contentRenderControl.$m_contentReference.contentId] = contentRenderControl;
       contentRenderControlRegisterUnregister$(Push({ type: RegisterUnregisterEventType.Register, contentRenderControl }));
     },
     unregisterContentRenderControl(contentRenderControl) {
-      assert(contentRenderControl.contentReference.contentId in renderControlMap.contents);
-      delete renderControlMap.contents[contentRenderControl.contentReference.contentId];
+      assert(contentRenderControl.$m_contentReference.contentId in renderControlMap.contents);
+      delete renderControlMap.contents[contentRenderControl.$m_contentReference.contentId];
       contentRenderControlRegisterUnregister$(Push({ type: RegisterUnregisterEventType.Unregister, contentRenderControl }));
     },
     registerParagraphRenderControl(paragraphRenderControl) {
-      assert(!(paragraphRenderControl.paragraphReference.blockId in renderControlMap.paragraphs));
-      renderControlMap.paragraphs[paragraphRenderControl.paragraphReference.blockId] = paragraphRenderControl;
+      assert(!(paragraphRenderControl.$m_paragraphReference.blockId in renderControlMap.paragraphs));
+      renderControlMap.paragraphs[paragraphRenderControl.$m_paragraphReference.blockId] = paragraphRenderControl;
       paragraphRenderControlRegisterUnregister$(Push({ type: RegisterUnregisterEventType.Register, paragraphRenderControl }));
     },
     unregisterParagraphRenderControl(paragraphRenderControl) {
-      assert(paragraphRenderControl.paragraphReference.blockId in renderControlMap.paragraphs);
-      delete renderControlMap.paragraphs[paragraphRenderControl.paragraphReference.blockId];
+      assert(paragraphRenderControl.$m_paragraphReference.blockId in renderControlMap.paragraphs);
+      delete renderControlMap.paragraphs[paragraphRenderControl.$m_paragraphReference.blockId];
       paragraphRenderControlRegisterUnregister$(Push({ type: RegisterUnregisterEventType.Unregister, paragraphRenderControl }));
     },
     registerEmbedRenderControl(embedRenderControl) {
@@ -2922,7 +2922,7 @@ function makePointKeyFromPoint(
     indices,
   };
 }
-enum CompareKeysResult {
+const enum CompareKeysResult {
   Before = 'Before',
   After = 'After',
   OverlapPreferKey1Before = 'OverlapPreferKey1Before',
@@ -3852,7 +3852,7 @@ interface StateView<
   readonly mutationIdToTimeTravelAfter: string | null;
   readonly document: DocumentView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
 }
-enum MutationSelectionTransformFixWhen {
+const enum MutationSelectionTransformFixWhen {
   NoFix = 'NoFix',
   FixEvery = 'FixEvery',
 }
@@ -4529,7 +4529,7 @@ function makeStateControl<
   );
   return stateControl;
 }
-enum MutationType {
+const enum MutationType {
   InsertContentsBefore = 'InsertContentsBefore',
   InsertContentsAfter = 'InsertContentsAfter',
   InsertContentsAtEnd = 'InsertContentsAtEnd',
@@ -4908,7 +4908,7 @@ function makeUpdateParagraphConfigBetweenBlockReferencesMutation<ParagraphConfig
     mergeParagraphConfig,
   };
 }
-enum NodeConfigDeltaType {
+const enum NodeConfigDeltaType {
   InsertInListAtPathBeforeIndex = 'InsertAtListAtPathBeforeIndex',
   RemoveInListAtPathAtIndex = 'RemoveAtListAtPathAtIndex',
   ReplaceInListAtPathAtIndex = 'ReplaceAtListAtPathAtIndex',
@@ -5369,7 +5369,7 @@ function removeContentsFromEmbedAtBlockReferenceBetweenContentReferences<
   }
   const embed = accessBlockFromBlockReference(document, embedReference);
   assertIsEmbed(embed);
-  embed.contentIds.remove(startContentIndex, endContentIndex);
+  embed.contentIds.$m_remove(startContentIndex, endContentIndex);
   return makeContentListFragment(contentListFragmentContents);
 }
 interface ViewDeltaBlocksMoveAfterInfo {
@@ -5464,7 +5464,7 @@ function removeBlocksFromContentAtContentReferenceBetweenBlockPoints<
     unregisterBlockAtBlockReferenceInDocument(document, blockReference);
   }
   const content = accessContentFromContentReference(document, contentReference);
-  content.blockIds.remove(startBlockIndex, endBlockIndex);
+  content.blockIds.$m_remove(startBlockIndex, endBlockIndex);
   return makeContentFragment(contentFragmentBlocks);
 }
 function registerContentListFragmentContents<
@@ -6032,7 +6032,7 @@ function applyMutation<
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       registerContentListFragmentContents(document, embedReference, contentListFragment);
-      embed.contentIds.insertBefore(
+      embed.contentIds.$m_insertBefore(
         contentIndex + (mutation.type === MutationType.InsertContentsBefore ? 0 : 1),
         contentListFragmentContents.map(({ content }) => content.id),
       );
@@ -6072,8 +6072,8 @@ function applyMutation<
       registerContentListFragmentContents(document, embedReference, contentListFragment);
       const embed = accessBlockFromBlockReference(document, embedReference);
       assertIsEmbed(embed);
-      embed.contentIds.insertBefore(
-        embed.contentIds.getLength(),
+      embed.contentIds.$m_insertBefore(
+        embed.contentIds.$m_getLength(),
         contentListFragmentContents.map(({ content }) => content.id),
       );
       return makeChangedMutationResult(
@@ -6117,7 +6117,7 @@ function applyMutation<
         viewDeltaControl.onViewDeltasMarkedBeforeMutationCommitted();
       }
       registerContentFragmentBlocks(document, contentReference, contentFragment);
-      content.blockIds.insertBefore(
+      content.blockIds.$m_insertBefore(
         blockIndex + (mutation.type === MutationType.InsertBlocksBefore ? 0 : 1),
         contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
       );
@@ -6156,8 +6156,8 @@ function applyMutation<
       }
       registerContentFragmentBlocks(document, contentReference, contentFragment);
       const content = accessContentFromContentReference(document, contentReference);
-      content.blockIds.insertBefore(
-        content.blockIds.getLength(),
+      content.blockIds.$m_insertBefore(
+        content.blockIds.$m_getLength(),
         contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
       );
       return makeChangedMutationResult(
@@ -6244,7 +6244,7 @@ function applyMutation<
         const moveIntoContent = accessContentFromBlockReference(document, insertionBlockReference);
         registerContentFragmentBlocks(document, makeContentReferenceFromContent(moveIntoContent), contentFragment);
         const blockIndex = getIndexOfBlockInContentFromBlockReference(document, insertionBlockReference);
-        moveIntoContent.blockIds.insertBefore(
+        moveIntoContent.blockIds.$m_insertBefore(
           blockIndex + (mutation.type === MutationType.MoveBlocksBefore ? 0 : 1),
           contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
@@ -6261,8 +6261,8 @@ function applyMutation<
         }
         registerContentFragmentBlocks(document, moveIntoContentReference, contentFragment);
         const moveIntoContent = accessContentFromContentReference(document, moveIntoContentReference);
-        moveIntoContent.blockIds.insertBefore(
-          moveIntoContent.blockIds.getLength(),
+        moveIntoContent.blockIds.$m_insertBefore(
+          moveIntoContent.blockIds.$m_getLength(),
           contentFragment.contentFragmentBlocks.map((contentFragmentBlock) => getBlockFromContentFragmentBlock(contentFragmentBlock).id),
         );
       }
@@ -6351,7 +6351,7 @@ function applyMutation<
       }
       spliceParagraphChildren(paragraph, 0, splitAtParagraphPoint.offset, []);
       registerBlockInDocument(document, newParagraph, contentReference);
-      content.blockIds.insertBefore(paragraphIndex, [newParagraph.id]);
+      content.blockIds.$m_insertBefore(paragraphIndex, [newParagraph.id]);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -6436,7 +6436,7 @@ function applyMutation<
       }
       spliceParagraphChildren(paragraph, splitAtParagraphPoint.offset, paragraphLength - splitAtParagraphPoint.offset, []);
       registerBlockInDocument(document, newParagraph, contentReference);
-      content.blockIds.insertBefore(paragraphIndex + 1, [newParagraph.id]);
+      content.blockIds.$m_insertBefore(paragraphIndex + 1, [newParagraph.id]);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -6519,7 +6519,7 @@ function applyMutation<
       spliceParagraphChildren(firstParagraph, firstParagraphLength, 0, secondParagraph.children);
       unregisterBlockAtBlockReferenceInDocument(document, makeBlockReferenceFromBlock(secondParagraph));
       const firstParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, firstParagraphReference);
-      content.blockIds.remove(firstParagraphIndex + 1, firstParagraphIndex + 1);
+      content.blockIds.$m_remove(firstParagraphIndex + 1, firstParagraphIndex + 1);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -6589,7 +6589,7 @@ function applyMutation<
       spliceParagraphChildren(secondParagraph, 0, 0, firstParagraph.children);
       unregisterBlockAtBlockReferenceInDocument(document, makeBlockReferenceFromBlock(firstParagraph));
       const secondParagraphIndex = getIndexOfBlockInContentFromBlockReference(document, secondParagraphReference);
-      content.blockIds.remove(secondParagraphIndex - 1, secondParagraphIndex - 1);
+      content.blockIds.$m_remove(secondParagraphIndex - 1, secondParagraphIndex - 1);
       const transformSelectionRange: TransformSelectionRangeFn = (selectionRange) => {
         return makeSelectionRange(
           selectionRange.ranges.map((range) => {
@@ -6954,12 +6954,12 @@ function applyMutation<
         (item) => item,
         (a, b) => (!a.didChange && !b.didChange) || (a.didChange && b.didChange && areNodeConfigsEqual(a.reverseMergeConfig, b.reverseMergeConfig)),
       )
-        .filter((group): group is GroupConsecutiveItemsInArrayGroup<GroupInfo, ChangedGroupInfo> => group.groupInfos[0].didChange)
+        .filter((group): group is GroupConsecutiveItemsInArrayGroup<GroupInfo, ChangedGroupInfo> => group.$m_groupInfos[0].didChange)
         .map((group) => {
           return makeUpdateTextConfigBetweenParagraphPointsMutation(
-            group.groupInfos[0].startParagraphPoint,
-            group.groupInfos[group.groupInfos.length - 1].endParagraphPoint,
-            group.groupInfos[0].reverseMergeConfig,
+            group.$m_groupInfos[0].startParagraphPoint,
+            group.$m_groupInfos[group.$m_groupInfos.length - 1].endParagraphPoint,
+            group.$m_groupInfos[0].reverseMergeConfig,
           );
         });
       assert(reverseMutations.length > 0);
@@ -7031,12 +7031,12 @@ function applyMutation<
         (item) => item,
         (a, b) => (!a.didChange && !b.didChange) || (a.didChange && b.didChange && areNodeConfigsEqual(a.reverseMergeConfig, b.reverseMergeConfig)),
       )
-        .filter((group): group is GroupConsecutiveItemsInArrayGroup<GroupInfo, ChangedGroupInfo> => group.groupInfos[0].didChange)
+        .filter((group): group is GroupConsecutiveItemsInArrayGroup<GroupInfo, ChangedGroupInfo> => group.$m_groupInfos[0].didChange)
         .map((group) => {
           return makeUpdateParagraphConfigBetweenBlockReferencesMutation(
-            group.groupInfos[0].paragraphReference,
-            group.groupInfos[group.groupInfos.length - 1].paragraphReference,
-            group.groupInfos[0].reverseMergeConfig,
+            group.$m_groupInfos[0].paragraphReference,
+            group.$m_groupInfos[group.$m_groupInfos.length - 1].paragraphReference,
+            group.$m_groupInfos[0].reverseMergeConfig,
           );
         });
       assert(reverseMutations.length > 0);
@@ -7599,7 +7599,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
     delta.applyMutation(makeBatchMutation(mutations), undefined, customTransformStateSelectionRangeFn);
   };
 }
-enum MovementGranularity {
+const enum MovementGranularity {
   Grapheme = 'Grapheme',
   Word = 'Word',
   WordBoundary = 'WordBoundary',
@@ -7607,7 +7607,7 @@ enum MovementGranularity {
   Paragraph = 'Paragraph',
   TopLevelContent = 'TopLevelContent',
 }
-enum PointMovement {
+const enum PointMovement {
   Previous = 'Previous',
   Next = 'Next',
   PreviousBoundByEdge = 'PreviousBoundByEdge',
@@ -8349,7 +8349,7 @@ function makeExtendSelectionByPointTransformFnsUpdateFn<
     delta.setSelection(extendedSelection, undefined, getSelectionChangeData?.(selectionToExtend, extendedSelection));
   };
 }
-enum RedoUndoUpdateKey {
+const enum RedoUndoUpdateKey {
   InsertText = 'standard.redoUndoUpdateKey.insertText',
   RemoveTextForwards = 'standard.redoUndoUpdateKey.removeTextForwards',
   RemoveTextBackwards = 'standard.redoUndoUpdateKey.removeTextBackwards',

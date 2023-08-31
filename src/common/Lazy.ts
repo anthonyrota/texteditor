@@ -5,10 +5,10 @@ export class Lazy<T> {
   constructor(compute: () => T) {
     this.$p_compute = compute;
   }
-  get value(): T {
+  get $m_value(): T {
     if (isNone(this.$p_computedValueMaybe)) {
       this.$p_computedValueMaybe = Some(this.$p_compute());
     }
-    return this.$p_computedValueMaybe.value;
+    return this.$p_computedValueMaybe.$m_value;
   }
 }

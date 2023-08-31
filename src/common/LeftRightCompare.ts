@@ -1,4 +1,4 @@
-enum LeftRightComparisonResult {
+const enum LeftRightComparisonResult {
   IsLeft = 0,
   IsRight = 1,
 }
