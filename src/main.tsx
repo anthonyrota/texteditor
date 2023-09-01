@@ -5,10 +5,11 @@ import { v4 } from 'uuid';
 import { isFirefox, isSafari } from './common/browserDetection';
 import { IndexableUniqueStringList } from './common/IndexableUniqueStringList';
 import { IntlSegmenter, makePromiseResolvingToNativeIntlSegmenterOrPolyfill } from './common/IntlSegmenter';
+import { LeftRightComparisonResult } from './common/LeftRightCompare';
 import { LruCache } from './common/LruCache';
 import { UniqueStringQueue } from './common/UniqueStringQueue';
 import { isValidHttpUrl, sanitizeUrl } from './common/urls';
-import { assert, assertIsNotNullish, assertUnreachable, throwNotImplemented, throwUnreachable } from './common/util';
+import { assert, assertIsNotNullish, assertUnreachable, groupArray, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
 import {
   SingleParagraphPlainTextSearchControl,
@@ -93,6 +94,26 @@ const orderedListStyles = [
   OrderedListStyle.UpperGreek,
   OrderedListStyle.UpperRoman,
 ];
+const orderedListStyleCharacterSets = [
+  new Set('0123456789'),
+  new Set('abcdefghijklmnopqrstuvwxyz'),
+  new Set('αβγδεζηθικλμνξοπρστυφχψω'),
+  new Set('cdilmvx'),
+  new Set('ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
+  new Set('ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ'),
+  new Set('CDILMVX'),
+];
+function isOneOfOrderedListStyleCharacterSets(string: string): boolean {
+  return orderedListStyleCharacterSets.some((orderedListStyleCharacterSet) => {
+    for (let i = 0; i < string.length; i++) {
+      const character = string[i];
+      if (!orderedListStyleCharacterSet.has(character)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
 function encodeNumberByString(number: number, string: string): string {
   let markerText = '';
   do {
@@ -154,6 +175,40 @@ function makeLowerGreekListMarkerText(number: number): string {
 }
 function makeUpperGreekListMarkerText(number: number): string {
   return encodeNumberByString(number, 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ');
+}
+const orderedListStyleFirstChars: Record<string, OrderedListStyle> = {
+  '1.': OrderedListStyle.Decimal,
+  [`${makeLowerAlphaListMarkerText(1)}.`]: OrderedListStyle.LowerAlpha,
+  [`${makeLowerGreekListMarkerText(1)}.`]: OrderedListStyle.LowerGreek,
+  [`${romanize(1)}.`.toLowerCase()]: OrderedListStyle.LowerRoman,
+  [`${makeUpperAlphaListMarkerText(1)}.`]: OrderedListStyle.UpperAlpha,
+  [`${makeUpperGreekListMarkerText(1)}.`]: OrderedListStyle.UpperGreek,
+  [`${romanize(1)}.`]: OrderedListStyle.UpperRoman,
+};
+function getListMarkerTextWithoutPoint(number: number, style: OrderedListStyle): string {
+  switch (style) {
+    case OrderedListStyle.Decimal: {
+      return String(number);
+    }
+    case OrderedListStyle.LowerAlpha: {
+      return makeLowerAlphaListMarkerText(number);
+    }
+    case OrderedListStyle.UpperAlpha: {
+      return makeUpperAlphaListMarkerText(number);
+    }
+    case OrderedListStyle.LowerRoman: {
+      return romanize(number).toLowerCase();
+    }
+    case OrderedListStyle.UpperRoman: {
+      return romanize(number);
+    }
+    case OrderedListStyle.LowerGreek: {
+      return makeLowerGreekListMarkerText(number);
+    }
+    case OrderedListStyle.UpperGreek: {
+      return makeUpperGreekListMarkerText(number);
+    }
+  }
 }
 const enum AccessedListStyleType {
   UnorderedList = 'ul',
@@ -820,37 +875,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
         assertIsNotNullish(injectedStyle.$m_ListItem_OrderedList_style);
         const number = injectedStyle.$m_ListItem_OrderedList_number;
         const style = injectedStyle.$m_ListItem_OrderedList_style;
-        let listMarkerText: string;
-        switch (style) {
-          case OrderedListStyle.Decimal: {
-            listMarkerText = String(number);
-            break;
-          }
-          case OrderedListStyle.LowerAlpha: {
-            listMarkerText = makeLowerAlphaListMarkerText(number);
-            break;
-          }
-          case OrderedListStyle.UpperAlpha: {
-            listMarkerText = makeUpperAlphaListMarkerText(number);
-            break;
-          }
-          case OrderedListStyle.LowerRoman: {
-            listMarkerText = romanize(number).toLowerCase();
-            break;
-          }
-          case OrderedListStyle.UpperRoman: {
-            listMarkerText = romanize(number);
-            break;
-          }
-          case OrderedListStyle.LowerGreek: {
-            listMarkerText = makeLowerGreekListMarkerText(number);
-            break;
-          }
-          case OrderedListStyle.UpperGreek: {
-            listMarkerText = makeUpperGreekListMarkerText(number);
-            break;
-          }
-        }
+        const listMarkerText = getListMarkerTextWithoutPoint(number, style);
         listMarker.append(document.createTextNode(`${listMarkerText}.`));
         return listMarker;
       }
@@ -1912,7 +1937,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
     $m_viewCursorInfo: viewCursorInfo,
     $m_synchronizedCursorVisibility$: synchronizedCursorVisibility$,
     $m_hasFocus: hasFocus,
-    $m_isDragging: isDragging,
+    $m_isDragging: isDragging, // TODO.
     $m_isItalic: isItalic,
     $m_customColor: customColor,
   } = props;
@@ -1923,10 +1948,10 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
     useMemo(
       () =>
         pipe(
-          isDragging ? ofEvent(Push(true)) : pipe(synchronizedCursorVisibility$),
+          pipe(synchronizedCursorVisibility$),
           debounce(() => ofEvent(End, scheduleMicrotask)),
         ),
-      [isDragging],
+      [],
     ),
     Some(true),
     true,
@@ -1939,7 +1964,7 @@ function BlinkingCursor(props: BlinkingCursorProps): JSX.Element | null {
         left: viewCursorInfo.$m_position.$m_left - cursorWidth / 2,
         width: cursorWidth,
         height: viewCursorInfo.$m_height,
-        backgroundColor: hasFocus || isDragging ? customColor ?? '#222' : '#88888899',
+        backgroundColor: hasFocus ? customColor ?? '#222' : '#88888899',
         transform: isItalic ? 'skew(-7deg)' : undefined,
         visibility: isVisibleMaybe.$m_value ? 'visible' : 'hidden',
       }}
@@ -4132,6 +4157,7 @@ function makeInsertPlainTextAtSelectionUpdateFn(
 function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
   stateControl: matita.StateControl<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   topLevelContentReference: matita.ContentReference,
+  listStyleInjectionControl: ListStyleInjectionControl,
 ): matita.RunUpdateFn {
   return () => {
     const minimumPartialParagraphPointOffsetMap = new Map<string, number>();
@@ -4184,7 +4210,12 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
         inlineNodeText === '###' ||
         inlineNodeText === '####' ||
         inlineNodeText === '#####' ||
-        inlineNodeText === '######'
+        inlineNodeText === '######' ||
+        inlineNodeText in orderedListStyleFirstChars ||
+        inlineNodeText === '-[]' ||
+        inlineNodeText === '-[ ]' ||
+        inlineNodeText === '-[x]' ||
+        (inlineNodeText.length > 1 && inlineNodeText[inlineNodeText.length - 1] === '.' && isOneOfOrderedListStyleCharacterSets(inlineNodeText.slice(0, -1)))
       ) {
         trackedSelectionRangeIds.add(selectionRange.id);
       }
@@ -4192,7 +4223,10 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
     stateControl.delta.applyUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, ' '), { [matita.RedoUndoUpdateKey.InsertText]: true });
     const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
     const applyUnorderedListSelectionRanges: matita.SelectionRange[] = [];
+    const applyOrderedListSelectionRanges: { $m_selectionRange: matita.SelectionRange; $m_orderedListStyle: OrderedListStyle }[] = [];
+    const applyChecklistSelectionRanges: { $m_selectionRange: matita.SelectionRange; $m_isChecked: boolean }[] = [];
     const handledParagraphIds = new Set<string>();
+    const potentialOrderedListPast1ToCheck: { $m_paragraphPoint: matita.ParagraphPoint; $m_text: string }[] = [];
     for (let i = 0; i < stateControl.stateView.selection.selectionRanges.length; i++) {
       const selectionRange = stateControl.stateView.selection.selectionRanges[i];
       if (!trackedSelectionRangeIds.has(selectionRange.id) || !matita.isSelectionRangeCollapsedInText(selectionRange)) {
@@ -4218,6 +4252,27 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
         const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
         mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
         applyUnorderedListSelectionRanges.push(selectionRange);
+        continue;
+      }
+      if (inlineNodeText[inlineNodeText.length - 1] === ' ' && inlineNodeText.slice(0, -1) in orderedListStyleFirstChars) {
+        if (paragraph.config.type === ParagraphType.ListItem) {
+          continue;
+        }
+        const firstChars = inlineNodeText.slice(0, -1);
+        const orderedListStyle = orderedListStyleFirstChars[firstChars];
+        const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+        mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
+        applyOrderedListSelectionRanges.push({ $m_selectionRange: selectionRange, $m_orderedListStyle: orderedListStyle });
+        continue;
+      }
+      if (inlineNodeText === '-[] ' || inlineNodeText === '-[ ] ' || inlineNodeText === '-[x] ') {
+        if (paragraph.config.type === ParagraphType.ListItem) {
+          continue;
+        }
+        const isChecked = inlineNodeText === '-[x] ';
+        const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+        mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
+        applyChecklistSelectionRanges.push({ $m_selectionRange: selectionRange, $m_isChecked: isChecked });
         continue;
       }
       if (
@@ -4264,11 +4319,109 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
           matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []),
           matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, { type: newParagraphType }),
         );
+        continue;
+      }
+      if (
+        inlineNodeText.length > 2 &&
+        inlineNodeText[inlineNodeText.length - 1] === ' ' &&
+        inlineNodeText[inlineNodeText.length - 2] === '.' &&
+        paragraph.config.type !== ParagraphType.ListItem &&
+        isOneOfOrderedListStyleCharacterSets(inlineNodeText.slice(0, -2))
+      ) {
+        potentialOrderedListPast1ToCheck.push({ $m_paragraphPoint: point, $m_text: inlineNodeText.slice(0, -2) });
       }
     }
-    if (mutations.length === 0) {
-      return;
-    }
+    assert(
+      new Set(potentialOrderedListPast1ToCheck.map((item) => matita.getParagraphIdFromParagraphPoint(item.$m_paragraphPoint))).size ===
+        potentialOrderedListPast1ToCheck.length,
+    );
+    potentialOrderedListPast1ToCheck.sort((item1, item2) => {
+      const point1BlockIndices = matita.indexBlockAtBlockReference(
+        stateControl.stateView.document,
+        matita.makeBlockReferenceFromParagraphPoint(item1.$m_paragraphPoint),
+      );
+      const point2BlockIndices = matita.indexBlockAtBlockReference(
+        stateControl.stateView.document,
+        matita.makeBlockReferenceFromParagraphPoint(item2.$m_paragraphPoint),
+      );
+      return matita.compareBlockIndicesForUniqueParagraphsAtBlockReferences(point1BlockIndices, point2BlockIndices) === LeftRightComparisonResult.IsLeft
+        ? -1
+        : 1;
+    });
+    const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
+    let potentialOrderedListPast1ToCheckMutationsOnConfig: matita.Mutation<
+      DocumentConfig,
+      ContentConfig,
+      ParagraphConfig,
+      EmbedConfig,
+      TextConfig,
+      VoidConfig
+    >[] = [];
+    const goThroughPotentialOrderedListPast1ToCheck = (): void => {
+      listStyleInjectionControl.$m_computeIndices();
+      for (let i = 0; i < potentialOrderedListPast1ToCheck.length; i++) {
+        const item = potentialOrderedListPast1ToCheck[i];
+        const { $m_paragraphPoint: point, $m_text: text } = item;
+        const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, point);
+        assert(paragraph.config.type !== ParagraphType.ListItem);
+        const contentReference = matita.makeContentReferenceFromContent(matita.accessContentFromParagraphPoint(stateControl.stateView.document, point));
+        const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(point);
+        const paragraphIndex = matita.getIndexOfBlockInContentFromBlockReference(stateControl.stateView.document, paragraphReference);
+        let minimumListIndent = Infinity;
+        let listId: string | undefined;
+        for (let j = paragraphIndex - 1; j >= 0; j--) {
+          const block = matita.accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, contentReference, j);
+          if (matita.isEmbed(block) || block.config.type !== ParagraphType.ListItem || typeof block.config.ListItem_listId !== 'string') {
+            break;
+          }
+          if (listId === undefined) {
+            listId = block.config.ListItem_listId;
+          } else if (block.config.ListItem_listId !== listId) {
+            break;
+          }
+          const listType = accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, block.config);
+          if (listType !== AccessedListStyleType.OrderedList) {
+            continue;
+          }
+          const listIndent = convertStoredListIndentLevelToNumberedIndentLevel(block.config.ListItem_indentLevel);
+          if (listIndent >= minimumListIndent) {
+            continue;
+          }
+          const listIndexer = listStyleInjectionControl.$m_getNumberedListIndexerAtListId(block.config.ListItem_listId);
+          const blockListNumber = listIndexer.$m_getListItemNumber(block.id);
+          const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, block.config);
+          const nextListMarkerText = getListMarkerTextWithoutPoint(blockListNumber + 1, orderedListStyle);
+          if (nextListMarkerText === text) {
+            const pointAtBeginningOfParagraph = matita.changeParagraphPointOffset(point, 0);
+            mutations.push(matita.makeSpliceParagraphMutation(pointAtBeginningOfParagraph, point.offset, []));
+            potentialOrderedListPast1ToCheckMutationsOnConfig.push(
+              matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, {
+                type: ParagraphType.ListItem,
+                ListItem_listId: listId,
+                ListItem_indentLevel: listIndent,
+              }),
+            );
+            potentialOrderedListPast1ToCheck.splice(i--, 1);
+            break;
+          }
+          if (listIndent === 0) {
+            break;
+          }
+          minimumListIndent = listIndent;
+        }
+      }
+    };
+    const doPotentialOrderedListCheckLoop = (): void => {
+      while (potentialOrderedListPast1ToCheck.length > 0) {
+        goThroughPotentialOrderedListPast1ToCheck();
+        if (potentialOrderedListPast1ToCheckMutationsOnConfig.length === 0) {
+          break;
+        }
+        const batchMutation = matita.makeBatchMutation(potentialOrderedListPast1ToCheckMutationsOnConfig);
+        potentialOrderedListPast1ToCheckMutationsOnConfig = [];
+        stateControl.delta.applyMutation(batchMutation);
+      }
+    };
     stateControl.delta.applyUpdate(
       () => {
         if (applyUnorderedListSelectionRanges.length > 0) {
@@ -4276,6 +4429,39 @@ function makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
           stateControl.delta.applyUpdate(
             makeApplyListTypeAtSelectionUpdateFn(stateControl, topLevelContentReference, AccessedListStyleType.UnorderedList, applyUnorderedListSelection),
           );
+        }
+        if (applyOrderedListSelectionRanges.length > 0) {
+          doPotentialOrderedListCheckLoop();
+          for (const [orderedListStyle, items] of groupArray(applyOrderedListSelectionRanges, (item) => item.$m_orderedListStyle)) {
+            const applyOrderedListSelectionForThisOrderedListStyle = matita.makeSelection(items.map((item) => item.$m_selectionRange));
+            stateControl.delta.applyUpdate(
+              makeApplyListTypeAtSelectionUpdateFn(
+                stateControl,
+                topLevelContentReference,
+                AccessedListStyleType.OrderedList,
+                applyOrderedListSelectionForThisOrderedListStyle,
+                orderedListStyle,
+              ),
+            );
+          }
+        }
+        if (applyChecklistSelectionRanges.length > 0) {
+          const applyChecklistSelection = matita.makeSelection(applyChecklistSelectionRanges.map((item) => item.$m_selectionRange));
+          stateControl.delta.applyUpdate(
+            makeApplyListTypeAtSelectionUpdateFn(stateControl, topLevelContentReference, AccessedListStyleType.Checklist, applyChecklistSelection),
+          );
+          stateControl.delta.applyUpdate(
+            makeToggleChecklistCheckedAtSelectionUpdateFn(
+              stateControl,
+              topLevelContentReference,
+              'individually',
+              matita.makeSelection(applyChecklistSelectionRanges.filter((item) => item.$m_isChecked).map((item) => item.$m_selectionRange)),
+            ),
+          );
+        }
+        doPotentialOrderedListCheckLoop();
+        if (mutations.length === 0) {
+          return;
         }
         const batchMutation = matita.makeBatchMutation(mutations);
         stateControl.delta.applyMutation(batchMutation);
@@ -4292,8 +4478,12 @@ function makeApplyListTypeAtSelectionUpdateFn(
   topLevelContentReference: matita.ContentReference,
   listType: AccessedListStyleType,
   selection?: matita.Selection,
+  orderedListStyleForNewListItemAdded?: OrderedListStyle,
 ): matita.RunUpdateFn {
   return () => {
+    if (orderedListStyleForNewListItemAdded !== undefined) {
+      assert(listType === AccessedListStyleType.OrderedList);
+    }
     const selectionAt = selection ?? stateControl.stateView.selection;
     const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
     const { paragraphReferenceRanges, isAllActive } = matita.calculateParagraphReferenceRangesAndIsAllActiveFromParagraphConfigToggle(
@@ -4338,6 +4528,7 @@ function makeApplyListTypeAtSelectionUpdateFn(
       for (let j = firstParagraphIndex; j <= lastParagraphIndex; j++) {
         const block = matita.accessBlockAtIndexInContentAtContentReference(stateControl.stateView.document, contentReference, j);
         if (matita.isParagraph(block) && block.config.type === ParagraphType.ListItem && typeof block.config.ListItem_listId === 'string') {
+          assert(orderedListStyleForNewListItemAdded === undefined);
           const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(block.config.ListItem_indentLevel);
           const serializedListIdAndNumberedIndentCombination = serializeListIdAndNumberedIndentCombination(block.config.ListItem_listId, numberedIndentLevel);
           if (!handledExistingListIdAndNumberedIndentCombinations.has(serializedListIdAndNumberedIndentCombination)) {
@@ -4394,7 +4585,10 @@ function makeApplyListTypeAtSelectionUpdateFn(
       const serializedListIdAndNumberedIndentCombination = serializeListIdAndNumberedIndentCombination(paragraphConfig.ListItem_listId, numberedIndentLevel);
       if (
         changedListIdAndNumberedIndentCombinations.has(serializedListIdAndNumberedIndentCombination) ||
-        accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType
+        (accessListTypeInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) === listType &&
+          (orderedListStyleForNewListItemAdded === undefined ||
+            accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraphConfig) ===
+              orderedListStyleForNewListItemAdded))
       ) {
         return paragraphConfig.ListItem_listId;
       }
@@ -4629,6 +4823,17 @@ function makeApplyListTypeAtSelectionUpdateFn(
             matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(['listStyles', 'listIdToStyle', listId, 'indentLevelToStyle', '0', 'type'], listStyleTypeToStore),
           ),
         );
+        if (orderedListStyleForNewListItemAdded !== undefined && orderedListStyleForNewListItemAdded !== OrderedListStyle.Decimal) {
+          topLevelContentConfigMutations.push(
+            matita.makeUpdateContentConfigMutation(
+              topLevelContentReference,
+              matita.makeNodeConfigDeltaSetInObjectAtPathAtKey(
+                ['listStyles', 'listIdToStyle', listId, 'indentLevelToStyle', '0', 'OrderedList_style'],
+                orderedListStyleForNewListItemAdded,
+              ),
+            ),
+          );
+        }
         pushSetAsListMutation(firstParagraphReference, lastParagraphReference, listId, listIndent, false);
       }
     }
@@ -5760,7 +5965,13 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
       // TODO: Hybrid approach here? E.g. Japanese composition, hitting space bar doesn't insert space.
       if (insertText === ' ') {
         const documentRenderControl = viewControl.accessDocumentRenderControl();
-        stateControl.queueUpdate(makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(stateControl, documentRenderControl.$m_topLevelContentReference));
+        stateControl.queueUpdate(
+          makePressedSpaceBarToInsertSpaceAtSelectionUpdateFn(
+            stateControl,
+            documentRenderControl.$m_topLevelContentReference,
+            documentRenderControl.$m_listStyleInjectionControl,
+          ),
+        );
         return;
       }
       stateControl.queueUpdate(makeInsertPlainTextAtSelectionUpdateFn(stateControl, insertText), { [matita.RedoUndoUpdateKey.InsertText]: true });
@@ -5810,7 +6021,7 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   [StandardCommand.OpenFloatingLinkBoxAtSelection]: {
     execute(stateControl, viewControl): void {
       const documentRenderControl = viewControl.accessDocumentRenderControl();
-      stateControl.queueUpdate(documentRenderControl.openFloatingLinkBoxAtSelection(), { [keepFloatingLinkBoxOpenUpdateKey]: true });
+      stateControl.queueUpdate(documentRenderControl.$m_openFloatingLinkBoxAtSelection(), { [keepFloatingLinkBoxOpenUpdateKey]: true });
     },
   },
   [StandardCommand.SplitParagraph]: {
@@ -7099,13 +7310,17 @@ class ListStyleInjectionControl extends DisposableClass {
       injectedStyle.$m_ListItem_type = listType;
       if (listType === AccessedListStyleType.OrderedList) {
         assert(typeof paragraph.config.ListItem_listId === 'string');
-        const numberedListIndexer = this.$p_numberedListIndexerMap.get(paragraph.config.ListItem_listId as string);
-        assertIsNotNullish(numberedListIndexer);
+        const numberedListIndexer = this.$m_getNumberedListIndexerAtListId(paragraph.config.ListItem_listId as string);
         injectedStyle.$m_ListItem_OrderedList_number = numberedListIndexer.$m_getListItemNumber(paragraph.id);
         const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
         injectedStyle.$m_ListItem_OrderedList_style = orderedListStyle;
       }
     }
+  }
+  $m_getNumberedListIndexerAtListId(listId: string): ListIndexer {
+    const numberedListIndexer = this.$p_numberedListIndexerMap.get(listId);
+    assertIsNotNullish(numberedListIndexer);
+    return numberedListIndexer;
   }
   $m_computeIndices(): void {
     const topLevelContent = matita.accessContentFromContentReference(this.$p_stateControl.stateView.document, this.$p_topLevelContentReference);
@@ -7821,15 +8036,15 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     this.$p_undoControl.$m_registerCommands(this.$p_commandRegister);
     this.$p_graphemeSegmenter = new this.$m_stateControl.stateControlConfig.IntlSegmenter();
   }
-  private $p_listStyleInjectionControl!: ListStyleInjectionControl;
+  $m_listStyleInjectionControl!: ListStyleInjectionControl;
   private $p_commitDirtyChanges(): void {
-    this.$p_listStyleInjectionControl.$m_computeIndices();
+    this.$m_listStyleInjectionControl.$m_computeIndices();
     let paragraphId: string | null;
     while ((paragraphId = this.$m_dirtyParagraphIdQueue.$m_shift()) !== null) {
       const paragraphReference = matita.makeBlockReferenceFromBlockId(paragraphId);
       const paragraphRenderControl = this.$m_viewControl.accessParagraphRenderControlAtBlockReference(paragraphReference);
       const injectedStyle: ParagraphStyleInjection = {};
-      this.$p_listStyleInjectionControl.$m_injectStyle(paragraphReference, injectedStyle);
+      this.$m_listStyleInjectionControl.$m_injectStyle(paragraphReference, injectedStyle);
       paragraphRenderControl.$m_commitDirtyChanges(injectedStyle);
     }
   }
@@ -7879,7 +8094,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         });
       }, this),
     );
-    this.$p_listStyleInjectionControl = new ListStyleInjectionControl(
+    this.$m_listStyleInjectionControl = new ListStyleInjectionControl(
       this.$m_stateControl,
       this.$m_viewControl,
       this.$m_topLevelContentReference,
@@ -7887,7 +8102,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         this.$m_dirtyParagraphIdQueue.$m_queue(paragraphId);
       },
     );
-    this.add(this.$p_listStyleInjectionControl);
+    this.add(this.$m_listStyleInjectionControl);
     this.$p_containerHtmlElement = document.createElement('div');
     this.$p_toolbarContainerElement = document.createElement('div');
     this.$p_topLevelContentViewContainerElement = document.createElement('div');
@@ -9616,7 +9831,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     const cursorInfo = this.$p_getCursorPositionAndHeightFromParagraphPointFillingLine(focusPoint, isMarkedLineWrapToNextLine);
     return makeViewRectangle(cursorInfo.position.$m_left + relativeOffsetLeft, cursorInfo.position.$m_top + relativeOffsetTop, 0, cursorInfo.height);
   }
-  openFloatingLinkBoxAtSelection(startValues?: { $m_text?: string; $m_link?: string }): matita.RunUpdateFn {
+  $m_openFloatingLinkBoxAtSelection(startValues?: { $m_text?: string; $m_link?: string }): matita.RunUpdateFn {
     return () => {
       surroundNearestLink: if (!startValues) {
         const linkDetailsInfo = this.$p_getFloatingLinkDetailsInfo();
@@ -11610,7 +11825,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             if (isSelectionSame(originalSelectionCoveringLink, originalStateView!)) {
               this.$m_stateControl.delta.setSelection(originalSelectionCoveringLink);
-              this.$m_stateControl.delta.applyUpdate(this.openFloatingLinkBoxAtSelection(linkDetailsInfo), { [keepFloatingLinkBoxOpenUpdateKey]: true });
+              this.$m_stateControl.delta.applyUpdate(this.$m_openFloatingLinkBoxAtSelection(linkDetailsInfo), { [keepFloatingLinkBoxOpenUpdateKey]: true });
             }
             originalStateView = null;
           });
