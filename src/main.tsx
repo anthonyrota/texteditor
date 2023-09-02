@@ -5124,7 +5124,7 @@ function makeMapOrderedListStyleAtSelectionUpdateFn(
   return () => {
     const selectionAt = selection ?? stateControl.stateView.selection;
     const topLevelContent = matita.accessContentFromContentReference(stateControl.stateView.document, topLevelContentReference);
-    const cycledListIds = new Set<string>();
+    const cycledSerializedListIdAndIndentCombinations = new Set<string>();
     const mutations: matita.Mutation<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>[] = [];
     for (const paragraphReference of matita.iterParagraphsInSelectionOutOfOrder(stateControl.stateView.document, selectionAt)) {
       const paragraph = matita.accessBlockFromBlockReference(stateControl.stateView.document, paragraphReference);
@@ -5139,13 +5139,14 @@ function makeMapOrderedListStyleAtSelectionUpdateFn(
       if (typeof listId !== 'string') {
         throwUnreachable();
       }
-      if (cycledListIds.has(listId)) {
+      const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel);
+      const serializedListIdAndNumberedIndentCombination = serializeListIdAndNumberedIndentCombination(listId, numberedIndentLevel);
+      if (cycledSerializedListIdAndIndentCombinations.has(serializedListIdAndNumberedIndentCombination)) {
         continue;
       }
-      cycledListIds.add(listId);
+      cycledSerializedListIdAndIndentCombinations.add(serializedListIdAndNumberedIndentCombination);
       const orderedListStyle = accessOrderedListStyleInTopLevelContentConfigFromListParagraphConfig(topLevelContent.config, paragraph.config);
       const newOrderedListStyle = mapOrderedListStyle(orderedListStyle);
-      const numberedIndentLevel = convertStoredListIndentLevelToNumberedIndentLevel(paragraph.config.ListItem_indentLevel);
       mutations.push(
         matita.makeUpdateContentConfigMutation(
           topLevelContentReference,
