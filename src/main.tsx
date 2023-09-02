@@ -8329,7 +8329,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
         spellingBoxRenderMessage$(
           Push({
             ...spellingBoxRenderMessage$.lastValue.$m_value,
-            focusedSuggestionIndex: this.$p_spellingBoxFocusedSuggestionIndex,
+            $m_focusedSuggestionIndex: this.$p_spellingBoxFocusedSuggestionIndex,
           }),
         );
       }, this),
