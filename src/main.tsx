@@ -12574,23 +12574,18 @@ assertIsNotNullish(rootHtmlElement);
 import dummyText from './dummyText.txt?raw';
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
 makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
-  const doesFirstParagraphConfigTakePrecedenceOverSecondParagraphConfig = (
-    firstParagraphConfig: ParagraphConfig,
-    secondParagraphConfig: ParagraphConfig,
-  ): boolean => {
-    return (
-      (acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(firstParagraphConfig.type) ||
-      (convertStoredParagraphAlignmentToAccessedParagraphAlignment(firstParagraphConfig.alignment) !== AccessedParagraphAlignment.Left &&
-        !(acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(secondParagraphConfig.type))
-    );
-  };
   const stateControlConfig: matita.StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = {
     fixSelectionRange(document, selectionRange) {
       return selectionRange;
     },
     IntlSegmenter,
-    remove_shouldKeepEmptyFirstParagraphConfig: doesFirstParagraphConfigTakePrecedenceOverSecondParagraphConfig,
-    remove_shouldKeepEmptyFirstParagraphConfigIfConsecutiveEmptyToo: doesFirstParagraphConfigTakePrecedenceOverSecondParagraphConfig,
+    shouldKeepEmptyFirstParagraphConfigWhenRemoving(firstParagraphConfig, secondParagraphConfig) {
+      return (
+        (acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(firstParagraphConfig.type) ||
+        (convertStoredParagraphAlignmentToAccessedParagraphAlignment(firstParagraphConfig.alignment) !== AccessedParagraphAlignment.Left &&
+          !(acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(secondParagraphConfig.type))
+      );
+    },
   };
   const document_ = matita.makeDocument<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>({}, {}, {}, matita.generateId());
   const topLevelContentId = matita.generateId();

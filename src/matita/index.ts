@@ -3900,10 +3900,7 @@ interface StateControlConfig<
     document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
     selectionRange: SelectionRange,
   ) => SelectionRange | null;
-  // Deleting text backwards onto e.g. an empty list should preserve the list config.
-  remove_shouldKeepEmptyFirstParagraphConfig: (firstParagraphConfig: ParagraphConfig, secondParagraphConfig: ParagraphConfig) => boolean;
-  // Delete at end of empty line with next paragraph being e.g. an empty list should preserve the list and wipe the empty line, but not if other way around.
-  remove_shouldKeepEmptyFirstParagraphConfigIfConsecutiveEmptyToo: (firstParagraphConfig: ParagraphConfig, secondParagraphConfig: ParagraphConfig) => boolean;
+  shouldKeepEmptyFirstParagraphConfigWhenRemoving: (firstParagraphConfig: ParagraphConfig, secondParagraphConfig: ParagraphConfig) => boolean;
 }
 interface BeforeUpdateBatchMessage {
   updateQueue: QueuedUpdate[];
@@ -7243,17 +7240,20 @@ function makeRemoveRangeContentsUpdateFn<
             secondParagraphIndex = paragraph1Index;
           }
           const firstParagraph = accessParagraphFromParagraphPoint(document, firstParagraphPoint);
-          const secondParagraph = accessParagraphFromParagraphPoint(document, secondParagraphPoint);
           const firstParagraphLength = getParagraphLength(firstParagraph);
           if (firstParagraphPoint.offset !== firstParagraphLength) {
             mutations.push(makeSpliceParagraphMutation(firstParagraphPoint, firstParagraphLength - firstParagraphPoint.offset, []));
-          } else if (
-            firstParagraphLength === 0 &&
-            secondParagraphPoint.offset === 0 &&
-            secondParagraphIndex === firstParagraphIndex + 1 &&
-            !stateControl.stateControlConfig.remove_shouldKeepEmptyFirstParagraphConfigIfConsecutiveEmptyToo(firstParagraph.config, secondParagraph.config)
-          ) {
-            mutations.push(makeJoinParagraphsForwardsMutation(makeBlockReferenceFromParagraphPoint(secondParagraphPoint)));
+          } else if (firstParagraphLength === 0 && secondParagraphPoint.offset === 0 && secondParagraphIndex === firstParagraphIndex + 1) {
+            if (
+              stateControl.stateControlConfig.shouldKeepEmptyFirstParagraphConfigWhenRemoving(
+                firstParagraph.config,
+                accessParagraphFromParagraphPoint(document, secondParagraphPoint).config,
+              )
+            ) {
+              mutations.push(makeJoinParagraphsBackwardsMutation(makeBlockReferenceFromParagraphPoint(firstParagraphPoint)));
+            } else {
+              mutations.push(makeJoinParagraphsForwardsMutation(makeBlockReferenceFromParagraphPoint(secondParagraphPoint)));
+            }
             return;
           }
           if (secondParagraphIndex - firstParagraphIndex > 1) {
@@ -7270,7 +7270,10 @@ function makeRemoveRangeContentsUpdateFn<
           if (
             firstParagraphLength === 0 &&
             getParagraphLength(accessParagraphFromParagraphPoint(document, secondParagraphPoint)) > 0 &&
-            !stateControl.stateControlConfig.remove_shouldKeepEmptyFirstParagraphConfig(firstParagraph.config, secondParagraph.config)
+            !stateControl.stateControlConfig.shouldKeepEmptyFirstParagraphConfigWhenRemoving(
+              firstParagraph.config,
+              accessParagraphFromParagraphPoint(document, secondParagraphPoint).config,
+            )
           ) {
             mutations.push(makeJoinParagraphsForwardsMutation(makeBlockReferenceFromParagraphPoint(secondParagraphPoint)));
           } else {
