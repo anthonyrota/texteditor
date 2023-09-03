@@ -404,6 +404,19 @@ const enum ParagraphType {
   Heading5 = 'heading5',
   Heading6 = 'heading6',
 }
+const acceptedParagraphTypes = [
+  ParagraphType.ListItem,
+  ParagraphType.Quote,
+  ParagraphType.Indent1,
+  ParagraphType.IndentHanging1,
+  ParagraphType.IndentFirstLine1,
+  ParagraphType.Heading1,
+  ParagraphType.Heading2,
+  ParagraphType.Heading3,
+  ParagraphType.Heading4,
+  ParagraphType.Heading5,
+  ParagraphType.Heading6,
+];
 const enum StoredParagraphAlignment {
   Center = 'center',
   Right = 'right',
@@ -1044,7 +1057,7 @@ class VirtualizedParagraphRenderControl extends DisposableClass implements matit
           break;
         }
         default: {
-          assertUnreachable(paragraph.config.type);
+          console.error('bad paragraph type', paragraph.config.type);
         }
       }
     } else {
@@ -12561,11 +12574,23 @@ assertIsNotNullish(rootHtmlElement);
 import dummyText from './dummyText.txt?raw';
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
 makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
+  const doesFirstParagraphConfigTakePrecedenceOverSecondParagraphConfig = (
+    firstParagraphConfig: ParagraphConfig,
+    secondParagraphConfig: ParagraphConfig,
+  ): boolean => {
+    return (
+      (acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(firstParagraphConfig.type) ||
+      (convertStoredParagraphAlignmentToAccessedParagraphAlignment(firstParagraphConfig.alignment) !== AccessedParagraphAlignment.Left &&
+        !(acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(secondParagraphConfig.type))
+    );
+  };
   const stateControlConfig: matita.StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = {
     fixSelectionRange(document, selectionRange) {
       return selectionRange;
     },
     IntlSegmenter,
+    remove_shouldKeepEmptyFirstParagraphConfig: doesFirstParagraphConfigTakePrecedenceOverSecondParagraphConfig,
+    remove_shouldKeepEmptyFirstParagraphConfigIfConsecutiveEmptyToo: doesFirstParagraphConfigTakePrecedenceOverSecondParagraphConfig,
   };
   const document_ = matita.makeDocument<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>({}, {}, {}, matita.generateId());
   const topLevelContentId = matita.generateId();
