@@ -9,7 +9,7 @@ import { LeftRightComparisonResult } from './common/LeftRightCompare';
 import { LruCache } from './common/LruCache';
 import { UniqueStringQueue } from './common/UniqueStringQueue';
 import { isValidHttpUrl, sanitizeUrl } from './common/urls';
-import { assert, assertIsNotNullish, assertUnreachable, groupArray, throwNotImplemented, throwUnreachable } from './common/util';
+import { assert, assertIsNotNullish, assertUnreachable, groupArray, omit, throwNotImplemented, throwUnreachable } from './common/util';
 import * as matita from './matita';
 import {
   SingleParagraphPlainTextSearchControl,
@@ -6040,14 +6040,65 @@ const virtualizedCommandRegisterObject: Record<string, VirtualizedRegisteredComm
   },
   [StandardCommand.SplitParagraph]: {
     execute(stateControl): void {
-      // TODO.
-      const contentFragment = matita.makeContentFragment([
-        matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], matita.generateId())),
-        matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], matita.generateId())),
-      ]);
-      stateControl.queueUpdate(() => {
-        stateControl.delta.applyUpdate(matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, () => contentFragment));
-      });
+      stateControl.queueUpdate(
+        () => {
+          stateControl.delta.applyUpdate(
+            matita.makeInsertContentFragmentAtSelectionUpdateFn(stateControl, (selectionRange) => {
+              const focusRange = matita.getFocusRangeFromSelectionRange(selectionRange);
+              const rangeDirection = matita.getRangeDirection(stateControl.stateView.document, focusRange);
+              const firstPoint = rangeDirection === matita.RangeDirection.Forwards ? focusRange.startPoint : focusRange.endPoint;
+              const secondPoint = rangeDirection === matita.RangeDirection.Forwards ? focusRange.endPoint : focusRange.startPoint;
+              let secondParagraphConfig: ParagraphConfig = {};
+              if (matita.isParagraphPoint(firstPoint)) {
+                const paragraph = matita.accessParagraphFromParagraphPoint(stateControl.stateView.document, firstPoint);
+                const paragraphLength = matita.getParagraphLength(paragraph);
+                secondParagraphConfig = { ...paragraph.config };
+                const shouldResetType = (
+                  [
+                    ParagraphType.Heading1,
+                    ParagraphType.Heading2,
+                    ParagraphType.Heading3,
+                    ParagraphType.Heading4,
+                    ParagraphType.Heading5,
+                    ParagraphType.Heading6,
+                    ParagraphType.Indent1,
+                    ParagraphType.IndentFirstLine1,
+                    ParagraphType.IndentHanging1,
+                  ] as unknown[]
+                ).includes(paragraph.config.type);
+                if (
+                  firstPoint.offset === 0 &&
+                  matita.isParagraphPoint(secondPoint) &&
+                  matita.areParagraphPointsAtSameParagraph(firstPoint, secondPoint) &&
+                  secondPoint.offset < paragraphLength
+                ) {
+                  const paragraphReference = matita.makeBlockReferenceFromParagraphPoint(firstPoint);
+                  const mergeParagraphConfig: ParagraphConfig = {
+                    ListItem_Checklist_checked: undefined,
+                  };
+                  if (shouldResetType) {
+                    mergeParagraphConfig.type = undefined;
+                  }
+                  // TODO: Split backwards somehow instead in insert content fragment function?
+                  stateControl.delta.applyMutation(
+                    matita.makeUpdateParagraphConfigBetweenBlockReferencesMutation(paragraphReference, paragraphReference, mergeParagraphConfig),
+                  );
+                } else {
+                  delete secondParagraphConfig.ListItem_Checklist_checked;
+                }
+                if (firstPoint.offset === paragraphLength && shouldResetType) {
+                  delete secondParagraphConfig.type;
+                }
+              }
+              return matita.makeContentFragment([
+                matita.makeContentFragmentParagraph(matita.makeParagraph({}, [], matita.generateId())),
+                matita.makeContentFragmentParagraph(matita.makeParagraph(secondParagraphConfig, [], matita.generateId())),
+              ]);
+            }),
+          );
+        },
+        { [matita.RedoUndoUpdateKey.UniqueGroupedUpdate]: matita.makeUniqueGroupedChangeType() },
+      );
     },
   },
   [StandardCommand.OpenQuickFixAtSelection]: {
@@ -12585,6 +12636,9 @@ makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
         (convertStoredParagraphAlignmentToAccessedParagraphAlignment(firstParagraphConfig.alignment) !== AccessedParagraphAlignment.Left &&
           !(acceptedParagraphTypes as (ParagraphType | undefined)[]).includes(secondParagraphConfig.type))
       );
+    },
+    getSplitParagraphConfigWhenInsertingEmbed(paragraphConfig) {
+      return omit(paragraphConfig, ['ListItem_Checklist_checked']);
     },
   };
   const document_ = matita.makeDocument<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>({}, {}, {}, matita.generateId());

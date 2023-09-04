@@ -3901,6 +3901,7 @@ interface StateControlConfig<
     selectionRange: SelectionRange,
   ) => SelectionRange | null;
   shouldKeepEmptyFirstParagraphConfigWhenRemoving: (firstParagraphConfig: ParagraphConfig, secondParagraphConfig: ParagraphConfig) => boolean;
+  getSplitParagraphConfigWhenInsertingEmbed: (paragraphConfig: ParagraphConfig) => ParagraphConfig;
 }
 interface BeforeUpdateBatchMessage {
   updateQueue: QueuedUpdate[];
@@ -7288,6 +7289,7 @@ function makeRemoveRangeContentsUpdateFn<
     delta.applyMutation(makeBatchMutation(mutations));
   };
 }
+// TODO.
 function makeInsertContentFragmentAtRangeUpdateFn<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -7533,7 +7535,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             if (newParagraphId === null) {
               newParagraphId = generateId();
             }
-            mutations.push(makeSplitParagraphForwardsMutation<ParagraphConfig>(splitAt, undefined, newParagraphId));
+            mutations.push(makeSplitParagraphForwardsMutation<ParagraphConfig>(splitAt, lastContentFragmentBlock.config, newParagraphId));
             const lastContentFragmentBlockLength = getParagraphLength(lastContentFragmentBlock);
             if (lastContentFragmentBlockLength > 0) {
               mutations.push(
@@ -7555,7 +7557,13 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             }
           } else {
             if (secondParagraphPoint.offset < getParagraphLength(dummyParagraph)) {
-              mutations.push(makeSplitParagraphForwardsMutation<ParagraphConfig>(splitAt, undefined, generateId()));
+              mutations.push(
+                makeSplitParagraphForwardsMutation<ParagraphConfig>(
+                  splitAt,
+                  stateControl.stateControlConfig.getSplitParagraphConfigWhenInsertingEmbed(dummyParagraph.config),
+                  generateId(),
+                ),
+              );
             }
             mutations.push(makeInsertBlocksAfterMutation(paragraphReference, makeContentFragment(contentFragmentBlocks.slice(1))));
             if (shouldTransformStateSelectionRangeToEndPredicateFn) {
@@ -7572,7 +7580,7 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             if (newParagraphId === null) {
               newParagraphId = generateId();
             }
-            mutations.push(makeSplitParagraphForwardsMutation<ParagraphConfig>(splitAt, undefined, newParagraphId));
+            mutations.push(makeSplitParagraphForwardsMutation<ParagraphConfig>(splitAt, lastContentFragmentBlock.config, newParagraphId));
             const lastContentFragmentBlockLength = getParagraphLength(lastContentFragmentBlock);
             if (lastContentFragmentBlockLength > 0) {
               mutations.push(
@@ -7592,7 +7600,13 @@ function makeInsertContentFragmentAtRangeUpdateFn<
             }
           } else {
             if (secondParagraphPoint.offset < getParagraphLength(dummyParagraph)) {
-              mutations.push(makeSplitParagraphForwardsMutation<ParagraphConfig>(splitAt, undefined, generateId()));
+              mutations.push(
+                makeSplitParagraphForwardsMutation<ParagraphConfig>(
+                  splitAt,
+                  stateControl.stateControlConfig.getSplitParagraphConfigWhenInsertingEmbed(dummyParagraph.config),
+                  generateId(),
+                ),
+              );
             }
             mutations.push(makeInsertBlocksAfterMutation(paragraphReference, contentFragment));
             if (shouldTransformStateSelectionRangeToEndPredicateFn) {
