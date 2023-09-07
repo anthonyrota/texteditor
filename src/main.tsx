@@ -7353,7 +7353,6 @@ class FloatingVirtualizedTextInputControl extends DisposableClass {
     event.preventDefault();
   }
 }
-const SeparateSelectionIdKey = 'virtualized.separateSelectionId';
 const SearchQueryGoToSearchResultImmediatelyKey = 'virtualized.searchQueryGoToSearchResultImmediately';
 class ListStyleInjectionControl extends DisposableClass {
   private $p_numberedListIndexerMap = new Map<string, ListIndexer>();
@@ -8207,7 +8206,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
     addEventListener(this.$p_inputControl.$m_inputElement, 'focus', this.$p_onInputElementFocus.bind(this), this);
     addEventListener(this.$p_inputControl.$m_inputElement, 'blur', this.$p_onInputElementBlur.bind(this), this);
     // TODO: Alt-pressing to drag new selection range while in composition breaks after as keys are cleared.
-    addEventListener(this.$p_inputControl.$m_inputElement, 'compositionend', this.$p_clearKeys.bind(this), this);
+    addEventListener(this.$p_inputControl.$m_inputElement, 'compositionend', () => this.$p_clearKeys(), this);
     addWindowEventListener('focus', () => this.$p_onWindowFocus.bind(this), this);
     addWindowEventListener('blur', this.$p_onWindowBlur.bind(this), this);
     const topLevelContentViewContainerElementReactiveResizeObserver = new ReactiveResizeObserver();
@@ -8677,10 +8676,19 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
           throwUnreachable();
         }
         const pointerDownWindow$ = event.value;
-        type SelectionType = 'grapheme' | 'word' | 'paragraph';
+        const enum SelectionType {
+          Grapheme,
+          Word,
+          Paragraph,
+        }
         interface PointInfo {
           position: HitPosition;
           stateView: matita.StateView<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>;
+        }
+        const enum SelectionJoiningType {
+          Overwrite,
+          Separate,
+          DisjointExtend,
         }
         let dragState:
           | {
@@ -8692,15 +8700,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               $m_beforeSelection: matita.Selection;
               $m_selectionType: SelectionType;
               $m_isExtendSelection: boolean;
-              $m_separateSelectionId: Maybe<number>;
+              $m_selectionJoiningType: SelectionJoiningType;
             }
           | undefined;
-        const removeSelectionRangeWithIdFromBeforeSelection = (selectionRangeId: string): void => {
-          assertIsNotNullish(dragState);
-          dragState.$m_beforeSelection = matita.makeSelection(
-            dragState.$m_beforeSelection.selectionRanges.filter((selectionRange) => selectionRange.id !== selectionRangeId),
-          );
-        };
         const transformPointInfoToCurrentPointWithContentReference = (pointInfo: PointInfo): matita.PointWithContentReference | null => {
           if (pointInfo.position.$m_type === HitPositionType.CheckboxMarker) {
             try {
@@ -8858,7 +8860,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 );
               }, pointerCaptureDisposable),
             );
-            const selectionType: SelectionType = index === 0 ? 'grapheme' : (index - 1) % 2 === 0 ? 'word' : 'paragraph';
+            const selectionType: SelectionType = index === 0 ? SelectionType.Grapheme : (index - 1) % 2 === 0 ? SelectionType.Word : SelectionType.Paragraph;
             index++;
             const isExtendSelection = this.$p_keyDownSet.has('Shift');
             if (dragState) {
@@ -8954,37 +8956,29 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               const originalIsWrappedLineStart = finalPointInfo.position.$m_isWrappedLineStart;
               const originalIsWrappedLinePreviousEnd = finalPointInfo.position.$m_isWrappedLinePreviousEnd;
               endPointInfo = null;
-              let extendedSelectionRangeIdMaybe: Maybe<string>;
+              let extendedSelectionRangeId: string | null;
               if (dragState.$m_isExtendSelection && transformedBeforeSelection.selectionRanges.length > 0) {
-                let selectionRangeToExtend: matita.SelectionRange | undefined | null;
-                if (isSome(dragState.$m_separateSelectionId)) {
-                  selectionRangeToExtend = matita.getMostRecentlyCreatedSelectionRangeFromSelectionRanges(
-                    transformedBeforeSelection.selectionRanges.filter(
-                      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                      (selectionRange) => selectionRange.data[SeparateSelectionIdKey] === (dragState!.$m_separateSelectionId as Some<number>).$m_value,
-                    ),
-                  );
-                  if (!selectionRangeToExtend) {
-                    selectionRangeToExtend = matita.getFocusSelectionRangeFromSelection(transformedBeforeSelection);
-                    assertIsNotNullish(selectionRangeToExtend);
-                  }
-                } else {
-                  selectionRangeToExtend = matita.getAnchorSelectionRangeFromSelection(transformedBeforeSelection);
-                  assertIsNotNullish(selectionRangeToExtend);
-                }
-                const anchorRange = matita.getAnchorRangeFromSelectionRange(selectionRangeToExtend);
+                const selectionRangeToExtend =
+                  dragState.$m_selectionJoiningType === SelectionJoiningType.Overwrite
+                    ? matita.getAnchorSelectionRangeFromSelection(transformedBeforeSelection)
+                    : matita.getFocusSelectionRangeFromSelection(transformedBeforeSelection);
+                assertIsNotNullish(selectionRangeToExtend);
+                const rangeToExtend =
+                  dragState.$m_selectionJoiningType === SelectionJoiningType.DisjointExtend
+                    ? matita.getFocusRangeFromSelectionRange(selectionRangeToExtend)
+                    : matita.getAnchorRangeFromSelectionRange(selectionRangeToExtend);
                 originalStartPointWithContentReference = {
-                  contentReference: anchorRange.contentReference,
-                  point: matita.getAnchorPointFromRange(anchorRange),
+                  contentReference: rangeToExtend.contentReference,
+                  point: matita.getAnchorPointFromRange(rangeToExtend),
                 };
-                extendedSelectionRangeIdMaybe = Some(selectionRangeToExtend.id);
+                extendedSelectionRangeId = selectionRangeToExtend.id;
               } else {
-                extendedSelectionRangeIdMaybe = None;
+                extendedSelectionRangeId = null;
               }
               let startPointWithContentReference: matita.PointWithContentReference;
               let endPointWithContentReference: matita.PointWithContentReference;
               let isFocusWrappedLineStart: boolean;
-              if (dragState.$m_selectionType === 'grapheme') {
+              if (dragState.$m_selectionType === SelectionType.Grapheme) {
                 startPointWithContentReference = originalStartPointWithContentReference;
                 endPointWithContentReference = originalEndPointWithContentReference;
                 isFocusWrappedLineStart = originalIsWrappedLineStart;
@@ -9042,7 +9036,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                   {},
                   matita.generateId(),
                 );
-                if (dragState.$m_selectionType === 'word') {
+                if (dragState.$m_selectionType === SelectionType.Word) {
                   const originalFirstPointWithContentReference = firstPointWithContentReference;
                   firstPointWithContentReference = matita.makeDefaultPointTransformFn(
                     matita.MovementGranularity.WordBoundary,
@@ -9118,7 +9112,7 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                     : isBackwards && !originalIsWrappedLinePreviousEnd;
                 } else {
                   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                  if (dragState.$m_selectionType !== 'paragraph') {
+                  if (dragState.$m_selectionType !== SelectionType.Paragraph) {
                     assertUnreachable(dragState.$m_selectionType);
                   }
                   firstPointWithContentReference = matita.makeDefaultPointTransformFn(
@@ -9154,22 +9148,43 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               const resolveOverlappingSelectionRanges = (
                 info: matita.ResolveOverlappingSelectionRangesInfo,
                 prioritySelectionRangeId: string,
-              ): matita.RangeWithKeys | null => {
+                priorityRangeId?: string,
+              ): matita.ResolveOverlappingSelectionRangesResult | null => {
                 if (info.range1WithKeys.selectionRangeId === prioritySelectionRangeId && info.range2WithKeys.selectionRangeId !== prioritySelectionRangeId) {
-                  removeSelectionRangeWithIdFromBeforeSelection(info.range2WithKeys.selectionRangeId);
                   const newSelectionRangeId = info.updateSelectionRangeId(info.range2WithKeys.selectionRangeId, prioritySelectionRangeId);
                   return {
-                    ...info.range1WithKeys,
-                    selectionRangeId: newSelectionRangeId,
+                    newRangeWithKeys: {
+                      ...info.range1WithKeys,
+                      selectionRangeId: newSelectionRangeId,
+                    },
+                    rangeIdsToRemove: new Set(
+                      info.rangesWithKeys
+                        .filter((rangeWithKeys) => rangeWithKeys.selectionRangeId === info.range2WithKeys.selectionRangeId)
+                        .map((rangeWithKeys) => rangeWithKeys.range.id),
+                    ),
                   };
                 }
                 if (info.range1WithKeys.selectionRangeId !== prioritySelectionRangeId && info.range2WithKeys.selectionRangeId === prioritySelectionRangeId) {
-                  removeSelectionRangeWithIdFromBeforeSelection(info.range1WithKeys.selectionRangeId);
                   const newSelectionRangeId = info.updateSelectionRangeId(info.range1WithKeys.selectionRangeId, prioritySelectionRangeId);
                   return {
-                    ...info.range2WithKeys,
-                    selectionRangeId: newSelectionRangeId,
+                    newRangeWithKeys: {
+                      ...info.range2WithKeys,
+                      selectionRangeId: newSelectionRangeId,
+                    },
+                    rangeIdsToRemove: new Set(
+                      info.rangesWithKeys
+                        .filter((rangeWithKeys) => rangeWithKeys.selectionRangeId === info.range1WithKeys.selectionRangeId)
+                        .map((rangeWithKeys) => rangeWithKeys.range.id),
+                    ),
                   };
+                }
+                if (info.range1WithKeys.selectionRangeId === prioritySelectionRangeId && info.range2WithKeys.selectionRangeId === prioritySelectionRangeId) {
+                  if (info.range1WithKeys.range.id === priorityRangeId) {
+                    return { newRangeWithKeys: info.range1WithKeys, rangeIdsToRemove: null };
+                  }
+                  if (info.range2WithKeys.range.id === priorityRangeId) {
+                    return { newRangeWithKeys: info.range2WithKeys, rangeIdsToRemove: null };
+                  }
                 }
                 return null;
               };
@@ -9186,43 +9201,65 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
                 draggedSelectionRanges[0].id,
                 draggedSelectionRanges[draggedSelectionRanges.length - 1].id,
                 matita.SelectionRangeIntention.Text,
-                Object.assign(
-                  {},
-                  isFocusWrappedLineStart
-                    ? {
-                        [VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId]:
-                          makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(
-                            this.$m_makeActivatedSelectionSecondaryDataExpirationId(),
-                          ),
-                      }
-                    : undefined,
-                  isSome(dragState.$m_separateSelectionId) ? { [SeparateSelectionIdKey]: dragState.$m_separateSelectionId.$m_value } : undefined,
-                ),
-                isSome(extendedSelectionRangeIdMaybe) ? extendedSelectionRangeIdMaybe.$m_value : matita.generateId(),
+                isFocusWrappedLineStart
+                  ? {
+                      [VirtualizedDataKey.SelectionRangeDataLineWrapFocusCursorWrapToNextLineWithExpirationId]:
+                        makeLineWrapFocusCursorWrapToNextLineWithExpirationIdSelectionRangeDataValue(this.$m_makeActivatedSelectionSecondaryDataExpirationId()),
+                    }
+                  : {},
+                extendedSelectionRangeId === null ? matita.generateId() : extendedSelectionRangeId,
                 true,
               );
-              if (isNone(dragState.$m_separateSelectionId)) {
+              if (dragState.$m_selectionJoiningType === SelectionJoiningType.Overwrite || transformedBeforeSelection.selectionRanges.length === 0) {
                 return { $m_type: CalculateDraggingResultType.Selection, $m_selection: matita.makeSelection([draggedSelectionRange]) };
               }
-              if (isSome(extendedSelectionRangeIdMaybe)) {
-                const extendedSelectionRangeId = extendedSelectionRangeIdMaybe.$m_value;
+              if (dragState.$m_selectionJoiningType === SelectionJoiningType.DisjointExtend) {
+                const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(transformedBeforeSelection);
+                assertIsNotNullish(focusSelectionRange);
+                const focusDraggedRange = matita.getFocusRangeFromSelectionRange(draggedSelectionRange);
                 return {
                   $m_type: CalculateDraggingResultType.Selection,
                   $m_selection: matita.sortAndMergeAndFixSelectionRanges(
                     this.$m_stateControl.stateView.document,
                     this.$m_stateControl.stateControlConfig,
                     [
-                      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                      ...transformedBeforeSelection.selectionRanges.filter((selectionRange) => selectionRange.id !== focusSelectionRange.id),
+                      matita.makeSelectionRange(
+                        [
+                          ...(extendedSelectionRangeId === null
+                            ? focusSelectionRange.ranges
+                            : focusSelectionRange.ranges.filter((range) => range.id !== focusSelectionRange.focusRangeId)),
+                          ...draggedSelectionRange.ranges,
+                        ],
+                        focusSelectionRange.anchorRangeId,
+                        draggedSelectionRange.focusRangeId,
+                        matita.SelectionRangeIntention.Text,
+                        { ...focusSelectionRange.data, ...draggedSelectionRange.data },
+                        focusSelectionRange.id,
+                      ),
+                    ],
+                    (info) => resolveOverlappingSelectionRanges(info, focusSelectionRange.id, focusDraggedRange.id),
+                  ),
+                };
+              }
+              if (extendedSelectionRangeId !== null) {
+                return {
+                  $m_type: CalculateDraggingResultType.Selection,
+                  $m_selection: matita.sortAndMergeAndFixSelectionRanges(
+                    this.$m_stateControl.stateView.document,
+                    this.$m_stateControl.stateControlConfig,
+                    [
                       ...transformedBeforeSelection.selectionRanges.filter((selectionRange) => selectionRange.id !== extendedSelectionRangeId),
                       draggedSelectionRange,
                     ],
-                    (info) => resolveOverlappingSelectionRanges(info, extendedSelectionRangeId),
+                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                    (info) => resolveOverlappingSelectionRanges(info, extendedSelectionRangeId!),
                   ),
                 };
               }
               if (
                 !isMovedPastThreshold &&
-                dragState.$m_selectionType === 'grapheme' &&
+                dragState.$m_selectionType === SelectionType.Grapheme &&
                 matita.arePointWithContentReferencesEqual(originalStartPointWithContentReference, originalEndPointWithContentReference) &&
                 transformedBeforeSelection.selectionRanges.length > 1
               ) {
@@ -9342,7 +9379,8 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               queueSelectionUpdate(null);
               return;
             }
-            const separateSelectionId = this.$p_keyDownSet.get('Alt');
+            const isSeparateSelection = this.$p_keyDownSet.get('Alt') !== undefined;
+            const isDisjointExtend = this.$p_keyDownSet.get('Meta') !== undefined;
             dragState = {
               $m_startViewPosition: viewPosition,
               $m_lastViewPosition: viewPosition,
@@ -9352,7 +9390,11 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
               $m_beforeSelection: this.$m_stateControl.stateView.selection,
               $m_selectionType: selectionType,
               $m_isExtendSelection: isExtendSelection,
-              $m_separateSelectionId: separateSelectionId === undefined ? None : Some(separateSelectionId),
+              $m_selectionJoiningType: isSeparateSelection
+                ? SelectionJoiningType.Separate
+                : isDisjointExtend
+                ? SelectionJoiningType.DisjointExtend
+                : SelectionJoiningType.Overwrite,
             };
             pointInfo = null;
             queueSelectionUpdate(null);
@@ -11019,11 +11061,12 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   ];
   private $p_keyDownId = 0;
   private $p_keyDownSet = new Map<string, number>();
-  private $p_clearKeys(): void {
-    const downKeys = [...this.$p_keyDownSet.keys()];
-    this.$p_keyDownSet.clear();
-    for (const key of downKeys) {
-      this.$p_keyUp$(Push({ $m_key: key }));
+  private $p_clearKeys(exceptFor = new Set<string>()): void {
+    for (const key of this.$p_keyDownSet.keys()) {
+      if (!exceptFor.has(key)) {
+        this.$p_keyUp$(Push({ $m_key: key }));
+        this.$p_keyDownSet.delete(key);
+      }
     }
   }
   private $p_markKeyDown(key: string, keyboardEvent?: KeyboardEvent): void {
@@ -11038,9 +11081,6 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_keyUp$ = Distributor<{ $m_key: string; $m_keyboardEvent?: KeyboardEvent }>();
   private $p_onGlobalKeyDown(event: KeyboardEvent): void {
     const normalizedKey = this.$p_normalizeEventKey(event);
-    if (platforms.includes(Platform.Apple) && (this.$p_keyDownSet.has('Meta') || normalizedKey === 'Meta')) {
-      this.$p_clearKeys(); // MacOS track keyup events after Meta is pressed.
-    }
     this.$p_markKeyDown(normalizedKey, event);
     if (!this.$p_shortcutKeys.includes(normalizedKey)) {
       return;
@@ -11169,6 +11209,9 @@ class VirtualizedDocumentRenderControl extends DisposableClass implements matita
   private $p_onGlobalKeyUp(event: KeyboardEvent): void {
     const normalizedKey = this.$p_normalizeEventKey(event);
     this.$p_markKeyUp(normalizedKey, event);
+    if (platforms.includes(Platform.Apple) && normalizedKey === 'Meta') {
+      this.$p_clearKeys(new Set(['Shift'])); // MacOS drops keyup events after Meta is pressed?
+    }
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   $m_runCommand(commandInfo: CommandInfo<any>): void {
@@ -12627,6 +12670,35 @@ import dummyText from './dummyText.txt?raw';
 makePromiseResolvingToNativeIntlSegmenterOrPolyfill().then((IntlSegmenter) => {
   const stateControlConfig: matita.StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig> = {
     fixSelectionRange(document, selectionRange) {
+      let newRanges: matita.Range[] | null = null;
+      let j = 0;
+      for (let i = 0; i < selectionRange.ranges.length; i++) {
+        const range = selectionRange.ranges[i];
+        if (
+          range.id !== selectionRange.focusRangeId &&
+          matita.isParagraphPoint(range.startPoint) &&
+          matita.isParagraphPoint(range.endPoint) &&
+          matita.areParagraphPointsAtSameOffsetInSameParagraph(range.startPoint, range.endPoint)
+        ) {
+          if (newRanges === null) {
+            newRanges = selectionRange.ranges.filter((otherRange) => otherRange.id !== range.id);
+            j--;
+          } else {
+            newRanges.splice(j--, 1);
+          }
+        }
+        j++;
+      }
+      if (newRanges !== null) {
+        return matita.makeSelectionRange(
+          newRanges,
+          newRanges.some((range) => range.id === selectionRange.anchorRangeId) ? selectionRange.anchorRangeId : newRanges[0].id,
+          selectionRange.focusRangeId,
+          selectionRange.intention,
+          selectionRange.data,
+          selectionRange.id,
+        );
+      }
       return selectionRange;
     },
     IntlSegmenter,

@@ -3261,15 +3261,6 @@ function makeSortedRangeWithKeysFromRange(
     createdAt,
   };
 }
-interface ResolveOverlappingSelectionRangesInfo {
-  range1WithKeys: RangeWithKeys;
-  range2WithKeys: RangeWithKeys;
-  compare_range1SortedStart_to_range2SortedStart: CompareKeysResult;
-  compare_range1SortedStart_to_range2SortedEnd: CompareKeysResult;
-  compare_range1SortedEnd_to_range2SortedStart: CompareKeysResult;
-  compare_range1SortedEnd_to_range2SortedEnd: CompareKeysResult;
-  updateSelectionRangeId: (removedSelectionRangeId: string, newSelectionRangeId: string) => string;
-}
 function getRangesInSelectionSorted(document: Document<NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig, NodeConfig>, selection: Selection): Range[] {
   const rangesWithKeys = selection.selectionRanges.flatMap((selectionRange) =>
     selectionRange.ranges.map((range) => {
@@ -3297,6 +3288,20 @@ function getRangesInSelectionSorted(document: Document<NodeConfig, NodeConfig, N
   });
   return rangesWithKeys.map((rangeWithKeys) => rangeWithKeys.range);
 }
+interface ResolveOverlappingSelectionRangesInfo {
+  rangesWithKeys: RangeWithKeys[];
+  range1WithKeys: RangeWithKeys;
+  range2WithKeys: RangeWithKeys;
+  compare_range1SortedStart_to_range2SortedStart: CompareKeysResult;
+  compare_range1SortedStart_to_range2SortedEnd: CompareKeysResult;
+  compare_range1SortedEnd_to_range2SortedStart: CompareKeysResult;
+  compare_range1SortedEnd_to_range2SortedEnd: CompareKeysResult;
+  updateSelectionRangeId: (removedSelectionRangeId: string, newSelectionRangeId: string) => string;
+}
+interface ResolveOverlappingSelectionRangesResult {
+  newRangeWithKeys: RangeWithKeys;
+  rangeIdsToRemove: Set<string> | null;
+}
 function sortAndMergeAndFixSelectionRanges<
   DocumentConfig extends NodeConfig,
   ContentConfig extends NodeConfig,
@@ -3308,7 +3313,7 @@ function sortAndMergeAndFixSelectionRanges<
   document: Document<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   stateControlConfig: StateControlConfig<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>,
   selectionRanges: readonly SelectionRange[],
-  resolveOverlappingSelectionRanges?: (info: ResolveOverlappingSelectionRangesInfo) => RangeWithKeys | null,
+  resolveOverlappingSelectionRanges?: (info: ResolveOverlappingSelectionRangesInfo) => ResolveOverlappingSelectionRangesResult | null,
 ): Selection {
   if (selectionRanges.length === 0) {
     return makeSelection(selectionRanges);
@@ -3392,7 +3397,8 @@ function sortAndMergeAndFixSelectionRanges<
         eqNonText.includes(compare_range1SortedEnd_to_range2SortedStart)
       ) {
         if (resolveOverlappingSelectionRanges !== undefined) {
-          const newRangeWithKeys = resolveOverlappingSelectionRanges({
+          const result = resolveOverlappingSelectionRanges({
+            rangesWithKeys,
             range1WithKeys,
             range2WithKeys,
             compare_range1SortedStart_to_range2SortedStart,
@@ -3401,17 +3407,29 @@ function sortAndMergeAndFixSelectionRanges<
             compare_range1SortedEnd_to_range2SortedEnd,
             updateSelectionRangeId,
           });
-          if (newRangeWithKeys !== null) {
+          if (result !== null) {
+            const { newRangeWithKeys, rangeIdsToRemove } = result;
             didChange = true;
             rangesWithKeys.splice(i--, 2, newRangeWithKeys);
+            if (rangeIdsToRemove !== null) {
+              for (let j = 0; j < rangesWithKeys.length; j++) {
+                const rangeWithKeys = rangesWithKeys[j];
+                if (rangeIdsToRemove.has(rangeWithKeys.range.id)) {
+                  rangesWithKeys.splice(j--, 1);
+                  if (j <= i) {
+                    i--;
+                  }
+                }
+              }
+            }
             continue;
           }
         }
         // R1S(strict)<=R2S by sort.
         const newRangeContentReference: ContentReference = range1WithKeys.range.contentReference;
         const newRangeId: string = range1WithKeys.range.id;
-        const isAnchor = range1WithKeys.isAnchor;
-        const isFocus = range1WithKeys.isFocus;
+        const isAnchor = range1WithKeys.isAnchor || range2WithKeys.isAnchor;
+        const isFocus = range1WithKeys.isFocus || range2WithKeys.isFocus;
         let newSelectionRangeId: string;
         let removedSelectionRangeId: string;
         const newSelectionRangeCreatedAt = Math.max(range1WithKeys.createdAt, range2WithKeys.createdAt);
@@ -3487,10 +3505,14 @@ function sortAndMergeAndFixSelectionRanges<
     });
     const mergedSelectionRanges: SelectionRange[] = [];
     groupArray(rangesWithKeys, (rangeWithKeys) => rangeWithKeys.selectionRangeId).forEach((rangesWithKeys, selectionRangeId) => {
-      const anchorRange: RangeWithKeys | undefined = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isAnchor);
-      assertIsNotNullish(anchorRange);
-      const focusRange: RangeWithKeys | undefined = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isFocus);
-      assertIsNotNullish(focusRange);
+      let anchorRange: RangeWithKeys | undefined = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isAnchor);
+      if (anchorRange === undefined) {
+        anchorRange = rangesWithKeys[0];
+      }
+      let focusRange: RangeWithKeys | undefined = rangesWithKeys.find((rangeWithKey) => rangeWithKey.isFocus);
+      if (focusRange === undefined) {
+        focusRange = rangesWithKeys[rangesWithKeys.length - 1];
+      }
       const selectionRange = selectionRanges.find((selectionRange) => selectionRange.id === selectionRangeId);
       assertIsNotNullish(selectionRange);
       mergedSelectionRanges.push(
@@ -8520,15 +8542,33 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
     let selectionToTransform = selection ?? stateControl.stateView.selection;
     while (true) {
       const rangesToRemoveWithSelectionRange = selectionToTransform.selectionRanges.flatMap((selectionRange) => {
-        const focusRange = getFocusRangeFromSelectionRange(selectionRange);
-        return [...selectionRange.ranges.filter((range) => range.id !== selectionRange.focusRangeId), focusRange].map((range) => ({
+        return selectionRange.ranges.map((range) => ({
           range,
           selectionRange,
         }));
       });
-      const lastRangeWithSelectionRange = rangesToRemoveWithSelectionRange.pop();
-      if (!lastRangeWithSelectionRange) {
+      if (rangesToRemoveWithSelectionRange.length === 0) {
         break;
+      }
+      const lastRangeInList = rangesToRemoveWithSelectionRange[rangesToRemoveWithSelectionRange.length - 1];
+      const lastRangeId = lastRangeInList.range.id;
+      let importantRange: Range | undefined;
+      let isLastFocusRange = false;
+      if (lastRangeId === lastRangeInList.selectionRange.focusRangeId) {
+        const nonFocusRangeIndex = rangesToRemoveWithSelectionRange.findIndex(
+          (rangeToRemove) => rangeToRemove.range.id !== lastRangeId && rangeToRemove.selectionRange.id === lastRangeInList.selectionRange.id,
+        );
+        if (nonFocusRangeIndex === -1) {
+          isLastFocusRange = true;
+          importantRange = lastRangeInList.range;
+          rangesToRemoveWithSelectionRange.pop();
+        } else {
+          importantRange = rangesToRemoveWithSelectionRange[nonFocusRangeIndex].range;
+          rangesToRemoveWithSelectionRange.splice(nonFocusRangeIndex, 1);
+        }
+      } else {
+        importantRange = lastRangeInList.range;
+        rangesToRemoveWithSelectionRange.pop();
       }
       const newSelectionToTransform =
         rangesToRemoveWithSelectionRange.length === 0
@@ -8539,7 +8579,7 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
                   makeSelectionRange(
                     rangesWithSelectionRange.map(({ range }) => range),
                     rangesWithSelectionRange[0].range.id,
-                    rangesWithSelectionRange[0].range.id,
+                    selectionRange.focusRangeId,
                     selectionRange.intention,
                     selectionRange.data,
                     selectionRange.id,
@@ -8547,30 +8587,25 @@ function makeInsertContentFragmentAtSelectionUpdateFn<
               ),
             );
       let updateFn: RunUpdateFn;
-      if (
-        rangesToRemoveWithSelectionRange.length === 0 || // TODO: Insert at focus range.
-        rangesToRemoveWithSelectionRange.every(
-          (rangeToRemoveWithSelectionRange) => rangeToRemoveWithSelectionRange.selectionRange.id !== lastRangeWithSelectionRange.selectionRange.id,
-        )
-      ) {
+      if (isLastFocusRange) {
         updateFn = makeInsertContentFragmentAtRangeUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
           stateControl,
-          lastRangeWithSelectionRange.range,
+          importantRange,
           // TODO: Calculate this beforehand or this won't work.
-          getContentFragmentFromSelectionRange(lastRangeWithSelectionRange.selectionRange),
+          getContentFragmentFromSelectionRange(lastRangeInList.selectionRange),
           selection && !treatAsSelection
             ? undefined
             : (selectionRange) => {
                 return (
-                  selectionRange.id === lastRangeWithSelectionRange.selectionRange.id ||
-                  areSelectionRangesCoveringSameContent(selectionRange, lastRangeWithSelectionRange.selectionRange)
+                  selectionRange.id === lastRangeInList.selectionRange.id ||
+                  areSelectionRangesCoveringSameContent(selectionRange, lastRangeInList.selectionRange)
                 );
               },
         );
       } else {
         updateFn = makeRemoveRangeContentsUpdateFn<DocumentConfig, ContentConfig, ParagraphConfig, EmbedConfig, TextConfig, VoidConfig>(
           stateControl,
-          lastRangeWithSelectionRange.range,
+          importantRange,
         );
       }
       if (newSelectionToTransform) {
@@ -9879,4 +9914,5 @@ export {
   compareBlockIndicesForUniqueParagraphsAtBlockReferences,
   type UpdateSelectionRangeDataFn,
   type GetSelectionChangeDataFn,
+  type ResolveOverlappingSelectionRangesResult,
 };
