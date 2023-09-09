@@ -3568,10 +3568,23 @@ const genericCommandRegisterObject: Record<string, GenericRegisteredCommand> = {
   [StandardCommand.SelectAll]: {
     execute(stateControl): void {
       stateControl.queueUpdate(() => {
+        const focusSelectionRange = matita.getFocusSelectionRangeFromSelection(stateControl.stateView.selection);
+        if (focusSelectionRange === null) {
+          return;
+        }
+        const focusRange = matita.getFocusRangeFromSelectionRange(focusSelectionRange);
+        const dummySelectionRange = matita.makeSelectionRange(
+          [focusRange],
+          focusRange.id,
+          focusRange.id,
+          focusSelectionRange.intention,
+          focusSelectionRange.data,
+          focusSelectionRange.id,
+        );
         const extendedSelection = matita.extendSelectionByPointTransformFns(
           stateControl.stateView.document,
           stateControl.stateControlConfig,
-          stateControl.stateView.selection,
+          matita.makeSelection([dummySelectionRange]),
           (_document, _stateControlConfig, _selectionRange) => true,
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Previous),
           matita.makeDefaultPointTransformFn(matita.MovementGranularity.TopLevelContent, matita.PointMovement.Next),
